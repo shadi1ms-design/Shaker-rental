@@ -1,0 +1,6 @@
+{
+  "name": "شركة شاكر لتأجير السيارات - Shaker Car Rental",
+  "description": "نظام إدارة وحجز سيارات متكامل وفاخر باللغة العربية لشركة شاكر لتأجير السيارات في دمشق - جرمانا مع إدارة الأسطول والحجوزات والعقود والصيانة والتقارير.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

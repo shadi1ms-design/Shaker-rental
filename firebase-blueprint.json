@@ -1,0 +1,261 @@
+{
+  "entities": {
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Represents a rental car in the fleet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "brand": { "type": "string", "maxLength": 100 },
+        "model": { "type": "string", "maxLength": 100 },
+        "year": { "type": "number" },
+        "color": { "type": "string", "maxLength": 50 },
+        "category": { "type": "string", "enum": ["light", "medium", "jeep_7seats"] },
+        "seats": { "type": "number" },
+        "transmission": { "type": "string", "enum": ["automatic", "manual"] },
+        "fuelType": { "type": "string", "enum": ["petrol", "hybrid", "electric", "diesel"] },
+        "dailyPrice": { "type": "number" },
+        "plateNumber": { "type": "string", "maxLength": 50 },
+        "currentMileage": { "type": "number" },
+        "lastOilChangeMileage": { "type": "number" },
+        "status": { "type": "string", "enum": ["available", "reserved", "rented", "maintenance", "inactive"] },
+        "imageUrl": { "type": "string", "maxLength": 500 },
+        "features": { "type": "string", "maxLength": 500 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "isDeleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "brand", "model", "year", "category", "dailyPrice", "status"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Vehicle reservation made by a customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "bookingNumber": { "type": "string", "maxLength": 64 },
+        "vehicleId": { "type": "string", "maxLength": 128 },
+        "vehicleName": { "type": "string", "maxLength": 200 },
+        "customerName": { "type": "string", "maxLength": 150 },
+        "customerPhone": { "type": "string", "maxLength": 50 },
+        "customerWhatsApp": { "type": "string", "maxLength": 50 },
+        "customerNationalId": { "type": "string", "maxLength": 100 },
+        "customerAddress": { "type": "string", "maxLength": 250 },
+        "customerLicenseNumber": { "type": "string", "maxLength": 100 },
+        "pickupDate": { "type": "string", "format": "date" },
+        "pickupTime": { "type": "string", "maxLength": 20 },
+        "returnDate": { "type": "string", "format": "date" },
+        "returnTime": { "type": "string", "maxLength": 20 },
+        "rentalDays": { "type": "number" },
+        "dailyPrice": { "type": "number" },
+        "basePrice": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "insuranceAmount": { "type": "number" },
+        "totalPrice": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "remainingAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["new", "reviewing", "confirmed", "rented", "completed", "cancelled", "rejected"] },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "isDeleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingNumber", "vehicleId", "customerName", "customerPhone", "pickupDate", "returnDate", "totalPrice", "status"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer CRM profile with rental records",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "fullName": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "whatsapp": { "type": "string", "maxLength": 50 },
+        "nationalId": { "type": "string", "maxLength": 100 },
+        "drivingLicense": { "type": "string", "maxLength": 100 },
+        "nationality": { "type": "string", "maxLength": 100 },
+        "address": { "type": "string", "maxLength": 250 },
+        "totalRentals": { "type": "number" },
+        "totalSpending": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "isDeleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "fullName", "phone"]
+    },
+    "Contract": {
+      "title": "Contract",
+      "description": "Rental legal contract document",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "contractNumber": { "type": "string", "maxLength": 64 },
+        "bookingId": { "type": "string", "maxLength": 128 },
+        "vehicleId": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "termsAndConditions": { "type": "string", "maxLength": 5000 },
+        "status": { "type": "string", "enum": ["active", "closed", "terminated"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "contractNumber", "bookingId", "vehicleId", "status"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Financial transaction record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "bookingId": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "enum": ["cash", "bank_transfer", "other"] },
+        "paymentDate": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "amount", "method", "paymentDate"]
+    },
+    "MaintenanceRecord": {
+      "title": "MaintenanceRecord",
+      "description": "Vehicle servicing and maintenance history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "vehicleId": { "type": "string", "maxLength": 128 },
+        "serviceType": { "type": "string", "enum": ["oil_change", "tires", "brakes", "battery", "engine", "transmission", "general"] },
+        "mileage": { "type": "number" },
+        "cost": { "type": "number" },
+        "serviceDate": { "type": "string", "format": "date" },
+        "nextDueMileage": { "type": "number" },
+        "technicianNotes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "vehicleId", "serviceType", "mileage", "serviceDate"]
+    },
+    "VehicleInspection": {
+      "title": "VehicleInspection",
+      "description": "Handover and return condition inspection",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "bookingId": { "type": "string", "maxLength": 128 },
+        "vehicleId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["pickup", "return"] },
+        "exteriorCondition": { "type": "string", "maxLength": 500 },
+        "interiorCondition": { "type": "string", "maxLength": 500 },
+        "tiresCondition": { "type": "string", "maxLength": 500 },
+        "fuelLevel": { "type": "string", "enum": ["empty", "quarter", "half", "three_quarters", "full"] },
+        "mileage": { "type": "number" },
+        "damages": { "type": "string", "maxLength": 1000 },
+        "photos": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "vehicleId", "type", "fuelLevel", "mileage"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global application and pricing configurations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "companyName": { "type": "string", "maxLength": 100 },
+        "companyPhone": { "type": "string", "maxLength": 50 },
+        "whatsappNumber": { "type": "string", "maxLength": 50 },
+        "address": { "type": "string", "maxLength": 200 },
+        "currency": { "type": "string", "maxLength": 10 },
+        "insurance1to2Days": { "type": "number" },
+        "insuranceAbove2Days": { "type": "number" },
+        "weeklyDiscountPerDay": { "type": "number" },
+        "monthlyRateLight": { "type": "number" },
+        "monthlyRateMedium": { "type": "number" },
+        "monthlyRateJeep": { "type": "number" },
+        "oilChangeIntervalKm": { "type": "number" },
+        "rentalTerms": { "type": "string", "maxLength": 10000 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "companyName", "companyPhone", "whatsappNumber"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Registered user account with authentication profile and file references",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 150 },
+        "displayName": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "role": { "type": "string", "enum": ["super_admin", "admin", "employee", "customer"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "uploadedFilesCount": { "type": "number" }
+      },
+      "required": ["id", "email", "createdAt"]
+    },
+    "UploadedFile": {
+      "title": "UploadedFile",
+      "description": "User uploaded document, identification card, license or contract file",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 150 },
+        "fileName": { "type": "string", "maxLength": 250 },
+        "fileUrl": { "type": "string", "maxLength": 1000 },
+        "fileType": { "type": "string", "maxLength": 100 },
+        "fileSize": { "type": "number" },
+        "category": { "type": "string", "enum": ["national_id", "driver_license", "passport", "contract", "other"] },
+        "uploadedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "fileName", "fileUrl", "uploadedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles in the Firestore database"
+    },
+    "/users/{userId}/files/{fileId}": {
+      "schema": "UploadedFile",
+      "description": "Files uploaded by the specific user"
+    },
+    "/files/{fileId}": {
+      "schema": "UploadedFile",
+      "description": "Uploaded files root index"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Fleet vehicles collection"
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Online customer reservations and rental bookings"
+    },
+    "/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Customer profiles and CRM data"
+    },
+    "/contracts/{contractId}": {
+      "schema": "Contract",
+      "description": "Rental contracts generated for bookings"
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Payments and receipts"
+    },
+    "/maintenanceRecords/{recordId}": {
+      "schema": "MaintenanceRecord",
+      "description": "Vehicle maintenance and oil change logs"
+    },
+    "/vehicleInspections/{inspectionId}": {
+      "schema": "VehicleInspection",
+      "description": "Vehicle pickup and return inspection logs"
+    },
+    "/settings/{settingsId}": {
+      "schema": "Settings",
+      "description": "Global application and pricing configurations"
+    }
+  }
+}

@@ -1,0 +1,70 @@
+import { z } from 'zod';
+
+export const bookingFormSchema = z.object({
+  vehicleId: z.string().min(1, 'يرجى اختيار السيارة المطلوبة'),
+  customerName: z.string().trim().min(3, 'يرجى إدخال الاسم الثلاثي بشكل صحيح'),
+  customerPhone: z.string().trim().min(9, 'يرجى إدخال رقم هاتف صالح لا يقل عن 9 أرقام'),
+  customerWhatsApp: z.string().trim().min(9, 'يرجى إدخال رقم واتساب للتواصل'),
+  customerNationalId: z.string().trim().min(6, 'يرجى إدخال رقم الهوية أو جواز السفر').optional().or(z.literal('')),
+  customerAddress: z.string().trim().min(3, 'يرجى إدخال عنوان الإقامة أو الفندق').optional().or(z.literal('')),
+  customerLicenseNumber: z.string().trim().min(4, 'يرجى إدخال رقم شهادة القيادة').optional().or(z.literal('')),
+  pickupDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'يرجى اختيار تاريخ استلام صالح'),
+  pickupTime: z.string().min(1, 'يرجى اختيار وقت الاستلام'),
+  returnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'يرجى اختيار تاريخ تسليم صالح'),
+  returnTime: z.string().min(1, 'يرجى اختيار وقت التسليم'),
+  notes: z.string().max(1000, 'الملاحظات يجب ألا تتجاوز 1000 حرف').optional().or(z.literal('')),
+}).refine((data) => {
+  if (!data.pickupDate || !data.returnDate) return true;
+  return new Date(data.returnDate) >= new Date(data.pickupDate);
+}, {
+  message: 'تاريخ التسليم يجب أن يكون مساوياً أو بعد تاريخ الاستلام',
+  path: ['returnDate'],
+});
+
+export const vehicleFormSchema = z.object({
+  brand: z.string().trim().min(2, 'يرجى إدخال الشركة المصنعة'),
+  model: z.string().trim().min(2, 'يرجى إدخال طراز السيارة'),
+  year: z.number().int().min(1995, 'سنة الصنع يجب أن تكون بعد 1995').max(2030, 'سنة الصنع غير صالحة'),
+  color: z.string().trim().min(2, 'يرجى إدخال لون السيارة'),
+  category: z.enum(['light', 'medium', 'jeep_7seats']),
+  seats: z.number().int().min(2, 'عدد المقاعد لا يقل عن 2').max(15, 'عدد المقاعد لا يتجاوز 15'),
+  transmission: z.enum(['automatic', 'manual']),
+  fuelType: z.enum(['petrol', 'diesel', 'hybrid', 'electric']),
+  dailyPrice: z.number().min(10, 'السعر اليومي يجب ألا يقل عن 10$'),
+  plateNumber: z.string().trim().min(3, 'يرجى إدخال رقم اللوحة'),
+  currentMileage: z.number().min(0, 'عداد الكيلومترات يجب ألا يكون سالباً'),
+  lastOilChangeMileage: z.number().min(0, 'عداد آخر تغيير زيت'),
+  status: z.enum(['available', 'reserved', 'rented', 'maintenance', 'inactive']),
+  imageUrl: z.string().url('يرجى إدخال رابط صورة صالح').or(z.string().min(1)),
+  description: z.string().max(1000).optional().or(z.literal('')),
+});
+
+export const customerFormSchema = z.object({
+  fullName: z.string().trim().min(3, 'اسم العميل لا يقل عن 3 أحرف'),
+  phone: z.string().trim().min(8, 'رقم الهاتف غير صالح'),
+  whatsapp: z.string().trim().optional().or(z.literal('')),
+  nationalId: z.string().trim().optional().or(z.literal('')),
+  drivingLicense: z.string().trim().optional().or(z.literal('')),
+  nationality: z.string().trim().optional().or(z.literal('')),
+  address: z.string().trim().optional().or(z.literal('')),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+});
+
+export const paymentFormSchema = z.object({
+  bookingId: z.string().min(1, 'الحجز مطلوب'),
+  amount: z.number().min(1, 'المبلغ يجب أن يكون أكبر من 0'),
+  method: z.enum(['cash', 'bank_transfer', 'other']),
+  paymentDate: z.string().min(1, 'تاريخ الدفعة مطلوب'),
+  notes: z.string().max(500).optional().or(z.literal('')),
+});
+
+export const maintenanceFormSchema = z.object({
+  vehicleId: z.string().min(1, 'يرجى اختيار السيارة'),
+  serviceType: z.enum(['oil_change', 'tires', 'brakes', 'battery', 'engine', 'transmission', 'general']),
+  mileage: z.number().min(0, 'الكيلومتر الحالي مطلوب'),
+  cost: z.number().min(0, 'التكلفة مطلوبة'),
+  serviceDate: z.string().min(1, 'تاريخ الصيانة مطلوب'),
+  nextDueMileage: z.number().optional(),
+  technicianNotes: z.string().max(1000).optional().or(z.literal('')),
+  performedBy: z.string().optional().or(z.literal('')),
+});

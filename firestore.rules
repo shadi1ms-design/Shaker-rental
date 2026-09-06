@@ -1,0 +1,172 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Designated master administrator (UID or official email)
+    function isDesignatedAdmin() {
+      return isSignedIn() && (
+        request.auth.uid == "qEGp4XPEsZdaPTb8sGOR06sJj4A2" ||
+        request.auth.token.email == "shadi1ms@gmail.com"
+      );
+    }
+
+    function hasUserDoc() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        isDesignatedAdmin() ||
+        (hasUserDoc() && (getUserData().role in ['superAdmin', 'super_admin']))
+      );
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() || (
+        hasUserDoc() && (getUserData().role in ['admin'])
+      );
+    }
+
+    function isEmployee() {
+      return isAdmin() || (
+        hasUserDoc() && (getUserData().role in ['employee'])
+      );
+    }
+
+    // Users collection: users/{uid}
+    match /users/{userId} {
+      allow read: if isEmployee() || (
+        isSignedIn() && request.auth.uid == userId
+      );
+      allow create: if isSuperAdmin() || (
+        isSignedIn() && request.auth.uid == userId
+      );
+      allow update: if isSuperAdmin() || (
+        isSignedIn() && request.auth.uid == userId
+      );
+      allow delete: if isSuperAdmin();
+
+      // Subcollection for user files (/users/{userId}/files/{fileId})
+      match /files/{fileId} {
+        allow read: if isEmployee() || (
+          isSignedIn() && request.auth.uid == userId
+        );
+        allow create, update, delete: if isEmployee() || (
+          isSignedIn() && request.auth.uid == userId
+        );
+      }
+    }
+
+    // Top-level files index: /files/{fileId}
+    match /files/{fileId} {
+      allow read: if isEmployee() || (
+        isSignedIn() && resource.data.userId == request.auth.uid
+      );
+      allow create: if isEmployee() || (
+        isSignedIn() && request.resource.data.userId == request.auth.uid
+      );
+      allow update, delete: if isEmployee() || (
+        isSignedIn() && resource.data.userId == request.auth.uid
+      );
+    }
+
+    // Settings collection: settings/company (standard) & settings/global (fallback)
+    // Non-sensitive company profile, contact, rates, and public rental terms are readable publicly
+    match /settings/{settingsId} {
+      allow read: if settingsId == 'company' || settingsId == 'global' || isEmployee();
+      allow write: if isAdmin();
+    }
+
+    // Fleet Vehicles collection
+    match /vehicles/{vehicleId} {
+      allow read: if true;
+      allow write: if isEmployee();
+    }
+
+    // Bookings collection
+    match /bookings/{bookingId} {
+      allow read: if isEmployee() || (
+        isSignedIn() && (
+          resource.data.customerId == request.auth.uid ||
+          resource.data.customerEmail == request.auth.token.email
+        )
+      );
+      allow create: if request.resource.data.customerName is string &&
+                       request.resource.data.customerPhone is string &&
+                       request.resource.data.vehicleId is string &&
+                       request.resource.data.totalPrice is number;
+      allow update: if isEmployee() || (
+        isSignedIn() && resource.data.customerId == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Customers CRM collection
+    match /customers/{customerId} {
+      allow read: if isEmployee() || (
+        isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          customerId == request.auth.uid
+        )
+      );
+      allow write: if isEmployee() || (
+        isSignedIn() && (
+          request.resource.data.userId == request.auth.uid ||
+          customerId == request.auth.uid
+        )
+      );
+    }
+
+    // Legal Rental Contracts collection
+    match /contracts/{contractId} {
+      allow read: if isEmployee() || (
+        isSignedIn() && resource.data.customerId == request.auth.uid
+      );
+      allow write: if isEmployee();
+    }
+
+    // Payments and financial receipts collection
+    match /payments/{paymentId} {
+      allow read: if isEmployee() || (
+        isSignedIn() && resource.data.customerId == request.auth.uid
+      );
+      allow write: if isAdmin();
+    }
+
+    // Maintenance records and oil change logs
+    match /maintenanceRecords/{recordId} {
+      allow read, write: if isEmployee();
+    }
+
+    // Vehicle inspections
+    match /vehicleInspections/{inspectionId} {
+      allow read, write: if isEmployee();
+    }
+
+    // Administrative notifications
+    match /notifications/{notificationId} {
+      allow read, write: if isEmployee();
+    }
+
+    // Audit logs (immutable)
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isEmployee() || isSignedIn();
+      allow update, delete: if false;
+    }
+  }
+}

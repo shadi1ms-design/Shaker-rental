@@ -1,0 +1,63 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isDesignatedAdmin() {
+      return isSignedIn() && (
+        request.auth.uid == "qEGp4XPEsZdaPTb8sGOR06sJj4A2" ||
+        request.auth.token.email == "shadi1ms@gmail.com"
+      );
+    }
+
+    function isStaff() {
+      return isSignedIn() && (
+        isDesignatedAdmin() ||
+        request.auth.token.role in ['superAdmin', 'super_admin', 'admin', 'employee']
+      );
+    }
+
+    // Public vehicle display pictures (marketing & fleet showcase)
+    match /vehicles/{vehicleId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isStaff() && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // Private customer documents (IDs, Passports, Driving Licenses)
+    match /customers/{customerId}/{allPaths=**} {
+      allow read, write: if isStaff() || (isSignedIn() && request.auth.uid == customerId);
+    }
+
+    match /customer_documents/{customerId}/{allPaths=**} {
+      allow read, write: if isStaff() || (isSignedIn() && request.auth.uid == customerId);
+    }
+
+    // Confidential rental contracts & legal documents
+    match /contracts/{contractId}/{allPaths=**} {
+      allow read: if isStaff();
+      allow write: if isStaff() && request.resource.size < 20 * 1024 * 1024;
+    }
+
+    // Vehicle inspection photos and condition records
+    match /inspections/{inspectionId}/{allPaths=**} {
+      allow read, write: if isStaff() && request.resource.size < 15 * 1024 * 1024;
+    }
+
+    // User personal storage and documents
+    match /users/{userId}/{allPaths=**} {
+      allow read, write: if isStaff() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    match /files/{userId}/{allPaths=**} {
+      allow read, write: if isStaff() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
