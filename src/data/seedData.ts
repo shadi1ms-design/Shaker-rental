@@ -151,7 +151,7 @@ export const INITIAL_VEHICLES: Vehicle[] = [
     plateNumber: 'دمشق 120934',
     currentMileage: 46000,
     lastOilChangeMileage: 44200,
-    status: 'available',
+    status: 'rented',
     imageUrl: 'https://images.unsplash.com/photo-1619682817481-e994891cd1f5?auto=format&fit=crop&w=1000&q=80',
     features: ['شاشة رقمية مزدوجة Full Digital', 'Apple CarPlay و Android Auto', 'نظام الحفاظ على المسار', 'شاحن لاسلكي'],
     description: 'الجيل الجديد من إلنترا بتصميم مستقبلي جريء وأحدث أنظمة الأمان والترفيه الإلكترونية.',
@@ -255,109 +255,9 @@ export const INITIAL_VEHICLES: Vehicle[] = [
   },
 ];
 
-export const INITIAL_CUSTOMERS: Customer[] = [
-  {
-    id: 'cust-101',
-    fullName: 'أحمد محمود العلي',
-    phone: '0944123456',
-    whatsapp: '0944123456',
-    nationalId: '01020034561',
-    drivingLicense: 'DL-98214',
-    nationality: 'سوري',
-    address: 'دمشق – المزة فيلات غربية',
-    totalRentals: 4,
-    totalSpending: 890,
-    notes: 'عميل مميز ومنتظم، يحافظ على نظافة السيارة ويسلم في الموعد دائماً.',
-    createdAt: '2026-01-15T10:00:00Z',
-  },
-  {
-    id: 'cust-102',
-    fullName: 'المهندس وسيم البيطار',
-    phone: '0993881122',
-    whatsapp: '0993881122',
-    nationalId: '01090123982',
-    drivingLicense: 'DL-44129',
-    nationality: 'سوري',
-    address: 'ريف دمشق – جرمانا ساحة السيوف',
-    totalRentals: 2,
-    totalSpending: 450,
-    notes: 'يفضل سيارات الهايبرد والسيارات الحديثة.',
-    createdAt: '2026-02-10T14:30:00Z',
-  },
-  {
-    id: 'cust-103',
-    fullName: 'رامي خالد النجار',
-    phone: '0933774411',
-    whatsapp: '0933774411',
-    nationalId: '01089921473',
-    drivingLicense: 'DL-66710',
-    nationality: 'سوري',
-    address: 'دمشق – مشروع دمر جزيرة 7',
-    totalRentals: 1,
-    totalSpending: 280,
-    notes: 'حجز سابق لرحلة عائلية إلى طرطوس.',
-    createdAt: '2026-03-01T09:15:00Z',
-  }
-];
+export const INITIAL_CUSTOMERS: Customer[] = [];
 
-export const INITIAL_BOOKINGS: Booking[] = [
-  {
-    id: 'book-2026-001',
-    bookingNumber: 'SHK-2026-000001',
-    vehicleId: 'veh-elantra-2021-blu',
-    vehicleName: 'هيونداي إلنترا (2021)',
-    vehicleCategory: 'medium',
-    customerName: 'أحمد محمود العلي',
-    customerPhone: '0944123456',
-    customerWhatsApp: '0944123456',
-    customerNationalId: '01020034561',
-    customerAddress: 'دمشق – المزة',
-    customerLicenseNumber: 'DL-98214',
-    pickupDate: '2026-09-08',
-    pickupTime: '10:00',
-    returnDate: '2026-09-12',
-    returnTime: '10:00',
-    rentalDays: 4,
-    dailyPrice: 55,
-    basePrice: 220,
-    discountAmount: 0,
-    insuranceAmount: 300,
-    totalPrice: 520,
-    paidAmount: 520,
-    remainingAmount: 0,
-    status: 'confirmed',
-    notes: 'توصيل السيارة إلى فندق الفور سيزونز دمشق.',
-    createdAt: '2026-09-05T11:20:00Z',
-  },
-  {
-    id: 'book-2026-002',
-    bookingNumber: 'SHK-2026-000002',
-    vehicleId: 'veh-sorento-2017-wht',
-    vehicleName: 'كيا سورينتو 7 ركاب (2017)',
-    vehicleCategory: 'jeep_7seats',
-    customerName: 'المهندس وسيم البيطار',
-    customerPhone: '0993881122',
-    customerWhatsApp: '0993881122',
-    customerNationalId: '01090123982',
-    customerAddress: 'جرمانا',
-    customerLicenseNumber: 'DL-44129',
-    pickupDate: '2026-09-15',
-    pickupTime: '14:00',
-    returnDate: '2026-09-22',
-    returnTime: '14:00',
-    rentalDays: 7,
-    dailyPrice: 75,
-    basePrice: 525,
-    discountAmount: 35,
-    insuranceAmount: 300,
-    totalPrice: 790,
-    paidAmount: 200,
-    remainingAmount: 590,
-    status: 'confirmed',
-    notes: 'حجز أسبوعي مع خصم الأسبوع 5$ يومياً.',
-    createdAt: '2026-09-06T08:45:00Z',
-  }
-];
+export const INITIAL_BOOKINGS: Booking[] = [];
 
 export const INITIAL_MAINTENANCE_RECORDS: MaintenanceRecord[] = [
   {
@@ -386,30 +286,6 @@ export const INITIAL_MAINTENANCE_RECORDS: MaintenanceRecord[] = [
 ];
 
 export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').UploadedFile[] } = {
-  'qEGp4XPEsZdaPTb8sGOR06sJj4A2': [
-    {
-      id: 'file-adm-01',
-      userId: 'qEGp4XPEsZdaPTb8sGOR06sJj4A2',
-      userEmail: 'shadi1ms@gmail.com',
-      fileName: 'commercial_register_shaker.pdf',
-      fileUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-      fileType: 'application/pdf',
-      fileSize: 2450000,
-      category: 'contract',
-      uploadedAt: '2026-01-05T10:15:00Z',
-    },
-    {
-      id: 'file-adm-02',
-      userId: 'qEGp4XPEsZdaPTb8sGOR06sJj4A2',
-      userEmail: 'shadi1ms@gmail.com',
-      fileName: 'tourism_license_ministry.jpg',
-      fileUrl: 'https://images.unsplash.com/photo-1586281380349-632531db7ed4?auto=format&fit=crop&w=800&q=80',
-      fileType: 'image/jpeg',
-      fileSize: 1280000,
-      category: 'other',
-      uploadedAt: '2026-01-10T14:40:00Z',
-    }
-  ],
   'user-tariq-001': [
     {
       id: 'file-tar-01',
@@ -555,17 +431,6 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
 };
 
 export const INITIAL_FIRESTORE_USERS: import('../types').FirestoreUser[] = [
-  {
-    id: 'qEGp4XPEsZdaPTb8sGOR06sJj4A2',
-    uid: 'qEGp4XPEsZdaPTb8sGOR06sJj4A2',
-    email: 'shadi1ms@gmail.com',
-    displayName: 'المدير العام (شادي)',
-    phone: '00963944331774',
-    role: 'super_admin',
-    createdAt: '2026-01-01T08:00:00Z',
-    uploadedFilesCount: 2,
-    files: INITIAL_UPLOADED_FILES['qEGp4XPEsZdaPTb8sGOR06sJj4A2'],
-  },
   {
     id: 'user-tariq-001',
     uid: 'user-tariq-001',

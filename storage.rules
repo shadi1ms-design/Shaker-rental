@@ -6,58 +6,91 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function isDesignatedAdmin() {
+    // Role check strictly via Firebase Authentication Custom Claims (sole server-side source of truth)
+    function hasRole(r) {
+      return isSignedIn() &&
+        (('role' in request.auth.token && request.auth.token.role == r) ||
+         (r in request.auth.token && request.auth.token[r] == true));
+    }
+
+    function isAdmin() {
       return isSignedIn() && (
-        request.auth.uid == "qEGp4XPEsZdaPTb8sGOR06sJj4A2" ||
-        request.auth.token.email == "shadi1ms@gmail.com"
+        hasRole('admin') ||
+        hasRole('superAdmin') ||
+        hasRole('super_admin') ||
+        hasRole('owner')
       );
     }
 
-    function isStaff() {
-      return isSignedIn() && (
-        isDesignatedAdmin() ||
-        request.auth.token.role in ['superAdmin', 'super_admin', 'admin', 'employee']
-      );
+    function isEmployee() {
+      return isAdmin() || hasRole('employee') || hasRole('staff') || hasRole('manager');
     }
 
-    // Public vehicle display pictures (marketing & fleet showcase)
+    function hasContractDoc(contractId) {
+      return firestore.exists(/databases/ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1/documents/contracts/$(contractId));
+    }
+
+    function getContractData(contractId) {
+      return firestore.get(/databases/ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1/documents/contracts/$(contractId)).data;
+    }
+
+    // =========================================================================
+    // 1. PUBLIC FLEET VEHICLE MEDIA
+    // Public read for vehicle catalog photos; write strictly restricted to staff
+    // =========================================================================
     match /vehicles/{vehicleId}/{allPaths=**} {
       allow read: if true;
-      allow write: if isStaff() && request.resource.size < 10 * 1024 * 1024;
+      allow write: if isEmployee()
+                    && request.resource.size < 30 * 1024 * 1024
+                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)');
     }
 
-    // Private customer documents (IDs, Passports, Driving Licenses)
-    match /customers/{customerId}/{allPaths=**} {
-      allow read, write: if isStaff() || (isSignedIn() && request.auth.uid == customerId);
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if isEmployee()
+                    && request.resource.size < 30 * 1024 * 1024
+                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)');
     }
 
-    match /customer_documents/{customerId}/{allPaths=**} {
-      allow read, write: if isStaff() || (isSignedIn() && request.auth.uid == customerId);
-    }
-
-    // Confidential rental contracts & legal documents
-    match /contracts/{contractId}/{allPaths=**} {
-      allow read: if isStaff();
-      allow write: if isStaff() && request.resource.size < 20 * 1024 * 1024;
-    }
-
-    // Vehicle inspection photos and condition records
-    match /inspections/{inspectionId}/{allPaths=**} {
-      allow read, write: if isStaff() && request.resource.size < 15 * 1024 * 1024;
-    }
-
-    // User personal storage and documents
+    // =========================================================================
+    // 2. PRIVATE CUSTOMER DOCUMENTS & USER UPLOADS
+    // Strictly private to the account owner and authorized staff (Zero Public Read)
+    // =========================================================================
     match /users/{userId}/{allPaths=**} {
-      allow read, write: if isStaff() || (isSignedIn() && request.auth.uid == userId);
+      allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
+      allow create, update: if isSignedIn() && (request.auth.uid == userId || isEmployee())
+                    && request.resource.size < 25 * 1024 * 1024
+                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
+      allow delete: if isEmployee();
     }
 
-    match /files/{userId}/{allPaths=**} {
-      allow read, write: if isStaff() || (isSignedIn() && request.auth.uid == userId);
+    match /uploads/{userId}/{allPaths=**} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
+      allow create, update: if isSignedIn() && (request.auth.uid == userId || isEmployee())
+                    && request.resource.size < 30 * 1024 * 1024
+                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
+      allow delete: if isEmployee();
     }
 
-    // Default deny
+    // =========================================================================
+    // 3. DIGITAL CONTRACTS & INSPECTION MEDIA
+    // Restricted to authorized staff and the verified contract customer
+    // =========================================================================
+    match /contracts/{contractId}/{allPaths=**} {
+      allow read: if isEmployee() || (
+        isSignedIn() &&
+        hasContractDoc(contractId) &&
+        getContractData(contractId).get('customerId', '') == request.auth.uid
+      );
+      allow write: if isEmployee()
+                    && request.resource.size < 100 * 1024 * 1024
+                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|video/(mp4|webm|quicktime|x-matroska)|application/pdf');
+    }
+
+    // Default fallback catch-all - restricted to staff / admin
     match /{allPaths=**} {
-      allow read, write: if false;
+      allow read: if isEmployee();
+      allow write: if isAdmin();
     }
   }
 }

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Booking, Payment } from '../types';
 import { dataService } from '../services/dataService';
-import { CreditCard, DollarSign, X, CheckCircle2, Calendar } from 'lucide-react';
+import { CreditCard, DollarSign, X, CheckCircle2, Calendar, AlertTriangle } from 'lucide-react';
 
 interface PaymentModalProps {
   booking: Booking;
@@ -20,14 +20,27 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [paymentDate, setPaymentDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('دفعة تأجير نقداً في مكتب جرمانا');
   const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (amount <= 0) return;
+    setErrorMessage(null);
+
+    if (amount <= 0) {
+      setErrorMessage('مبلغ الدفعة يجب أن يكون أكبر من صفر.');
+      return;
+    }
+
+    if (amount > remaining && remaining > 0) {
+      setErrorMessage(`مبلغ الدفعة ($${amount}) يتجاوز المبلغ المتبقي على الحجز ($${remaining}).`);
+      return;
+    }
+
     setIsSaving(true);
     try {
       const payment = await dataService.recordPayment({
         bookingId: booking.id,
+        customerId: booking.customerId || booking.customerPhone,
         amount,
         method,
         paymentDate,
@@ -35,20 +48,24 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       });
       onPaymentRecorded(payment);
       onClose();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('Payment registration error:', err);
+      setErrorMessage(err?.message || 'حدث خطأ أثناء حفظ الدفعة في قاعدة البيانات السحابية.');
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl p-6 text-slate-100">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150 overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6">
+      <div 
+        className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl p-5 sm:p-6 text-slate-100 my-auto overflow-y-auto max-h-[90vh] max-h-[90dvh] overscroll-contain"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
         <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
           <div className="flex items-center gap-2">
             <DollarSign className="w-5 h-5 text-emerald-400" />
-            <h3 className="font-bold text-white text-base">تسجيل دفعة مالية</h3>
+            <h3 className="font-bold text-white text-base">تسجيل سند قبض ودفع</h3>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white">
             <X className="w-5 h-5" />
@@ -74,17 +91,26 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           </div>
           <div className="flex justify-between text-slate-300 font-bold pt-1 border-t border-slate-800">
             <span>المبلغ المتبقي:</span>
-            <span className="text-rose-400 font-black">${remaining}</span>
+            <span className={remaining > 0 ? "text-rose-400 font-black" : "text-emerald-400 font-black"}>
+              ${remaining}
+            </span>
           </div>
         </div>
+
+        {errorMessage && (
+          <div className="mb-4 p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-bold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           <div>
             <label className="block text-slate-400 mb-1 font-semibold">قيمة الدفعة المستلمة ($)</label>
             <input
               type="number"
-              value={amount}
-              onChange={(e) => setAmount(Number(e.target.value))}
+              value={amount ?? 0}
+              onChange={(e) => setAmount(Number(e.target.value) || 0)}
               min={1}
               max={10000}
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-bold text-white focus:outline-none focus:border-amber-500"
@@ -95,7 +121,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           <div>
             <label className="block text-slate-400 mb-1 font-semibold">طريقة الدفع</label>
             <select
-              value={method}
+              value={method || 'cash'}
               onChange={(e) => setMethod(e.target.value as any)}
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
             >
@@ -109,7 +135,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             <label className="block text-slate-400 mb-1 font-semibold">تاريخ الاستلام</label>
             <input
               type="date"
-              value={paymentDate}
+              value={paymentDate || ''}
               onChange={(e) => setPaymentDate(e.target.value)}
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
               required
@@ -120,7 +146,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             <label className="block text-slate-400 mb-1 font-semibold">ملاحظات السند المالي</label>
             <input
               type="text"
-              value={notes}
+              value={notes || ''}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
             />
@@ -130,17 +156,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold"
+              disabled={isSaving}
+              className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold hover:bg-slate-700 transition-colors"
             >
               إلغاء
             </button>
             <button
               type="submit"
               disabled={isSaving}
-              className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20"
+              className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 disabled:opacity-50 transition-colors"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isSaving ? 'جاري التسجيل...' : `تسجيل دفعة $${amount}`}</span>
+              <span>{isSaving ? 'جاري الحفظ في Firestore...' : `تسجيل دفعة $${amount}`}</span>
             </button>
           </div>
         </form>

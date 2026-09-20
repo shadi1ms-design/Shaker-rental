@@ -75,10 +75,13 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md overflow-y-auto text-slate-100">
-      <div className="relative w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl my-6 animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6 text-slate-100">
+      <div 
+        className="relative w-full max-w-xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl my-auto animate-in zoom-in-95 duration-200 max-h-[90vh] max-h-[90dvh] flex flex-col overflow-hidden"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-950 border-b border-slate-800">
+        <div className="flex items-center justify-between px-5 sm:px-6 py-4 bg-slate-950 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-2">
             <Wrench className="w-5 h-5 text-amber-400" />
             <div>
@@ -98,20 +101,24 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
         </div>
 
         {success ? (
-          <div className="p-10 text-center space-y-3">
+          <div className="p-8 sm:p-10 text-center space-y-3 overflow-y-auto flex-1 overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
             <CheckCircle2 className="w-14 h-14 text-emerald-400 mx-auto animate-bounce" />
             <h4 className="text-lg font-bold text-white">تم توثيق عملية الصيانة وتحديث العداد!</h4>
             <p className="text-xs text-slate-400">تم ضبط موعد الزيت القادم بعد 5000 كم بنجاح.</p>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          <form 
+            onSubmit={handleSubmit} 
+            className="overflow-y-auto flex-1 p-4 sm:p-6 space-y-5 overscroll-contain"
+            style={{ WebkitOverflowScrolling: 'touch' }}
+          >
             {/* Vehicle Selector */}
             <div>
               <label className="block text-xs font-semibold text-slate-400 mb-1.5">
                 اختر السيارة المعنية بالصيانة
               </label>
               <select
-                value={selectedVehicleId}
+                value={selectedVehicleId || ''}
                 onChange={(e) => handleVehicleChange(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
               >
@@ -161,7 +168,7 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
                 نوع الخدمة / الصيانة
               </label>
               <select
-                value={serviceType}
+                value={serviceType || 'oil_change'}
                 onChange={(e) => setServiceType(e.target.value as MaintenanceType)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
               >
@@ -183,8 +190,8 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
                 </label>
                 <input
                   type="number"
-                  value={mileage}
-                  onChange={(e) => setMileage(Number(e.target.value))}
+                  value={mileage ?? 0}
+                  onChange={(e) => setMileage(Number(e.target.value) || 0)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
                   required
                 />
@@ -196,8 +203,8 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
                 </label>
                 <input
                   type="number"
-                  value={cost}
-                  onChange={(e) => setCost(Number(e.target.value))}
+                  value={cost ?? 0}
+                  onChange={(e) => setCost(Number(e.target.value) || 0)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
                   required
                 />
@@ -210,7 +217,7 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
                 <label className="block text-xs font-semibold text-slate-400 mb-1">تاريخ إجراء الصيانة</label>
                 <input
                   type="date"
-                  value={serviceDate}
+                  value={serviceDate || ''}
                   onChange={(e) => setServiceDate(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
                   required
@@ -221,7 +228,7 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
                 <label className="block text-xs font-semibold text-slate-400 mb-1">الجهة المنفذة / الورشة</label>
                 <input
                   type="text"
-                  value={performedBy}
+                  value={performedBy || ''}
                   onChange={(e) => setPerformedBy(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
                 />
@@ -234,7 +241,7 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
                 ملاحظات الفني وقطع الغيار المستبدلة
               </label>
               <textarea
-                value={technicianNotes}
+                value={technicianNotes || ''}
                 onChange={(e) => setTechnicianNotes(e.target.value)}
                 rows={2}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"

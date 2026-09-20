@@ -28,10 +28,13 @@ export const ContractModal: React.FC<ContractModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md overflow-y-auto">
-      <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl my-6 animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6">
+      <div 
+        className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl my-auto animate-in zoom-in-95 duration-200 max-h-[90vh] max-h-[90dvh] flex flex-col overflow-hidden"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
         {/* Top Control Bar (Hidden during print) */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-950 border-b border-slate-800 print:hidden text-slate-100">
+        <div className="flex items-center justify-between px-5 sm:px-6 py-4 bg-slate-950 border-b border-slate-800 print:hidden text-slate-100 shrink-0">
           <div className="flex items-center gap-2">
             <Shield className="w-5 h-5 text-amber-400" />
             <div>
@@ -60,7 +63,10 @@ export const ContractModal: React.FC<ContractModalProps> = ({
         </div>
 
         {/* Printable Contract Document Container */}
-        <div className="p-4 sm:p-8 bg-slate-800/40 overflow-y-auto max-h-[80vh] print:max-h-none print:p-0 print:bg-white">
+        <div 
+          className="p-3 sm:p-8 bg-slate-800/40 overflow-y-auto flex-1 overscroll-contain print:max-h-none print:p-0 print:bg-white"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
           <div
             ref={contractRef}
             className="printable-contract bg-white text-slate-900 rounded-2xl shadow-xl p-8 sm:p-10 mx-auto max-w-3xl border border-slate-200 print:border-none print:shadow-none print:rounded-none print:w-full"

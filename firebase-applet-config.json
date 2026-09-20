@@ -1,0 +1,12 @@
+{
+  "projectId": "shaker-rentalcars",
+  "appId": "1:440852492633:web:1f59c7707ce429e36e9c48",
+  "apiKey": "AIzaSyAGYZ9H5WAK6m1nKYJjC7VypcsVArWEuMs",
+  "authDomain": "shaker-rentalcars.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1",
+  "storageBucket": "shaker-rentalcars.firebasestorage.app",
+  "messagingSenderId": "440852492633",
+  "measurementId": "G-15PLS5HCF8",
+  "oAuthClientId": "440852492633-gr672h10l1sbamtnpfbe0jj4g17mecm2.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
+}

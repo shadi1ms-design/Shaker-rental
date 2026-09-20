@@ -14,7 +14,7 @@ export type BookingStatus =
 export type FuelType = 'petrol' | 'diesel' | 'hybrid' | 'electric';
 export type TransmissionType = 'automatic' | 'manual';
 export type PaymentMethod = 'cash' | 'bank_transfer' | 'other';
-export type UserRole = 'superAdmin' | 'super_admin' | 'admin' | 'employee' | 'customer';
+export type UserRole = 'super_admin' | 'superAdmin' | 'admin' | 'employee' | 'customer';
 
 export interface Vehicle {
   id: string;
@@ -32,6 +32,7 @@ export interface Vehicle {
   lastOilChangeMileage: number;
   status: VehicleStatus;
   imageUrl: string;
+  images?: string[];
   features: string[];
   description: string;
   isDeleted?: boolean;
@@ -51,6 +52,8 @@ export interface Booking {
   customerNationalId?: string;
   customerAddress?: string;
   customerLicenseNumber?: string;
+  customerId?: string;
+  customerEmail?: string;
   pickupDate: string; // YYYY-MM-DD
   pickupTime: string; // HH:mm
   returnDate: string; // YYYY-MM-DD
@@ -60,12 +63,17 @@ export interface Booking {
   basePrice: number;
   discountAmount: number;
   insuranceAmount: number;
+  driverFee?: number;
+  withDriver?: boolean;
+  deliveryLocation?: string;
   totalPrice: number;
   paidAmount: number;
   remainingAmount: number;
   status: BookingStatus;
+  paymentStatus?: string;
   notes?: string;
   isDeleted?: boolean;
+  hiddenFromCustomer?: boolean;
   createdAt: string;
   updatedAt?: string;
 }
@@ -82,6 +90,11 @@ export interface Customer {
   totalRentals: number;
   totalSpending: number;
   notes?: string;
+  verificationStatus?: 'pending' | 'manual_review' | 'verified' | 'rejected';
+  verified?: boolean;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  verificationNotes?: string;
   documents?: {
     idFront?: string;
     idBack?: string;
@@ -93,18 +106,41 @@ export interface Customer {
   updatedAt?: string;
 }
 
+export interface ContractAttachment {
+  id: string;
+  name: string;
+  url: string;
+  type: 'image' | 'pdf' | 'document' | 'other';
+  size?: number;
+  uploadedAt: string;
+}
+
+export interface ContractVideo {
+  id: string;
+  name: string;
+  url: string;
+  size?: number;
+  uploadedAt: string;
+  notes?: string;
+}
+
 export interface Contract {
   id: string;
   contractNumber: string;
   bookingId: string;
   vehicleId: string;
+  vehicleName?: string;
   customerId: string;
+  customerName?: string;
+  customerPhone?: string;
   termsAndConditions: string;
   status: 'active' | 'closed' | 'terminated';
   mileageAtPickup: number;
   fuelAtPickup: string;
   mileageAtReturn?: number;
   fuelAtReturn?: string;
+  attachments?: ContractAttachment[];
+  video?: ContractVideo;
   createdAt: string;
   updatedAt?: string;
 }
@@ -164,6 +200,14 @@ export interface VehicleInspection {
   createdAt: string;
 }
 
+export interface DiscountConfig {
+  enabled: boolean;
+  percentage: number; // 1 to 25 %
+  scope: 'all' | 'specific'; // 'all' vehicles or 'specific' vehicles
+  vehicleIds: string[]; // List of vehicle IDs if scope === 'specific'
+  title?: string;
+}
+
 export interface AppSettings {
   id: string;
   companyName: string;
@@ -176,7 +220,8 @@ export interface AppSettings {
   insuranceAbove2Days: number;
   insuranceShortTerm?: number;
   insuranceLongTerm?: number;
-  weeklyDiscountPerDay: number;
+  weeklyDiscountPerDay?: number;
+  discountConfig?: DiscountConfig;
   monthlyRateLight: number;
   monthlyRateMedium: number;
   monthlyRateJeep: number;
@@ -200,6 +245,17 @@ export interface PricingCalculation {
   dailyPrice: number;
   basePrice: number;
   discountAmount: number;
+  // System 1: Duration/Period Discount (Weekly & Monthly)
+  durationDiscountAmount: number;
+  durationDiscountType: 'none' | 'weekly' | 'monthly' | 'proportional';
+  durationDiscountDescription: string;
+  // System 2: Dynamic Member Account Discount (1% - 25%)
+  memberDiscountAmount: number;
+  memberDiscountPercentage: number;
+  memberDiscountEligible: boolean;
+  memberDiscountApplied: boolean;
+  potentialMemberSavings: number;
+  // Totals & Insurance
   insuranceAmount: number;
   subtotal: number;
   totalPrice: number;
@@ -234,9 +290,12 @@ export interface UploadedFile {
   userEmail?: string;
   fileName: string;
   fileUrl: string;
+  storagePath?: string;
   fileType: string;
   fileSize: number; // in bytes
   category?: 'national_id' | 'driver_license' | 'passport' | 'contract' | 'other';
+  verified?: boolean;
+  status?: 'pending' | 'manual_review' | 'verified' | 'rejected' | 'uploaded';
   uploadedAt: string; // ISO date-time string
 }
 
@@ -247,9 +306,17 @@ export interface FirestoreUser {
   displayName: string;
   phone?: string;
   role: UserRole;
+  accountDisabled?: boolean;
+  disabled?: boolean;
   createdAt: string;
   uploadedFilesCount?: number;
   files?: UploadedFile[];
+  verificationStatus?: 'pending' | 'manual_review' | 'verified' | 'rejected';
+  verified?: boolean;
+  identityVerified?: boolean;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  verificationNotes?: string;
 }
 
 export interface AuthUser {
@@ -258,11 +325,15 @@ export interface AuthUser {
   displayName: string;
   phone?: string;
   role: UserRole;
+  accountDisabled?: boolean;
+  disabled?: boolean;
   createdAt?: string;
+  emailVerified?: boolean;
+  isPasswordProvider?: boolean;
 }
 
 export interface UserAccount extends AuthUser {
-  passwordHash?: string; // used for local demo / fallback persistence
+  // User profile information
 }
 
 export interface FilterOptions {

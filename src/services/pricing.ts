@@ -10,7 +10,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
   currency: '$',
   insurance1to2Days: 500,
   insuranceAbove2Days: 300,
+  insuranceShortTerm: 500,
+  insuranceLongTerm: 300,
   weeklyDiscountPerDay: 5,
+  discountConfig: {
+    enabled: true,
+    percentage: 10,
+    scope: 'all',
+    vehicleIds: [],
+    title: 'خصم خاص للأعضاء المسجلين',
+  },
   monthlyRateLight: 800,
   monthlyRateMedium: 1200,
   monthlyRateJeep: 1500,
@@ -32,6 +41,9 @@ export function calculateRentalDays(pickupDateStr: string, returnDateStr: string
   if (!pickupDateStr || !returnDateStr) return 1;
   const start = new Date(pickupDateStr);
   const end = new Date(returnDateStr);
+  if (end < start) {
+    return 0;
+  }
   const diffTime = end.getTime() - start.getTime();
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   return Math.max(1, diffDays);
@@ -39,82 +51,109 @@ export function calculateRentalDays(pickupDateStr: string, returnDateStr: string
 
 /**
  * Centralized Pricing Engine
- * Implements the exact business rules defined in Section 7 & 8 of the requirements.
+ *
+ * System 1 (Duration/Period-based Discount) has been CANCELLED as requested.
+ * All bookings are priced based on the daily rental rate (days × dailyPrice).
+ *
+ * System 2 (Dynamic Member Account Discount 1% - 25%) is ACTIVE:
+ *   - Configurable percentage from AppSettings (1% to 25%)
+ *   - Applies to all cars or specific vehicle IDs
+ *   - Strictly requires authentication (logged-in user)
  */
 export function calculateRentalPrice(
   category: VehicleCategory,
   dailyPrice: number,
   days: number,
-  settings: AppSettings = DEFAULT_SETTINGS
+  settings: AppSettings = DEFAULT_SETTINGS,
+  options?: {
+    isUserLoggedIn?: boolean;
+    vehicleId?: string;
+  }
 ): PricingCalculation {
   const rentalDays = Math.max(1, Math.round(days));
   const rawBase = rentalDays * dailyPrice;
 
-  // Monthly flat rates by category
-  let monthlyCategoryRate = settings.monthlyRateMedium;
-  if (category === 'light') {
-    monthlyCategoryRate = settings.monthlyRateLight;
-  } else if (category === 'jeep_7seats') {
-    monthlyCategoryRate = settings.monthlyRateJeep;
+  // Duration/Period discount is cancelled as requested
+  const durationDiscountAmount = 0;
+  const durationDiscountType: 'none' | 'weekly' | 'monthly' | 'proportional' = 'none';
+  const durationDiscountDescription = '';
+  const subtotalAfterDuration = rawBase;
+
+  // --- ACTIVE DISCOUNT SYSTEM: Dynamic Member Account Discount (1% - 25%, requires login) ---
+  const discountCfg = settings.discountConfig;
+  let memberDiscountEligible = false;
+  let memberDiscountApplied = false;
+  let memberDiscountPercentage = 0;
+  let potentialMemberSavings = 0;
+  let memberDiscountAmount = 0;
+
+  if (discountCfg && discountCfg.enabled) {
+    const rawPct = Number(discountCfg.percentage) || 0;
+    const safePercentage = Math.min(25, Math.max(1, Math.round(rawPct)));
+
+    // Check if this vehicle is eligible:
+    // If scope === 'all', all vehicles are eligible.
+    // If scope === 'specific', check if options.vehicleId is in discountCfg.vehicleIds
+    const isVehicleMatched =
+      discountCfg.scope === 'all' ||
+      !discountCfg.vehicleIds ||
+      discountCfg.vehicleIds.length === 0 ||
+      (options?.vehicleId ? discountCfg.vehicleIds.includes(options.vehicleId) : true);
+
+    if (isVehicleMatched && safePercentage > 0) {
+      memberDiscountEligible = true;
+      memberDiscountPercentage = safePercentage;
+      potentialMemberSavings = Math.round(rawBase * (safePercentage / 100));
+
+      // Strictly require authentication to apply the member discount
+      if (options?.isUserLoggedIn) {
+        memberDiscountApplied = true;
+        memberDiscountAmount = potentialMemberSavings;
+      }
+    }
   }
 
-  let basePrice = rawBase;
-  let discountAmount = 0;
-  let subtotal = rawBase;
-  let pricingType: 'daily' | 'weekly' | 'monthly' | 'proportional' = 'daily';
-  let explanation = '';
+  // Final subtotal and total discount
+  const finalSubtotal = Math.max(0, rawBase - memberDiscountAmount);
+  const totalDiscountAmount = memberDiscountAmount;
 
-  if (rentalDays >= 30) {
-    // Monthly calculation (multiples of 30 days or flat base)
-    pricingType = 'monthly';
-    const months = Math.floor(rentalDays / 30);
-    const extraDays = rentalDays % 30;
-    const monthlyCost = months * monthlyCategoryRate;
-    const extraDaysCost = extraDays * (monthlyCategoryRate / 30);
-    subtotal = Math.round(monthlyCost + extraDaysCost);
-    discountAmount = Math.max(0, rawBase - subtotal);
-    basePrice = rawBase;
-    explanation = `تعرفة شهرية (${monthlyCategoryRate}$ / شهر)`;
-  } else if (rentalDays >= 14 && rentalDays <= 29) {
-    // 14–29 days: Proportional based on monthly rate
-    pricingType = 'proportional';
-    subtotal = Math.round(rentalDays * (monthlyCategoryRate / 30));
-    discountAmount = Math.max(0, rawBase - subtotal);
-    basePrice = rawBase;
-    explanation = `سعر نسبي مخفض للفترات الطويلة (محسوب على أساس التعرفة الشهرية)`;
-  } else if (rentalDays >= 7) {
-    // Weekly rule: $5 discount per day (e.g., 7 * dailyPrice - 5 * 7)
-    pricingType = 'weekly';
-    discountAmount = rentalDays * settings.weeklyDiscountPerDay;
-    subtotal = Math.max(0, rawBase - discountAmount);
-    basePrice = rawBase;
-    explanation = `خصم أسبوعي بقيمة ${settings.weeklyDiscountPerDay}$ يومياً (${discountAmount}$ إجمالي الخصم)`;
-  } else {
-    // Standard Daily
-    pricingType = 'daily';
-    discountAmount = 0;
-    subtotal = rawBase;
-    basePrice = rawBase;
-    explanation = `سعر يومي نظامي (${dailyPrice}$ / يوم)`;
+  // Clear human-readable explanation
+  let explanation = `سعر يومي (${dailyPrice}$ × ${rentalDays} يوم)`;
+  if (memberDiscountApplied && memberDiscountAmount > 0) {
+    explanation += ` • خصم الأعضاء (${memberDiscountPercentage}%: -$${memberDiscountAmount})`;
   }
 
-  // Insurance calculation rule (Section 8):
+  if (memberDiscountApplied && memberDiscountAmount > 0) {
+    explanation += ` • خصم الأعضاء (${memberDiscountPercentage}%: -$${memberDiscountAmount})`;
+  }
+
+  // Insurance calculation rule:
   // 1 or 2 days: $500
   // More than 2 days: $300
   const insuranceAmount =
-    rentalDays <= 2 ? settings.insurance1to2Days : settings.insuranceAbove2Days;
+    rentalDays <= 2
+      ? settings.insuranceShortTerm ?? settings.insurance1to2Days ?? 500
+      : settings.insuranceLongTerm ?? settings.insuranceAbove2Days ?? 300;
 
-  const totalPrice = subtotal + insuranceAmount;
+  const totalPrice = finalSubtotal + insuranceAmount;
 
   return {
     rentalDays,
     dailyPrice,
-    basePrice,
-    discountAmount,
+    basePrice: rawBase,
+    discountAmount: totalDiscountAmount,
+    durationDiscountAmount,
+    durationDiscountType,
+    durationDiscountDescription,
+    memberDiscountAmount,
+    memberDiscountPercentage,
+    memberDiscountEligible,
+    memberDiscountApplied,
+    potentialMemberSavings,
     insuranceAmount,
-    subtotal,
+    subtotal: finalSubtotal,
     totalPrice,
-    pricingType,
+    pricingType: durationDiscountType === 'none' ? 'daily' : durationDiscountType,
     explanation,
   };
 }

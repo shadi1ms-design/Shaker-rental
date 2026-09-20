@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { VehicleImagePlaceholder } from './VehicleImagePlaceholder';
 import {
   Vehicle,
   VehicleCategory,
@@ -21,7 +22,8 @@ import {
   CheckCircle,
   AlertCircle,
   Clock,
-  Info
+  Info,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface CarCatalogProps {
@@ -76,6 +78,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
   const [maxPrice, setMaxPrice] = useState<number>(100);
   const [sortBy, setSortBy] = useState<SortField>('price-asc');
   const [showFiltersMobile, setShowFiltersMobile] = useState(false);
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
 
   // Sync category or initialFilters prop if updated from Hero search
   React.useEffect(() => {
@@ -217,7 +220,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
             <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
               <ArrowUpDown className="w-4 h-4 text-slate-400" />
               <select
-                value={sortBy}
+                value={sortBy || 'price-asc'}
                 onChange={(e) => setSortBy(e.target.value as SortField)}
                 className="bg-transparent text-sm text-slate-200 font-medium focus:outline-none cursor-pointer"
               >
@@ -258,7 +261,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               <div className="relative">
                 <input
                   type="text"
-                  value={searchQuery}
+                  value={searchQuery || ''}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="مثال: أوبتيما، إلنترا، BYD..."
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 pl-9 text-sm text-white focus:outline-none focus:border-amber-500"
@@ -307,8 +310,8 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 min="35"
                 max="100"
                 step="5"
-                value={maxPrice}
-                onChange={(e) => setMaxPrice(Number(e.target.value))}
+                value={maxPrice ?? 100}
+                onChange={(e) => setMaxPrice(Number(e.target.value) || 100)}
                 className="w-full accent-amber-500 bg-slate-800 h-2 rounded-lg cursor-pointer"
               />
               <div className="flex justify-between text-[10px] text-slate-500 mt-1">
@@ -325,7 +328,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 الشركة المصنعة
               </label>
               <select
-                value={selectedBrand}
+                value={selectedBrand || 'all'}
                 onChange={(e) => setSelectedBrand(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
               >
@@ -343,7 +346,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                   ناقل الحركة
                 </label>
                 <select
-                  value={transmission}
+                  value={transmission || 'all'}
                   onChange={(e) => setTransmission(e.target.value as TransmissionType | 'all')}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none"
                 >
@@ -358,7 +361,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                   نوع الوقود
                 </label>
                 <select
-                  value={fuelType}
+                  value={fuelType || 'all'}
                   onChange={(e) => setFuelType(e.target.value as FuelType | 'all')}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none"
                 >
@@ -446,6 +449,8 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                   const weeklyCalc = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 7, DEFAULT_SETTINGS);
                   const monthlyCalc = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 30, DEFAULT_SETTINGS);
                   const isAvailable = vehicle.status === 'available';
+                  const isRented = vehicle.status === 'rented';
+                  const isMaintenance = vehicle.status === 'maintenance';
 
                   return (
                     <div
@@ -454,13 +459,18 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                     >
                       {/* Car Image with Badge */}
                       <div className="relative h-48 sm:h-52 bg-slate-950 overflow-hidden">
-                        <img
-                          src={vehicle.imageUrl}
-                          alt={`${vehicle.brand} ${vehicle.model}`}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                          loading="lazy"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-black/30" />
+                        {(!vehicle.imageUrl && (!vehicle.images || vehicle.images.length === 0)) || failedImages[vehicle.id] ? (
+                          <VehicleImagePlaceholder brand={vehicle.brand} model={vehicle.model} />
+                        ) : (
+                          <img
+                            src={vehicle.imageUrl || (vehicle.images && vehicle.images[0])}
+                            alt={`${vehicle.brand} ${vehicle.model}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            loading="lazy"
+                            onError={() => setFailedImages((prev) => ({ ...prev, [vehicle.id]: true }))}
+                          />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-black/30 pointer-events-none" />
 
                         {/* Category & Status Badges */}
                         <div className="absolute top-3 right-3 flex flex-col gap-1.5">
@@ -470,17 +480,36 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                         </div>
 
                         <div className="absolute top-3 left-3">
-                          <span
-                            className={`px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1 ${
-                              isAvailable
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                            }`}
-                          >
-                            <span className={`w-1.5 h-1.5 rounded-full ${isAvailable ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                            {isAvailable ? 'متاحة للحجز' : 'مؤجرة حالياً'}
-                          </span>
+                          {isAvailable ? (
+                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                              <span>متاحة الآن ●</span>
+                            </span>
+                          ) : isRented ? (
+                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                              <span>مؤجرة حالياً</span>
+                            </span>
+                          ) : isMaintenance ? (
+                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                              <span>في الصيانة</span>
+                            </span>
+                          ) : (
+                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                              <span>محجوزة</span>
+                            </span>
+                          )}
                         </div>
+
+                        {/* Multi-image indicator */}
+                        {vehicle.images && vehicle.images.length > 1 && (
+                          <div className="absolute bottom-3 left-3 text-[11px] text-slate-300 bg-slate-950/80 px-2 py-0.5 rounded-lg backdrop-blur-sm border border-slate-700/50 flex items-center gap-1">
+                            <ImageIcon className="w-3 h-3 text-amber-400" />
+                            <span>{vehicle.images.length} صور</span>
+                          </div>
+                        )}
 
                         {/* Year & Color Pill */}
                         <div className="absolute bottom-3 right-3 text-xs text-slate-300 bg-slate-950/70 px-2.5 py-1 rounded-lg backdrop-blur-sm">
@@ -508,31 +537,30 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                           {/* Quick Spec Icons */}
                           <div className="grid grid-cols-3 gap-2 py-3 border-y border-slate-800/80 my-3 text-xs text-slate-300">
                             <div className="flex items-center gap-1.5">
-                              <Users className="w-3.5 h-3.5 text-slate-400" />
+                              <Users className="w-4 h-4 text-slate-400" />
                               <span>{vehicle.seats} مقاعد</span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                              <Settings className="w-3.5 h-3.5 text-slate-400" />
+                              <Settings className="w-4 h-4 text-slate-400" />
                               <span>{vehicle.transmission === 'automatic' ? 'أوتوماتيك' : 'عادي'}</span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                              <Fuel className="w-3.5 h-3.5 text-slate-400" />
+                              <Fuel className="w-4 h-4 text-slate-400" />
                               <span>
                                 {vehicle.fuelType === 'hybrid' ? 'هايبرد' : vehicle.fuelType === 'petrol' ? 'بنزين' : vehicle.fuelType}
                               </span>
                             </div>
                           </div>
 
-                          {/* Weekly & Monthly Discount Badges */}
-                          <div className="bg-slate-950/60 rounded-xl p-2.5 mb-4 text-xs space-y-1">
-                            <div className="flex justify-between text-slate-400">
-                              <span>سعر الأسبوع (خصم 5$ يومياً):</span>
-                              <span className="text-emerald-400 font-bold">${weeklyCalc.subtotal}</span>
-                            </div>
-                            <div className="flex justify-between text-slate-400">
-                              <span>سعر الشهر المعتمد:</span>
-                              <span className="text-amber-400 font-bold">${monthlyCalc.subtotal}</span>
-                            </div>
+                          {/* Member Discount Badge */}
+                          <div className="bg-slate-950/60 rounded-xl p-2.5 mb-4 text-xs flex items-center justify-between border border-slate-800/60">
+                            <span className="text-slate-400 flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                              <span>خصم الأعضاء المسجلين:</span>
+                            </span>
+                            <span className="text-emerald-400 font-bold font-mono">
+                              حتى {DEFAULT_SETTINGS.discountConfig?.percentage || 10}%
+                            </span>
                           </div>
                         </div>
 
@@ -546,13 +574,24 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                             <span>التفاصيل</span>
                           </button>
 
-                          <button
-                            onClick={() => handleBooking(vehicle)}
-                            className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1"
-                          >
-                            <Calendar className="w-3.5 h-3.5" />
-                            <span>احجز الآن</span>
-                          </button>
+                          {isAvailable ? (
+                            <button
+                              onClick={() => handleBooking(vehicle)}
+                              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span>احجز الآن</span>
+                            </button>
+                          ) : (
+                            <button
+                              disabled
+                              className="flex-1 py-2.5 rounded-xl bg-slate-800/80 text-rose-300 text-xs font-bold flex items-center justify-center gap-1 border border-rose-500/20 cursor-not-allowed opacity-90"
+                              title="السيارة مؤجرة حالياً أو غير متاحة للحجز"
+                            >
+                              <Clock className="w-3.5 h-3.5 text-rose-400" />
+                              <span>{isRented ? 'مؤجرة حالياً' : 'غير متاحة'}</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>

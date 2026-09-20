@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { FirestoreUser, UploadedFile } from '../types';
 import { dataService } from '../services/dataService';
-import { ADMIN_USER_ID, useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Users,
   FileText,
   Calendar,
   Mail,
   Shield,
+  ShieldCheck,
   Search,
   RefreshCw,
   FolderOpen,
@@ -23,8 +24,12 @@ import {
   Plus,
   X,
   ExternalLink,
-  Filter
+  Filter,
+  Trash2
 } from 'lucide-react';
+import { storageService } from '../services/storageService';
+import { functionsService } from '../services/functionsService';
+import { validateUploadedFile } from '../utils/security';
 
 interface AdminUsersFilesViewProps {
   onBackToOverview?: () => void;
@@ -33,11 +38,15 @@ interface AdminUsersFilesViewProps {
 export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
   onBackToOverview
 }) => {
-  const { user } = useAuth();
-  const [users, setUsers] = useState<FirestoreUser[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { user, isSuperAdmin, isAdmin, isEmployee } = useAuth();
+  const [users, setUsers] = useState<FirestoreUser[]>(() => dataService.getCachedUsers());
+  const [isLoading, setIsLoading] = useState(() => dataService.getCachedUsers().length === 0);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterMode, setFilterMode] = useState<'all' | 'with_files' | 'no_files'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'with_files' | 'manual_review' | 'verified' | 'rejected' | 'no_files'>('all');
+
+  // Verification status update state
+  const [isUpdatingVerification, setIsUpdatingVerification] = useState(false);
+  const [verificationFeedback, setVerificationFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Selected User Drill-down state
   const [selectedUser, setSelectedUser] = useState<FirestoreUser | null>(null);
@@ -51,18 +60,22 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFileName, setUploadFileName] = useState('');
   const [uploadFileCategory, setUploadFileCategory] = useState<UploadedFile['category']>('driver_license');
-  const [uploadFileUrl, setUploadFileUrl] = useState('');
+  const [adminSelectedFile, setAdminSelectedFile] = useState<File | null>(null);
+  const [adminUploadProgress, setAdminUploadProgress] = useState(0);
+  const [adminUploadError, setAdminUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+  const [adminFileToDelete, setAdminFileToDelete] = useState<UploadedFile | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Fetch users on mount
   useEffect(() => {
     loadUsers();
   }, []);
 
-  const loadUsers = async () => {
-    setIsLoading(true);
+  const loadUsers = async (forceRefresh = false) => {
     try {
-      const fetchedUsers = await dataService.getAllUsers();
+      const fetchedUsers = await dataService.getAllUsers(forceRefresh);
       setUsers(fetchedUsers);
       
       // If a user is already selected, update their data
@@ -97,44 +110,145 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
     }
   };
 
+  const handleUpdateVerificationStatus = async (
+    targetUserId: string,
+    newStatus: 'pending' | 'manual_review' | 'verified' | 'rejected',
+    notes?: string
+  ) => {
+    setIsUpdatingVerification(true);
+    setVerificationFeedback(null);
+    try {
+      const res = await functionsService.verifyCustomerIdentity({
+        action: 'set_status',
+        targetUserId,
+        status: newStatus,
+        notes: notes || `تم تحديث الحالة إلى ${newStatus} بواسطة المشرف ${user?.displayName || user?.email}`
+      });
+
+      if (res.success) {
+        setVerificationFeedback({
+          type: 'success',
+          message: res.data?.message || 'تم تحديث حالة توثيق العميل بنجاح في Firestore.'
+        });
+        // Update local state for immediate feedback
+        setUsers(prev => prev.map(u => u.id === targetUserId ? { ...u, verificationStatus: newStatus } : u));
+        if (selectedUser && selectedUser.id === targetUserId) {
+          setSelectedUser(prev => prev ? { ...prev, verificationStatus: newStatus } : null);
+        }
+      } else {
+        throw new Error(res.error || 'فشل تحديث حالة توثيق العميل.');
+      }
+    } catch (err: any) {
+      console.error('Error updating verification status:', err);
+      setVerificationFeedback({
+        type: 'error',
+        message: err?.message || 'تعذر الاتصال بالخادم لتحديث حالة التوثيق.'
+      });
+    } finally {
+      setIsUpdatingVerification(false);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const validation = validateUploadedFile(file.name, file.size, file.type, 'document');
+      if (!validation.valid) {
+        setAdminUploadError(validation.error || 'الملف غير صالح للرفع.');
+        setAdminSelectedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+
+      setAdminSelectedFile(file);
+      setAdminUploadError(null);
+      if (!uploadFileName.trim()) {
+        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+        setUploadFileName(nameWithoutExt);
+      }
+    }
+  };
+
   const handleUploadFileForUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedUser || !uploadFileName.trim()) return;
+    if (!selectedUser) return;
+
+    if (!adminSelectedFile) {
+      setAdminUploadError('يرجى اختيار ملف حقيقي لرفعه، لا يمكن حفظ مستند بدون ملف.');
+      return;
+    }
+
+    const validation = validateUploadedFile(adminSelectedFile.name, adminSelectedFile.size, adminSelectedFile.type, 'document');
+    if (!validation.valid) {
+      setAdminUploadError(validation.error || 'الملف غير صالح للرفع.');
+      return;
+    }
 
     setIsUploading(true);
-    try {
-      const fallbackSampleUrls = {
-        driver_license: 'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&w=800&q=80',
-        national_id: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
-        passport: 'https://images.unsplash.com/photo-1544717302-de2939b7ef71?auto=format&fit=crop&w=800&q=80',
-        contract: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80',
-        other: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-      };
+    setAdminUploadProgress(0);
+    setAdminUploadError(null);
 
-      const finalUrl = uploadFileUrl.trim() || fallbackSampleUrls[uploadFileCategory] || fallbackSampleUrls.other;
+    try {
+      const userId = selectedUser.id || selectedUser.uid;
+      const cleanDocName = uploadFileName.trim() || adminSelectedFile.name;
+
+      // Upload to Firebase Storage with progress tracking
+      const uploadResult = await storageService.uploadUserDocument(
+        adminSelectedFile,
+        userId,
+        uploadFileCategory || 'other',
+        (percent) => {
+          setAdminUploadProgress(percent);
+        }
+      );
 
       await dataService.uploadUserFile({
-        userId: selectedUser.id || selectedUser.uid,
+        userId,
         userEmail: selectedUser.email,
-        fileName: uploadFileName.trim(),
-        fileUrl: finalUrl,
-        fileType: finalUrl.includes('.pdf') ? 'application/pdf' : 'image/jpeg',
-        fileSize: Math.floor(Math.random() * 1500000) + 500000,
+        fileName: cleanDocName,
+        fileUrl: uploadResult.downloadUrl,
+        storagePath: uploadResult.storagePath,
+        fileType: uploadResult.fileType,
+        fileSize: uploadResult.fileSize,
         category: uploadFileCategory,
       });
 
       // Reload files & users
-      await loadUserFiles(selectedUser.id || selectedUser.uid);
+      await loadUserFiles(userId);
       await loadUsers();
 
       // Reset form
       setUploadFileName('');
-      setUploadFileUrl('');
+      setAdminSelectedFile(null);
+      setAdminUploadProgress(0);
       setShowUploadModal(false);
-    } catch (err) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err: any) {
       console.error('Error uploading file for user:', err);
+      setAdminUploadError(err?.message || 'حدث خطأ أثناء رفع الملف.');
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleDeleteUserFile = (file: UploadedFile) => {
+    if (!selectedUser) return;
+    setAdminFileToDelete(file);
+  };
+
+  const confirmDeleteAdminUserFile = async () => {
+    if (!selectedUser || !adminFileToDelete) return;
+    setDeletingFileId(adminFileToDelete.id);
+    try {
+      const userId = selectedUser.id || selectedUser.uid;
+      await dataService.deleteUserFile(userId, adminFileToDelete.id, adminFileToDelete.storagePath);
+      await loadUserFiles(userId);
+      await loadUsers();
+      setAdminFileToDelete(null);
+    } catch (err) {
+      console.error('Error deleting file:', err);
+    } finally {
+      setDeletingFileId(null);
     }
   };
 
@@ -186,11 +300,16 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
 
     if (filterMode === 'with_files') return (u.uploadedFilesCount || 0) > 0;
     if (filterMode === 'no_files') return (u.uploadedFilesCount || 0) === 0;
+    if (filterMode === 'manual_review') return u.verificationStatus === 'manual_review';
+    if (filterMode === 'verified') return u.verificationStatus === 'verified';
+    if (filterMode === 'rejected') return u.verificationStatus === 'rejected';
     return true;
   });
 
   const totalFilesCount = users.reduce((acc, u) => acc + (u.uploadedFilesCount || 0), 0);
   const usersWithFilesCount = users.filter((u) => (u.uploadedFilesCount || 0) > 0).length;
+  const manualReviewCount = users.filter((u) => u.verificationStatus === 'manual_review').length;
+  const verifiedCount = users.filter((u) => u.verificationStatus === 'verified').length;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300" id="admin-firestore-users-view">
@@ -216,15 +335,13 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                 لوحة تحكم المشرف المعتمد (Admin Dashboard)
               </h1>
               <div className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span>معرف المشرف المعتمد (Admin UID):</span>
+                <span>المعرف الخاص بك (Current UID):</span>
                 <code className="bg-slate-950/80 px-2.5 py-1 rounded-lg text-amber-300 font-mono text-[11px] border border-amber-500/30">
-                  {ADMIN_USER_ID}
+                  {user?.uid || '—'}
                 </code>
-                {user?.uid === ADMIN_USER_ID && (
-                  <span className="text-emerald-400 font-bold text-[11px]">
-                    ✓ الحساب الحالي موثق كمدير نظام
-                  </span>
-                )}
+                <span className="text-emerald-400 font-bold text-[11px]">
+                  ✓ الصلاحية النشطة: {isSuperAdmin || isAdmin ? 'مدير نظام (Admin)' : isEmployee ? 'موظف (Staff)' : 'عميل'}
+                </span>
               </div>
             </div>
           </div>
@@ -353,6 +470,105 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
             </div>
           </div>
 
+          {/* Identity Verification Control Panel (Server Authoritative) */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4 shadow-md">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">إدارة توثيق هوية العميل (Customer Identity Verification)</h3>
+                  <p className="text-[11px] text-slate-400">
+                    التحقق المعتمد Server-Authoritative عبر Cloud Function لمنع تلاعب العميل بحالة التوثيق
+                  </p>
+                </div>
+              </div>
+
+              {/* Current Status Badge */}
+              <div>
+                {selectedUser.verificationStatus === 'verified' ? (
+                  <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>الهوية موثقة ومعتمدة (Verified)</span>
+                  </span>
+                ) : selectedUser.verificationStatus === 'manual_review' ? (
+                  <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-amber-400" />
+                    <span>قيد التدقيق الإداري اليدوي (Manual Review)</span>
+                  </span>
+                ) : selectedUser.verificationStatus === 'rejected' ? (
+                  <span className="px-3 py-1 rounded-full text-xs font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 text-rose-400" />
+                    <span>مرفوض التدقيق (Rejected)</span>
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 rounded-full text-xs font-black bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-slate-500" />
+                    <span>بانتظار الوثائق (Pending)</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Verification Actions for Staff */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-xs text-slate-400 font-bold ml-1">قرار المشرف المعتمد:</span>
+
+              <button
+                type="button"
+                disabled={isUpdatingVerification || selectedUser.verificationStatus === 'verified'}
+                onClick={() => handleUpdateVerificationStatus(selectedUser.id, 'verified')}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all disabled:opacity-40 shadow-sm"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>اعتماد وتوثيق الهوية (Approve)</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isUpdatingVerification || selectedUser.verificationStatus === 'manual_review'}
+                onClick={() => handleUpdateVerificationStatus(selectedUser.id, 'manual_review')}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all disabled:opacity-40 shadow-sm"
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>تحويل للتدقيق اليدوي (Manual Review)</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isUpdatingVerification || selectedUser.verificationStatus === 'rejected'}
+                onClick={() => handleUpdateVerificationStatus(selectedUser.id, 'rejected')}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all disabled:opacity-40 shadow-sm"
+              >
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>رفض الوثائق (Reject)</span>
+              </button>
+
+              {isUpdatingVerification && (
+                <div className="flex items-center gap-1.5 text-xs text-amber-400 font-bold mr-auto">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>جاري تطبيق القرار وتحديث Firestore بأمان...</span>
+                </div>
+              )}
+            </div>
+
+            {verificationFeedback && (
+              <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in ${
+                verificationFeedback.type === 'success'
+                  ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
+                  : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
+              }`}>
+                {verificationFeedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-400" />
+                )}
+                <span>{verificationFeedback.message}</span>
+              </div>
+            )}
+          </div>
+
           {/* User's Uploaded Files Content */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -459,6 +675,15 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
                       </a>
+
+                      <button
+                        onClick={() => handleDeleteUserFile(file)}
+                        disabled={deletingFileId === file.id}
+                        className="p-2 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors border border-slate-700 disabled:opacity-50"
+                        title="حذف الملف نهائياً"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -490,7 +715,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                 <Search className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  value={searchTerm}
+                  value={searchTerm || ''}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="بحث بالبريد، الاسم، أو الهاتف..."
                   className="w-full pl-3 pr-9 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
@@ -506,7 +731,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
               </div>
 
               {/* Filter mode */}
-              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+              <div className="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
                 <button
                   onClick={() => setFilterMode('all')}
                   className={`px-3 py-1 rounded-lg font-bold transition-colors ${
@@ -516,6 +741,26 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                   }`}
                 >
                   الكل ({users.length})
+                </button>
+                <button
+                  onClick={() => setFilterMode('manual_review')}
+                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
+                    filterMode === 'manual_review'
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  تدقيق يدوي ({manualReviewCount})
+                </button>
+                <button
+                  onClick={() => setFilterMode('verified')}
+                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
+                    filterMode === 'verified'
+                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  موثق ({verifiedCount})
                 </button>
                 <button
                   onClick={() => setFilterMode('with_files')}
@@ -561,13 +806,14 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                     <th className="py-3.5 px-4">المستخدم</th>
                     <th className="py-3.5 px-4">البريد الإلكتروني</th>
                     <th className="py-3.5 px-4">تاريخ إنشاء الحساب</th>
+                    <th className="py-3.5 px-4 text-center">حالة توثيق الهوية</th>
                     <th className="py-3.5 px-4 text-center">عدد الملفات المرفوعة</th>
                     <th className="py-3.5 px-4 text-center">الإجراء</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
                   {filteredUsers.map((u) => {
-                    const isSelfAdmin = u.id === ADMIN_USER_ID || u.uid === ADMIN_USER_ID;
+                    const isSelfAdmin = u.role === 'admin' || u.role === 'superAdmin' || u.role === 'super_admin';
                     const fileCount = u.uploadedFilesCount || 0;
 
                     return (
@@ -619,6 +865,30 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                             <Calendar className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
                             <span>{formatDate(u.createdAt)}</span>
                           </div>
+                        </td>
+
+                        {/* Verification Status */}
+                        <td className="py-3.5 px-4 text-center">
+                          {u.verificationStatus === 'verified' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>موثق</span>
+                            </span>
+                          ) : u.verificationStatus === 'manual_review' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              <Clock className="w-3 h-3" />
+                              <span>تدقيق يدوي</span>
+                            </span>
+                          ) : u.verificationStatus === 'rejected' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                              <AlertCircle className="w-3 h-3" />
+                              <span>مرفوض</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] text-slate-500 bg-slate-950 border border-slate-800">
+                              بانتظار الوثائق
+                            </span>
+                          )}
                         </td>
 
                         {/* Uploaded Files Count */}
@@ -746,13 +1016,49 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
             </div>
 
             <form onSubmit={handleUploadFileForUser} className="space-y-4 text-xs">
+              {/* File Picker or Drag & Drop */}
+              <div>
+                <label className="block text-slate-300 font-bold mb-1.5">رفع ملف من الجهاز (Firebase Storage)</label>
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-700 hover:border-amber-500/60 rounded-xl p-3 text-center cursor-pointer bg-slate-950/60 hover:bg-slate-950 transition-colors"
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                  {adminSelectedFile ? (
+                    <div className="flex items-center justify-center gap-2 text-xs text-amber-300 font-bold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span className="truncate max-w-[240px]">{adminSelectedFile.name}</span>
+                      <span className="text-[11px] text-slate-400 font-normal">
+                        ({(adminSelectedFile.size / 1024).toFixed(0)} KB)
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <Upload className="w-5 h-5 text-slate-400 mx-auto" />
+                      <p className="text-xs font-bold text-slate-300">
+                        انقر لاختيار ملف من جهازك (JPG, PNG, PDF)
+                      </p>
+                      <p className="text-[10px] text-slate-500">
+                        سيتم تخزين الملف السحابي في مسار <code>/users/{selectedUser.id || selectedUser.uid}/documents/</code>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-slate-300 font-bold mb-1.5">اسم الوثيقة أو الملف *</label>
                 <input
                   type="text"
                   required
                   placeholder="مثال: شهادة القيادة الدولية - الوجه الأمامي"
-                  value={uploadFileName}
+                  value={uploadFileName || ''}
                   onChange={(e) => setUploadFileName(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                 />
@@ -761,7 +1067,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
               <div>
                 <label className="block text-slate-300 font-bold mb-1.5">تصنيف الوثيقة *</label>
                 <select
-                  value={uploadFileCategory}
+                  value={uploadFileCategory || 'driver_license'}
                   onChange={(e) => setUploadFileCategory(e.target.value as any)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
                 >
@@ -773,16 +1079,28 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                 </select>
               </div>
 
-              <div>
-                <label className="block text-slate-300 font-bold mb-1.5">رابط الملف المباشر (اختياري)</label>
-                <input
-                  type="url"
-                  placeholder="اتركه فارغاً لاعتماد نموذج تجريبي افتراضي عالي الدقة"
-                  value={uploadFileUrl}
-                  onChange={(e) => setUploadFileUrl(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-                />
-              </div>
+              {adminUploadError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{adminUploadError}</span>
+                </div>
+              )}
+
+              {/* Progress Bar */}
+              {isUploading && adminSelectedFile && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-amber-400 font-bold">
+                    <span>جاري الرفع إلى Firebase Storage...</span>
+                    <span>{adminUploadProgress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-amber-500 h-full transition-all duration-200"
+                      style={{ width: `${adminUploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-slate-300 text-[11px] leading-relaxed">
                 سيتم حفظ هذا الملف ضمن سجل المستخدم <span className="text-amber-400 font-bold">{selectedUser.email}</span> في Firestore وتحديث عداد الملفات فوراً.
@@ -791,14 +1109,19 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowUploadModal(false)}
+                  onClick={() => {
+                    setShowUploadModal(false);
+                    setAdminSelectedFile(null);
+                    setAdminUploadError(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
                   className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
-                  disabled={isUploading || !uploadFileName.trim()}
+                  disabled={isUploading || !adminSelectedFile || !uploadFileName.trim()}
                   className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black flex items-center gap-1.5 shadow-md shadow-amber-500/20 disabled:opacity-50"
                 >
                   {isUploading ? (
@@ -809,12 +1132,54 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>حفظ الوثيقة في Firestore</span>
+                      <span>حفظ الوثيقة في Firestore & Storage</span>
                     </>
                   )}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Deleting User File */}
+      {adminFileToDelete && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-white">تأكيد حذف الملف نهائياً</h3>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                هل أنت متأكد من حذف الملف &ldquo;{adminFileToDelete.fileName}&rdquo; من حساب المستخدم ومساحة التخزين؟
+              </p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={confirmDeleteAdminUserFile}
+                disabled={Boolean(deletingFileId)}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/20"
+              >
+                {deletingFileId ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>جاري الحذف...</span>
+                  </>
+                ) : (
+                  <span>حذف نهائي</span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminFileToDelete(null)}
+                disabled={Boolean(deletingFileId)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+              >
+                إلغاء
+              </button>
+            </div>
           </div>
         </div>
       )}

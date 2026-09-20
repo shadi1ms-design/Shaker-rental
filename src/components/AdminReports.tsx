@@ -84,22 +84,35 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
     return map;
   }, [filteredBookings]);
 
+  /**
+   * Sanitizes cell content for CSV export against CSV Formula Injection (CWE-1236)
+   * Prepends a single quote if the value begins with =, +, -, @, \t, or \r
+   */
+  const sanitizeCSVCell = (val: any): string => {
+    if (val === null || val === undefined) return '""';
+    let str = String(val).trim();
+    if (/^[=+\-@\t\r]/.test(str)) {
+      str = "'" + str;
+    }
+    return `"${str.replace(/"/g, '""')}"`;
+  };
+
   const handleExportCSV = () => {
     const headers = ['رقم الحجز', 'العميل', 'السيارة', 'تاريخ الاستلام', 'تاريخ الإعادة', 'المدة', 'المبلغ', 'المسدد', 'المتبقي', 'الحالة'];
     const rows = filteredBookings.map((b) => [
-      b.bookingNumber,
-      `"${b.customerName}"`,
-      `"${b.vehicleName}"`,
-      b.pickupDate,
-      b.returnDate,
-      b.rentalDays,
-      b.totalPrice,
-      b.paidAmount || 0,
-      b.remainingAmount || 0,
-      b.status,
+      sanitizeCSVCell(b.bookingNumber),
+      sanitizeCSVCell(b.customerName),
+      sanitizeCSVCell(b.vehicleName),
+      sanitizeCSVCell(b.pickupDate),
+      sanitizeCSVCell(b.returnDate),
+      sanitizeCSVCell(b.rentalDays),
+      sanitizeCSVCell(b.totalPrice),
+      sanitizeCSVCell(b.paidAmount || 0),
+      sanitizeCSVCell(b.remainingAmount || 0),
+      sanitizeCSVCell(b.status),
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.map(sanitizeCSVCell).join(','), ...rows.map(e => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);

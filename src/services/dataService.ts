@@ -2,7 +2,6 @@ import {
   Vehicle,
   Booking,
   Customer,
-  Contract,
   Payment,
   MaintenanceRecord,
   VehicleInspection,
@@ -22,8 +21,9 @@ import {
   INITIAL_FIRESTORE_USERS,
   INITIAL_UPLOADED_FILES
 } from '../data/seedData';
-import { DEFAULT_SETTINGS } from './pricing';
-import { auth, db, isFirebaseConfigured } from '../firebase/config';
+import { DEFAULT_SETTINGS, calculateRentalDays, calculateRentalPrice } from './pricing';
+import { auth, db, functions, isFirebaseConfigured, firestoreDatabaseId } from '../firebase/config';
+import { httpsCallable } from 'firebase/functions';
 import {
   collection,
   doc,
@@ -31,28 +31,54 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
-  runTransaction
+  onSnapshot,
+  serverTimestamp
 } from 'firebase/firestore';
+import { storageService } from './storageService';
 import { handleFirestoreError } from '../utils/firebaseErrorHandler';
 
-// Storage keys for local persistence
-const STORAGE_KEYS = {
+// Storage keys for local persistence (STRICTLY NON-SENSITIVE / PUBLIC DATA ONLY)
+export const STORAGE_KEYS = {
+  // Public Fleet Data (Safe for fast initial rendering & offline catalog browsing)
   VEHICLES: 'shaker_vehicles_v1',
-  BOOKINGS: 'shaker_bookings_v1',
-  CUSTOMERS: 'shaker_customers_v1',
-  CONTRACTS: 'shaker_contracts_v1',
-  PAYMENTS: 'shaker_payments_v1',
-  MAINTENANCE: 'shaker_maintenance_v1',
-  INSPECTIONS: 'shaker_inspections_v1',
+  // Public Business Configuration (Company name, public phone, insurance rates)
   SETTINGS: 'shaker_settings_v1',
-  AUDIT: 'shaker_audit_v1',
+  // Internal Operational Telemetry (Vehicle maintenance & oil change logs - no customer PII)
+  MAINTENANCE: 'shaker_maintenance_v1',
+  // Vehicle condition checklists (fuel level, odometer, vehicle exterior/interior condition)
+  INSPECTIONS: 'shaker_inspections_v1',
+  // Non-sensitive Operational UI Notifications
   NOTIFICATIONS: 'shaker_notifications_v1',
+  // Sequence counter
   BOOKING_COUNTER: 'shaker_booking_counter_v1',
-  USERS: 'shaker_firestore_users_v1',
-  FILES: 'shaker_uploaded_files_v1',
 };
+
+// Whitelist of keys explicitly permitted in localStorage (Non-sensitive / Public only)
+const PERMITTED_STORAGE_KEYS = new Set<string>([
+  STORAGE_KEYS.VEHICLES,
+  STORAGE_KEYS.SETTINGS,
+  STORAGE_KEYS.MAINTENANCE,
+  STORAGE_KEYS.INSPECTIONS,
+  STORAGE_KEYS.NOTIFICATIONS,
+  STORAGE_KEYS.BOOKING_COUNTER,
+]);
+
+// Sensitive field patterns strictly blocked from localStorage
+const SENSITIVE_KEYWORD_PATTERNS = [
+  /national_?id/i,
+  /passport/i,
+  /driving_?license/i,
+  /license_?number/i,
+  /private_?doc/i,
+  /auth_token/i,
+  /secret/i,
+  /password/i,
+  /id_?front/i,
+  /id_?back/i,
+];
 
 // Safe localStorage loader
 function getLocalItem<T>(key: string, fallback: T): T {
@@ -65,24 +91,129 @@ function getLocalItem<T>(key: string, fallback: T): T {
   }
 }
 
+// Protected localStorage setter: Rejects unpermitted keys and blocks sensitive PII payloads
 function setLocalItem<T>(key: string, data: T): void {
+  if (!PERMITTED_STORAGE_KEYS.has(key)) {
+    console.warn(`[Security Policy] Blocked unauthorized attempt to write key to localStorage: "${key}"`);
+    return;
+  }
+
   try {
-    localStorage.setItem(key, JSON.stringify(data));
+    const serialized = JSON.stringify(data);
+    for (const pattern of SENSITIVE_KEYWORD_PATTERNS) {
+      if (pattern.test(serialized)) {
+        console.warn(`[Security Policy] Blocked payload containing sensitive data (${pattern}) in key "${key}"`);
+        return;
+      }
+    }
+    localStorage.setItem(key, serialized);
   } catch (err) {
     console.warn('LocalStorage error:', err);
   }
 }
 
-// Initial bootstrap check
+/**
+ * Permanently purges all sensitive customer, booking, auth, user, and financial data from browser storage
+ */
+export function purgeSensitiveStorage(): void {
+  try {
+    // 1. Explicitly remove all known sensitive keys
+    const knownSensitiveKeys = [
+      'shaker_customers_v1',
+      'shaker_uploaded_files_v1',
+      'shaker_firestore_users_v1',
+      'shaker_payments_v1',
+      'shaker_bookings_v1',
+      'shaker_audit_v1',
+      'shaker_auth_session_v1',
+      'shaker_demo_users_v1',
+    ];
+    for (const k of knownSensitiveKeys) {
+      try {
+        localStorage.removeItem(k);
+      } catch {}
+    }
+
+    // 2. Comprehensive defensive scan: remove any key not explicitly in PERMITTED_STORAGE_KEYS
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && !PERMITTED_STORAGE_KEYS.has(k)) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach((k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {}
+    });
+
+    // 3. Clear sessionStorage
+    try {
+      sessionStorage.clear();
+    } catch {}
+
+    // 4. Reset sensitive volatile in-memory collections
+    memoryCache.bookings = null;
+    memoryCache.customers = null;
+    memoryCache.payments = null;
+    memoryCache.users = null;
+    memoryCache.auditLogs = null;
+  } catch (e) {
+    console.warn('Storage purge error:', e);
+  }
+}
+
+// Safe async Firestore runner with timeout to prevent hangs when offline/slow
+async function safeFirestore<T>(promise: Promise<T>, timeoutMs = 8000): Promise<T> {
+  const effectiveTimeout = timeoutMs;
+  let timer: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err: any = new Error('Firestore connection timeout');
+      err.code = 'unavailable';
+      reject(err);
+    }, effectiveTimeout);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+// High-performance in-memory cache to eliminate redundant network roundtrips
+// Sensitive collections (bookings, customers, users, payments) live in volatile RAM only
+interface MemoryCache {
+  vehicles: { data: Vehicle[]; timestamp: number } | null;
+  bookings: { data: Booking[]; timestamp: number } | null;
+  settings: { data: AppSettings; timestamp: number } | null;
+  users: { data: FirestoreUser[]; timestamp: number } | null;
+  customers: { data: Customer[]; timestamp: number } | null;
+  payments: { data: Payment[]; timestamp: number } | null;
+  maintenance: { data: MaintenanceRecord[]; timestamp: number } | null;
+  notifications?: { data: AppNotification[]; timestamp: number } | null;
+  auditLogs?: { data: AuditLog[]; timestamp: number } | null;
+}
+
+const memoryCache: MemoryCache = {
+  vehicles: null,
+  bookings: null,
+  settings: null,
+  users: null,
+  customers: null,
+  payments: null,
+  maintenance: null,
+  notifications: null,
+  auditLogs: null,
+};
+
+const CACHE_TTL_MS = 15000; // 15 seconds TTL for instant responsiveness
+
+// Initial bootstrap check: Purges sensitive data and initializes public catalogs only
 function initStorage() {
+  purgeSensitiveStorage();
+
   if (!localStorage.getItem(STORAGE_KEYS.VEHICLES)) {
     setLocalItem(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
-  }
-  if (!localStorage.getItem(STORAGE_KEYS.CUSTOMERS)) {
-    setLocalItem(STORAGE_KEYS.CUSTOMERS, INITIAL_CUSTOMERS);
-  }
-  if (!localStorage.getItem(STORAGE_KEYS.BOOKINGS)) {
-    setLocalItem(STORAGE_KEYS.BOOKINGS, INITIAL_BOOKINGS);
   }
   if (!localStorage.getItem(STORAGE_KEYS.MAINTENANCE)) {
     setLocalItem(STORAGE_KEYS.MAINTENANCE, INITIAL_MAINTENANCE_RECORDS);
@@ -93,47 +224,180 @@ function initStorage() {
   if (!localStorage.getItem(STORAGE_KEYS.BOOKING_COUNTER)) {
     setLocalItem(STORAGE_KEYS.BOOKING_COUNTER, 3);
   }
-  if (!localStorage.getItem(STORAGE_KEYS.USERS)) {
-    setLocalItem(STORAGE_KEYS.USERS, INITIAL_FIRESTORE_USERS);
-  }
-  if (!localStorage.getItem(STORAGE_KEYS.FILES)) {
-    const allSeedFiles: UploadedFile[] = [];
-    Object.values(INITIAL_UPLOADED_FILES).forEach(list => allSeedFiles.push(...list));
-    setLocalItem(STORAGE_KEYS.FILES, allSeedFiles);
-  }
 }
 
 initStorage();
 
+// Module-level cache for resolved custom claims to keep isStaffOrAdmin() 100% synchronous
+let cachedUserClaims: Record<string, any> | null = null;
+
+if (auth) {
+  try {
+    auth.onIdTokenChanged(async (user) => {
+      if (user) {
+        try {
+          const tokenResult = await user.getIdTokenResult();
+          cachedUserClaims = tokenResult.claims || null;
+        } catch {
+          cachedUserClaims = null;
+        }
+      } else {
+        cachedUserClaims = null;
+      }
+    });
+  } catch (err) {
+    console.warn('Auth token listener init warning:', err);
+  }
+}
+
+function isStaffOrAdmin(): boolean {
+  if (!auth?.currentUser) return false;
+
+  // 1. Check asynchronously refreshed module-level token claims cache
+  if (cachedUserClaims) {
+    const role = (cachedUserClaims.role || '').toString().toLowerCase().trim();
+    if (
+      cachedUserClaims.super_admin ||
+      cachedUserClaims.superAdmin ||
+      cachedUserClaims.admin ||
+      cachedUserClaims.employee ||
+      cachedUserClaims.staff ||
+      role === 'admin' ||
+      role === 'super_admin' ||
+      role === 'employee' ||
+      role === 'staff'
+    ) {
+      return true;
+    }
+  }
+
+  // 2. Direct synchronous check on reloadUserInfo.customAttributes from currentUser instance
+  const claims = (auth.currentUser as any)?.reloadUserInfo?.customAttributes;
+  try {
+    const parsedClaims = claims ? (typeof claims === 'string' ? JSON.parse(claims) : claims) : {};
+    const role = (parsedClaims?.role || '').toString().toLowerCase().trim();
+    return Boolean(
+      parsedClaims?.super_admin ||
+      parsedClaims?.superAdmin ||
+      parsedClaims?.admin ||
+      parsedClaims?.employee ||
+      parsedClaims?.staff ||
+      role === 'admin' ||
+      role === 'super_admin' ||
+      role === 'employee' ||
+      role === 'staff'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export const dataService = {
+  // -------------------------------------------------------------
+  // Synchronous Cache Accessors for Zero-Latency First Paint
+  // -------------------------------------------------------------
+  getCachedVehicles(): Vehicle[] {
+    if (memoryCache.vehicles?.data) return memoryCache.vehicles.data;
+    const local = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
+    memoryCache.vehicles = { data: local, timestamp: Date.now() };
+    return local;
+  },
+
+  // Sensitive collections return from volatile in-memory cache ONLY (never localStorage)
+  getCachedBookings(): Booking[] {
+    return memoryCache.bookings?.data || [];
+  },
+
+  getCachedSettings(): AppSettings {
+    if (memoryCache.settings?.data) return memoryCache.settings.data;
+    const local = getLocalItem<AppSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+    memoryCache.settings = { data: local, timestamp: Date.now() };
+    return local;
+  },
+
+  getCachedCustomers(): Customer[] {
+    return memoryCache.customers?.data || [];
+  },
+
+  getCachedPayments(): Payment[] {
+    return memoryCache.payments?.data || [];
+  },
+
+  getCachedMaintenanceRecords(): MaintenanceRecord[] {
+    if (memoryCache.maintenance?.data) return memoryCache.maintenance.data;
+    const local = getLocalItem<MaintenanceRecord[]>(STORAGE_KEYS.MAINTENANCE, INITIAL_MAINTENANCE_RECORDS);
+    memoryCache.maintenance = { data: local, timestamp: Date.now() };
+    return local;
+  },
+
+  getCachedUsers(): FirestoreUser[] {
+    return memoryCache.users?.data || [];
+  },
+
+  clearSensitiveMemoryCache(): void {
+    memoryCache.bookings = null;
+    memoryCache.customers = null;
+    memoryCache.payments = null;
+    memoryCache.users = null;
+    memoryCache.notifications = null;
+  },
+
+  purgeSensitiveStorage(): void {
+    purgeSensitiveStorage();
+  },
+
+  calculateVehiclesNeedingOil(
+    vehicles: Vehicle[],
+    intervalKm = 5000
+  ): Array<{ vehicle: Vehicle; kmSinceOil: number; isUrgent: boolean; needsAttention: boolean }> {
+    return vehicles
+      .map((v) => {
+        const kmSinceOil = (v.currentMileage || 0) - (v.lastOilChangeMileage || 0);
+        const isUrgent = kmSinceOil >= intervalKm;
+        const needsAttention = kmSinceOil >= intervalKm - 500;
+        return { vehicle: v, kmSinceOil, isUrgent, needsAttention };
+      })
+      .filter((item) => item.needsAttention);
+  },
+
   // -------------------------------------------------------------
   // Settings
   // -------------------------------------------------------------
-  async getSettings(): Promise<AppSettings> {
+  async getSettings(forceRefresh = false): Promise<AppSettings> {
+    if (!forceRefresh && memoryCache.settings && Date.now() - memoryCache.settings.timestamp < CACHE_TTL_MS) {
+      return memoryCache.settings.data;
+    }
+
     if (isFirebaseConfigured && db) {
       try {
         // Standard path: settings/company
         const companyRef = doc(db, 'settings', 'company');
-        const companySnap = await getDoc(companyRef);
+        const companySnap = await safeFirestore(getDoc(companyRef), 2000);
         if (companySnap.exists()) {
           const data = companySnap.data() as AppSettings;
           setLocalItem(STORAGE_KEYS.SETTINGS, data);
+          memoryCache.settings = { data, timestamp: Date.now() };
           return data;
         }
 
         // Fallback check for legacy settings/global
         const globalRef = doc(db, 'settings', 'global');
-        const globalSnap = await getDoc(globalRef);
+        const globalSnap = await safeFirestore(getDoc(globalRef), 2000);
         if (globalSnap.exists()) {
           const data = globalSnap.data() as AppSettings;
           setLocalItem(STORAGE_KEYS.SETTINGS, data);
+          memoryCache.settings = { data, timestamp: Date.now() };
           return data;
         }
       } catch (err: any) {
-        handleFirestoreError('settings', 'company', 'read', err, auth?.currentUser?.uid);
+        if (err?.code !== 'unavailable') {
+          handleFirestoreError('settings', 'company', 'read', err, auth?.currentUser?.uid);
+        }
       }
     }
-    return getLocalItem<AppSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+    const local = getLocalItem<AppSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+    memoryCache.settings = { data: local, timestamp: Date.now() };
+    return local;
   },
 
   async updateSettings(settingsUpdates: Partial<AppSettings>): Promise<AppSettings> {
@@ -147,9 +411,9 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       try {
         // Write to primary path settings/company
-        await setDoc(doc(db, 'settings', 'company'), updated, { merge: true });
+        await safeFirestore(setDoc(doc(db, 'settings', 'company'), updated, { merge: true }), 2500);
         // Synchronize legacy path settings/global
-        await setDoc(doc(db, 'settings', 'global'), updated, { merge: true }).catch(() => {});
+        safeFirestore(setDoc(doc(db, 'settings', 'global'), updated, { merge: true }), 2000).catch(() => {});
       } catch (err: any) {
         handleFirestoreError('settings', 'company', 'write', err, auth?.currentUser?.uid);
       }
@@ -164,38 +428,360 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       try {
         const companyRef = doc(db, 'settings', 'company');
-        const snap = await getDoc(companyRef);
+        const snap = await safeFirestore(getDoc(companyRef), 2000);
         if (!snap.exists()) {
-          await setDoc(companyRef, DEFAULT_SETTINGS, { merge: true });
+          const currentUser = auth?.currentUser;
+          if (currentUser) {
+            try {
+              await safeFirestore(setDoc(companyRef, DEFAULT_SETTINGS, { merge: true }), 2000);
+            } catch {
+              // Restricted to administrators by Firestore rules
+            }
+          }
         }
       } catch {
-        // Unauthenticated visitor will safely skip seeding
+        // Unauthenticated visitor or offline mode will safely skip seeding
       }
     }
   },
 
   // -------------------------------------------------------------
-  // Vehicles
+  // Vehicles (Fleet Management & Cloud Database Sync)
   // -------------------------------------------------------------
-  async getVehicles(): Promise<Vehicle[]> {
+  mergeVehicles(primary: Vehicle[], fallback: Vehicle[]): Vehicle[] {
+    const map = new Map<string, Vehicle>();
+    if (Array.isArray(fallback)) {
+      fallback.forEach((v) => {
+        if (v && v.id) map.set(v.id, v);
+      });
+    }
+    if (Array.isArray(primary)) {
+      primary.forEach((v) => {
+        if (v && v.id) {
+          const existing = map.get(v.id);
+          map.set(v.id, existing ? { ...existing, ...v } : v);
+        }
+      });
+    }
+    return Array.from(map.values());
+  },
+
+  async ensureVehiclesInFirestore(): Promise<{ total: number; seeded: number; remoteCount: number }> {
+    const localVehicles = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
+    if (!isFirebaseConfigured || !db) {
+      return { total: localVehicles.length, seeded: 0, remoteCount: 0 };
+    }
+
+    try {
+      const col = collection(db, 'vehicles');
+      const snap = await safeFirestore(getDocs(col), 3500);
+      const remoteDocs = snap.docs.map((d) => d.data() as Vehicle).filter((v) => !v.isDeleted);
+      const remoteIds = new Set(remoteDocs.map((d) => d.id));
+
+      const missingToSeed: Vehicle[] = [];
+
+      // Check all initial seed vehicles
+      for (const seedV of INITIAL_VEHICLES) {
+        if (!remoteIds.has(seedV.id)) {
+          const localV = localVehicles.find((lv) => lv.id === seedV.id);
+          missingToSeed.push(localV || seedV);
+        }
+      }
+
+      // Check any local custom vehicles
+      for (const localV of localVehicles) {
+        if (!remoteIds.has(localV.id) && !missingToSeed.some((m) => m.id === localV.id)) {
+          missingToSeed.push(localV);
+        }
+      }
+
+      if (missingToSeed.length > 0) {
+        await Promise.allSettled(
+          missingToSeed.map((v) =>
+            safeFirestore(setDoc(doc(db, 'vehicles', v.id), v, { merge: true }), 2500)
+          )
+        );
+      }
+
+      const merged = this.mergeVehicles(remoteDocs, [...localVehicles, ...missingToSeed]);
+      setLocalItem(STORAGE_KEYS.VEHICLES, merged);
+
+      return {
+        total: merged.length,
+        seeded: missingToSeed.length,
+        remoteCount: remoteDocs.length + missingToSeed.length,
+      };
+    } catch (err) {
+      console.warn('ensureVehiclesInFirestore note:', err);
+      return { total: localVehicles.length, seeded: 0, remoteCount: 0 };
+    }
+  },
+
+  async ensureBookingsInFirestore(): Promise<{ total: number; seeded: number; remoteCount: number }> {
+    if (!isFirebaseConfigured || !db) {
+      return { total: memoryCache.bookings?.data?.length || 0, seeded: 0, remoteCount: 0 };
+    }
+
+    try {
+      const col = collection(db, 'bookings');
+      const snap = await safeFirestore(getDocs(col), 3500);
+      const remoteDocs = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          ...data,
+          id: d.id,
+          createdAt: data.createdAt?.toDate
+            ? data.createdAt.toDate().toISOString()
+            : data.createdAt || new Date().toISOString(),
+          updatedAt: data.updatedAt?.toDate
+            ? data.updatedAt.toDate().toISOString()
+            : data.updatedAt || new Date().toISOString(),
+        } as Booking;
+      }).filter((b) => !b.isDeleted);
+      memoryCache.bookings = { data: remoteDocs, timestamp: Date.now() };
+
+      return {
+        total: remoteDocs.length,
+        seeded: 0,
+        remoteCount: remoteDocs.length,
+      };
+    } catch (err) {
+      console.warn('ensureBookingsInFirestore note:', err);
+      return { total: memoryCache.bookings?.data?.length || 0, seeded: 0, remoteCount: 0 };
+    }
+  },
+
+  async ensurePaymentsInFirestore(): Promise<{ total: number; seeded: number; remoteCount: number }> {
+    if (!isFirebaseConfigured || !db) {
+      return { total: memoryCache.payments?.data?.length || 0, seeded: 0, remoteCount: 0 };
+    }
+
+    try {
+      const col = collection(db, 'payments');
+      const snap = await safeFirestore(getDocs(col), 3500);
+      const remoteDocs = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Payment));
+      memoryCache.payments = { data: remoteDocs, timestamp: Date.now() };
+
+      return {
+        total: remoteDocs.length,
+        seeded: 0,
+        remoteCount: remoteDocs.length,
+      };
+    } catch (err) {
+      console.warn('ensurePaymentsInFirestore note:', err);
+      return { total: memoryCache.payments?.data?.length || 0, seeded: 0, remoteCount: 0 };
+    }
+  },
+
+  async syncAllSystemData(): Promise<{
+    vehicles: { total: number; seeded: number; remoteCount: number };
+    bookings: { total: number; seeded: number; remoteCount: number };
+    payments: { total: number; seeded: number; remoteCount: number };
+    isCloudConnected: boolean;
+  }> {
+    const isCloudConnected = Boolean(isFirebaseConfigured && db);
+    // تم تعطيل مزامنة/زرع السيارات الافتراضية عمداً لمنع إضافة سيارات تجريبية
+    // فوق الأسطول الحقيقي القائم فعلياً. السيارات الحالية بقاعدة البيانات هي الحقيقية ويجب عدم المساس بها.
+    const currentVehicles = await this.getVehicles(true).catch(() => []);
+    const [bookResult, payResult] = await Promise.all([
+      this.ensureBookingsInFirestore(),
+      this.ensurePaymentsInFirestore(),
+    ]);
+    return {
+      vehicles: { total: currentVehicles.length, seeded: 0, remoteCount: currentVehicles.length },
+      bookings: bookResult,
+      payments: payResult,
+      isCloudConnected,
+    };
+  },
+
+  async getVehicles(forceRefresh = false): Promise<Vehicle[]> {
+    if (!forceRefresh && memoryCache.vehicles && Date.now() - memoryCache.vehicles.timestamp < CACHE_TTL_MS) {
+      return memoryCache.vehicles.data;
+    }
+
+    const localVehicles = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
+
     if (isFirebaseConfigured && db) {
       try {
         const col = collection(db, 'vehicles');
-        const q = query(col, where('isDeleted', '!=', true));
-        const snap = await getDocs(q);
-        const docs = snap.docs.map(d => d.data() as Vehicle);
-        if (docs.length > 0) return docs;
-      } catch (err) {
-        console.warn('Firestore vehicles error, falling back:', err);
+        const snap = await safeFirestore(getDocs(col), 2500);
+        const docs = snap.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              ...data,
+              id: d.id,
+            } as Vehicle;
+          })
+          .filter((v) => !v.isDeleted);
+
+        const today = new Date().toISOString().split('T')[0];
+        const bookings = memoryCache.bookings?.data || [];
+        const activeRentedIds = new Set(
+          bookings
+            .filter(
+              (b) =>
+                !b.isDeleted &&
+                (b.status === 'rented' ||
+                  (b.status === 'confirmed' && b.pickupDate <= today && b.returnDate >= today))
+            )
+            .map((b) => b.vehicleId)
+        );
+
+        const processed = docs.map((v) => {
+          if (v.status !== 'maintenance' && v.status !== 'inactive' && activeRentedIds.has(v.id)) {
+            return { ...v, status: 'rented' as const };
+          }
+          return v;
+        });
+
+        setLocalItem(STORAGE_KEYS.VEHICLES, processed);
+        memoryCache.vehicles = { data: processed, timestamp: Date.now() };
+        return processed;
+      } catch (err: any) {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore vehicles query note, using local cache:', err);
+        }
       }
     }
-    const vehicles = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
-    return vehicles.filter(v => !v.isDeleted);
+
+    const today = new Date().toISOString().split('T')[0];
+    const bookings = memoryCache.bookings?.data || [];
+    const activeRentedIds = new Set(
+      bookings
+        .filter(
+          (b) =>
+            !b.isDeleted &&
+            (b.status === 'rented' ||
+              (b.status === 'confirmed' && b.pickupDate <= today && b.returnDate >= today))
+        )
+        .map((b) => b.vehicleId)
+    );
+
+    const localProcessed = localVehicles
+      .filter((v) => !v.isDeleted)
+      .map((v) => {
+        if (v.status !== 'maintenance' && v.status !== 'inactive' && activeRentedIds.has(v.id)) {
+          return { ...v, status: 'rented' as const };
+        }
+        return v;
+      });
+
+    memoryCache.vehicles = { data: localProcessed, timestamp: Date.now() };
+    return localProcessed;
+  },
+
+  /**
+   * Real-time subscription to vehicles fleet collection.
+   * Updates memoryCache and localStorage on snapshot, with graceful offline fallback.
+   * Returns an unsubscribe callback.
+   */
+  subscribeToVehicles(callback: (vehicles: Vehicle[]) => void): () => void {
+    if (!isFirebaseConfigured || !db) {
+      this.getVehicles()
+        .then(callback)
+        .catch((err) => console.warn('Fallback getVehicles note:', err));
+      return () => {};
+    }
+
+    try {
+      const col = collection(db, 'vehicles');
+      const unsubscribe = onSnapshot(
+        col,
+        (snap) => {
+          try {
+            const docs = snap.docs
+              .map((d) => {
+                const data = d.data();
+                return {
+                  ...data,
+                  id: d.id,
+                } as Vehicle;
+              })
+              .filter((v) => !v.isDeleted);
+
+            const today = new Date().toISOString().split('T')[0];
+            const bookings = memoryCache.bookings?.data || [];
+            const activeRentedIds = new Set(
+              bookings
+                .filter(
+                  (b) =>
+                    !b.isDeleted &&
+                    (b.status === 'rented' ||
+                      (b.status === 'confirmed' && b.pickupDate <= today && b.returnDate >= today))
+                )
+                .map((b) => b.vehicleId)
+            );
+
+            const processed = docs.map((v) => {
+              if (v.status !== 'maintenance' && v.status !== 'inactive' && activeRentedIds.has(v.id)) {
+                return { ...v, status: 'rented' as const };
+              }
+              return v;
+            });
+
+            setLocalItem(STORAGE_KEYS.VEHICLES, processed);
+            memoryCache.vehicles = { data: processed, timestamp: Date.now() };
+            callback(processed);
+          } catch (procErr) {
+            console.warn('Error processing vehicles snapshot:', procErr);
+          }
+        },
+        (err) => {
+          console.warn('onSnapshot vehicles note, falling back to cached/getVehicles:', err);
+          this.getVehicles()
+            .then(callback)
+            .catch((e) => console.warn('Fallback getVehicles failed:', e));
+        }
+      );
+
+      return () => {
+        try {
+          unsubscribe();
+        } catch (unsubErr) {
+          console.warn('Error unsubscribing from vehicles:', unsubErr);
+        }
+      };
+    } catch (err) {
+      console.warn('Error establishing onSnapshot for vehicles:', err);
+      this.getVehicles()
+        .then(callback)
+        .catch((e) => console.warn('Fallback getVehicles failed:', e));
+      return () => {};
+    }
   },
 
   async getVehicleById(id: string): Promise<Vehicle | null> {
+    const cleanId = (id || '').trim();
+    if (!cleanId) return null;
+
     const vehicles = await this.getVehicles();
-    return vehicles.find(v => v.id === id) || null;
+    const match = vehicles.find(
+      (v) =>
+        v.id === cleanId ||
+        v.id.toLowerCase() === cleanId.toLowerCase() ||
+        v.plateNumber === cleanId
+    );
+    if (match) return match;
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const docRef = doc(db, 'vehicles', cleanId);
+        const snap = await safeFirestore(getDoc(docRef), 2000);
+        if (snap.exists()) {
+          return snap.data() as Vehicle;
+        }
+      } catch (err) {
+        console.warn('getVehicleById note:', err);
+      }
+    }
+
+    return (
+      INITIAL_VEHICLES.find(
+        (v) => v.id === cleanId || v.id.toLowerCase() === cleanId.toLowerCase()
+      ) || null
+    );
   },
 
   async addVehicle(vehicleData: Omit<Vehicle, 'id'>): Promise<Vehicle> {
@@ -210,7 +796,7 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        await setDoc(doc(db, 'vehicles', id), newVehicle);
+        await safeFirestore(setDoc(doc(db, 'vehicles', id), newVehicle, { merge: true }), 2500);
       } catch (err) {
         console.warn('Firestore addVehicle error:', err);
       }
@@ -223,9 +809,39 @@ export const dataService = {
   },
 
   async updateVehicle(id: string, updates: Partial<Vehicle>): Promise<Vehicle> {
-    const current = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
-    const index = current.findIndex(v => v.id === id);
-    if (index === -1) throw new Error('السيارة غير موجودة');
+    const cleanId = (id || '').trim();
+    let current = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
+    let index = current.findIndex(
+      (v) =>
+        v.id === cleanId ||
+        v.id.toLowerCase() === cleanId.toLowerCase() ||
+        v.plateNumber === cleanId
+    );
+
+    if (index === -1) {
+      const seed = INITIAL_VEHICLES.find(
+        (v) => v.id === cleanId || v.id.toLowerCase() === cleanId.toLowerCase()
+      );
+      if (seed) {
+        current = [seed, ...current];
+        index = 0;
+      }
+    }
+
+    if (index === -1) {
+      if (isFirebaseConfigured && db) {
+        try {
+          const snap = await safeFirestore(getDoc(doc(db, 'vehicles', cleanId)), 2000);
+          if (snap.exists()) {
+            const v = snap.data() as Vehicle;
+            current = [v, ...current];
+            index = 0;
+          }
+        } catch {}
+      }
+    }
+
+    if (index === -1) throw new Error(`السيارة (${cleanId}) غير موجودة`);
 
     const updated: Vehicle = {
       ...current[index],
@@ -237,13 +853,28 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        await updateDoc(doc(db, 'vehicles', id), updates);
+        await safeFirestore(
+          setDoc(doc(db, 'vehicles', updated.id), updated, { merge: true }),
+          3000
+        );
       } catch (err) {
         console.warn('Firestore updateVehicle error:', err);
       }
     }
 
-    this.logAudit(`تعديل بيانات سيارة: ${updated.brand} ${updated.model}`, 'vehicles', id);
+    const statusLabel =
+      updated.status === 'rented'
+        ? 'مؤجرة'
+        : updated.status === 'available'
+        ? 'متوفرة'
+        : updated.status === 'maintenance'
+        ? 'صيانة'
+        : updated.status;
+    this.logAudit(
+      `تحديث بيانات سيارة: ${updated.brand} ${updated.model} (الحالة: ${statusLabel})`,
+      'vehicles',
+      updated.id
+    );
     return updated;
   },
 
@@ -255,24 +886,317 @@ export const dataService = {
   // -------------------------------------------------------------
   // Bookings & Double Booking Prevention (Critical)
   // -------------------------------------------------------------
-  async getBookings(): Promise<Booking[]> {
-    if (isFirebaseConfigured && db) {
+  mergeBookings(primary: Booking[], fallback: Booking[]): Booking[] {
+    const map = new Map<string, Booking>();
+    const getBookingKey = (b: Booking) => (b.bookingNumber ? b.bookingNumber.trim().toUpperCase() : b.id);
+
+    if (Array.isArray(fallback)) {
+      fallback.forEach(b => {
+        if (b && (b.id || b.bookingNumber)) {
+          map.set(getBookingKey(b), b);
+        }
+      });
+    }
+    if (Array.isArray(primary)) {
+      primary.forEach(b => {
+        if (b && (b.id || b.bookingNumber)) {
+          const key = getBookingKey(b);
+          const existing = map.get(key);
+          map.set(key, existing ? { ...existing, ...b } : b);
+        }
+      });
+    }
+    return Array.from(map.values());
+  },
+
+  async getBookings(forceRefresh = false): Promise<Booking[]> {
+    if (!forceRefresh && memoryCache.bookings && Date.now() - memoryCache.bookings.timestamp < CACHE_TTL_MS) {
+      return memoryCache.bookings.data;
+    }
+
+    if (isFirebaseConfigured && db && isStaffOrAdmin()) {
       try {
         const col = collection(db, 'bookings');
-        const q = query(col, where('isDeleted', '!=', true));
-        const snap = await getDocs(q);
-        const docs = snap.docs.map(d => d.data() as Booking);
-        if (docs.length > 0) {
-          return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        const snap = await safeFirestore(getDocs(col), 2500);
+        const remoteDocs = snap.docs.map((d) => {
+          const data = d.data();
+          const documentId = d.id;
+          return {
+            ...data,
+            id: documentId, // Firestore document ID is the authoritative single source of truth
+            createdAt: data.createdAt?.toDate
+              ? data.createdAt.toDate().toISOString()
+              : data.createdAt || new Date().toISOString(),
+            updatedAt: data.updatedAt?.toDate
+              ? data.updatedAt.toDate().toISOString()
+              : data.updatedAt || new Date().toISOString(),
+          } as Booking;
+        }).filter(b => !b.isDeleted);
+
+        const sorted = remoteDocs
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        memoryCache.bookings = { data: sorted, timestamp: Date.now() };
+        return sorted;
+      } catch (err: any) {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore bookings query note:', err);
         }
-      } catch (err) {
-        console.warn('Firestore bookings error:', err);
+      }
+    } else if (isFirebaseConfigured && db && auth?.currentUser?.uid) {
+      try {
+        return await this.getBookingsForCustomer(auth.currentUser.uid);
+      } catch (e) {
+        console.warn('Customer bookings fetch note:', e);
       }
     }
-    const bookings = getLocalItem<Booking[]>(STORAGE_KEYS.BOOKINGS, INITIAL_BOOKINGS);
-    return bookings
-      .filter(b => !b.isDeleted)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return memoryCache.bookings?.data || [];
+  },
+
+  /**
+   * Real-time subscription to bookings collection.
+   * Updates memoryCache in RAM only (never persisted to localStorage).
+   * Returns an unsubscribe callback.
+   */
+  subscribeToBookings(callback: (bookings: Booking[]) => void): () => void {
+    if (!isFirebaseConfigured || !db || !isStaffOrAdmin()) {
+      const cached = memoryCache.bookings?.data || [];
+      callback(cached);
+      return () => {};
+    }
+
+    try {
+      const col = collection(db, 'bookings');
+      const unsubscribe = onSnapshot(
+        col,
+        (snap) => {
+          try {
+            const remoteDocs = snap.docs
+              .map((d) => {
+                const data = d.data();
+                return {
+                  ...data,
+                  id: d.id,
+                  createdAt: data.createdAt?.toDate
+                    ? data.createdAt.toDate().toISOString()
+                    : data.createdAt || new Date().toISOString(),
+                  updatedAt: data.updatedAt?.toDate
+                    ? data.updatedAt.toDate().toISOString()
+                    : data.updatedAt || new Date().toISOString(),
+                } as Booking;
+              })
+              .filter((b) => !b.isDeleted)
+              .sort((a, b) => {
+                const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                return timeB - timeA;
+              });
+
+            memoryCache.bookings = { data: remoteDocs, timestamp: Date.now() };
+            callback(remoteDocs);
+          } catch (procErr) {
+            console.warn('Error processing bookings snapshot:', procErr);
+          }
+        },
+        (err) => {
+          console.warn('onSnapshot bookings note, falling back to cached/getBookings:', err);
+          this.getBookings()
+            .then(callback)
+            .catch((e) => console.warn('Fallback getBookings failed:', e));
+        }
+      );
+
+      return () => {
+        try {
+          unsubscribe();
+        } catch (unsubErr) {
+          console.warn('Error unsubscribing from bookings:', unsubErr);
+        }
+      };
+    } catch (err) {
+      console.warn('Error establishing onSnapshot for bookings:', err);
+      this.getBookings()
+        .then(callback)
+        .catch((e) => console.warn('Fallback getBookings failed:', e));
+      return () => {};
+    }
+  },
+
+  /**
+   * One-time fetch of bookings for a specific customer.
+   * Constrained with where('customerId', '==', customerId) to satisfy Firestore security rules.
+   */
+  async getBookingsForCustomer(customerId: string): Promise<Booking[]> {
+    const cleanId = (customerId || '').trim();
+    if (!cleanId) return [];
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const q = query(
+          collection(db, 'bookings'),
+          where('customerId', '==', cleanId)
+        );
+        const snap = await safeFirestore(getDocs(q), 2500);
+        const remoteDocs = snap.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              ...data,
+              id: d.id,
+              createdAt: data.createdAt?.toDate
+                ? data.createdAt.toDate().toISOString()
+                : data.createdAt || new Date().toISOString(),
+              updatedAt: data.updatedAt?.toDate
+                ? data.updatedAt.toDate().toISOString()
+                : data.updatedAt || new Date().toISOString(),
+            } as Booking;
+          })
+          .filter((b) => !b.isDeleted && !b.hiddenFromCustomer)
+          .sort((a, b) => {
+            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return timeB - timeA;
+          });
+
+        return remoteDocs;
+      } catch (err: any) {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore customer bookings query note:', err);
+        }
+      }
+    }
+
+    const memoryBookings = memoryCache.bookings?.data || [];
+    return memoryBookings
+      .filter((b) => !b.isDeleted && !b.hiddenFromCustomer && b.customerId === cleanId)
+      .sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
+  },
+
+  /**
+   * Real-time subscription to customer bookings collection.
+   * Scoped with where('customerId', '==', customerId) to strictly comply with Firestore security rules.
+   * Returns an unsubscribe callback.
+   */
+  subscribeToCustomerBookings(customerId: string, callback: (bookings: Booking[]) => void): () => void {
+    const cleanId = (customerId || '').trim();
+    if (!cleanId) {
+      callback([]);
+      return () => {};
+    }
+
+    if (!isFirebaseConfigured || !db) {
+      this.getBookingsForCustomer(cleanId)
+        .then(callback)
+        .catch((err) => console.warn('Fallback getBookingsForCustomer note:', err));
+      return () => {};
+    }
+
+    try {
+      const q = query(
+        collection(db, 'bookings'),
+        where('customerId', '==', cleanId)
+      );
+      const unsubscribe = onSnapshot(
+        q,
+        (snap) => {
+          try {
+            const remoteDocs = snap.docs
+              .map((d) => {
+                const data = d.data();
+                return {
+                  ...data,
+                  id: d.id,
+                  createdAt: data.createdAt?.toDate
+                    ? data.createdAt.toDate().toISOString()
+                    : data.createdAt || new Date().toISOString(),
+                  updatedAt: data.updatedAt?.toDate
+                    ? data.updatedAt.toDate().toISOString()
+                    : data.updatedAt || new Date().toISOString(),
+                } as Booking;
+              })
+              .filter((b) => !b.isDeleted && !b.hiddenFromCustomer)
+              .sort((a, b) => {
+                const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                return timeB - timeA;
+              });
+
+            callback(remoteDocs);
+          } catch (procErr) {
+            console.warn('Error processing customer bookings snapshot:', procErr);
+          }
+        },
+        (err) => {
+          console.warn('onSnapshot customer bookings note, falling back to getBookingsForCustomer:', err);
+          this.getBookingsForCustomer(cleanId)
+            .then(callback)
+            .catch((e) => console.warn('Fallback getBookingsForCustomer failed:', e));
+        }
+      );
+
+      return () => {
+        try {
+          unsubscribe();
+        } catch (unsubErr) {
+          console.warn('Error unsubscribing from customer bookings:', unsubErr);
+        }
+      };
+    } catch (err) {
+      console.warn('Error establishing onSnapshot for customer bookings:', err);
+      this.getBookingsForCustomer(cleanId)
+        .then(callback)
+        .catch((e) => console.warn('Fallback getBookingsForCustomer failed:', e));
+      return () => {};
+    }
+  },
+
+  async getBookingById(id: string): Promise<Booking | null> {
+    const cleanId = (id || '').trim();
+    if (!cleanId) return null;
+
+    const memoryBookings = memoryCache.bookings?.data || [];
+    const localMatch = memoryBookings.find(b =>
+      b.id === cleanId ||
+      b.bookingNumber === cleanId ||
+      b.id?.toLowerCase() === cleanId.toLowerCase() ||
+      b.bookingNumber?.toLowerCase() === cleanId.toLowerCase()
+    );
+    if (localMatch) return localMatch;
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const docRef = doc(db, 'bookings', cleanId);
+        const snap = await safeFirestore(getDoc(docRef), 2500);
+        if (snap.exists()) {
+          const b = { ...snap.data(), id: snap.id } as Booking;
+          memoryCache.bookings = {
+            data: [b, ...(memoryCache.bookings?.data?.filter(item => item.id !== b.id) || [])],
+            timestamp: Date.now(),
+          };
+          return b;
+        }
+
+        const q = query(collection(db, 'bookings'), where('bookingNumber', '==', cleanId));
+        const qSnap = await safeFirestore(getDocs(q), 2500);
+        if (!qSnap.empty) {
+          const docItem = qSnap.docs[0];
+          const b = { ...docItem.data(), id: docItem.id } as Booking;
+          memoryCache.bookings = {
+            data: [b, ...(memoryCache.bookings?.data?.filter(item => item.id !== b.id) || [])],
+            timestamp: Date.now(),
+          };
+          return b;
+        }
+      } catch (err) {
+        console.warn('Error fetching booking by ID from Firestore:', err);
+      }
+    }
+
+    return null;
   },
 
   /**
@@ -299,11 +1223,20 @@ export const dataService = {
     }
 
     const bookings = await this.getBookings();
-    const activeBookings = bookings.filter(b =>
-      b.vehicleId === vehicleId &&
-      b.id !== excludeBookingId &&
-      !['cancelled', 'rejected'].includes(b.status)
-    );
+    const cleanExclude = excludeBookingId ? String(excludeBookingId).trim().toLowerCase() : '';
+
+    const activeBookings = bookings.filter(b => {
+      if (b.isDeleted) return false;
+      if (b.vehicleId !== vehicleId) return false;
+      // Cancelled, rejected, completed, new, and reviewing bookings do not occupy vehicle slots (only confirmed and rented block availability)
+      if (['cancelled', 'rejected', 'completed', 'new', 'reviewing'].includes(b.status)) return false;
+      // Exclude the booking currently being verified/transitioned
+      if (cleanExclude) {
+        if (b.id && b.id.toLowerCase() === cleanExclude) return false;
+        if (b.bookingNumber && b.bookingNumber.toLowerCase() === cleanExclude) return false;
+      }
+      return true;
+    });
 
     const hasOverlap = activeBookings.some(b => {
       return b.pickupDate <= returnDate && b.returnDate >= pickupDate;
@@ -331,7 +1264,11 @@ export const dataService = {
   },
 
   /**
-   * Creates a booking with strict double-booking check
+   * Creates a booking.
+   * In Production (when Firebase is configured), this route delegates STRICTLY and EXCLUSIVELY
+   * to createBookingSecure (Server-Authoritative Cloud Function). Direct client-side creation
+   * and frontend checkAvailability() are completely disabled in Production to prevent double bookings
+   * and enforce server-side concurrency locks and dynamic pricing.
    */
   async createBooking(bookingData: {
     vehicleId: string;
@@ -341,19 +1278,94 @@ export const dataService = {
     customerNationalId?: string;
     customerAddress?: string;
     customerLicenseNumber?: string;
+    customerId?: string;
+    customerEmail?: string;
     pickupDate: string;
     pickupTime: string;
     returnDate: string;
     returnTime: string;
-    rentalDays: number;
-    dailyPrice: number;
-    basePrice: number;
-    discountAmount: number;
-    insuranceAmount: number;
-    totalPrice: number;
+    rentalDays?: number;
+    dailyPrice?: number;
+    basePrice?: number;
+    discountAmount?: number;
+    insuranceAmount?: number;
+    totalPrice?: number;
     notes?: string;
+    withDriver?: boolean;
+    deliveryLocation?: string;
   }): Promise<Booking> {
-    // 1. Strict Overlap Check (Pre-flight validation)
+    // 1. PRODUCTION PATH: Primary execution via createBookingSecure Cloud Function
+    if (isFirebaseConfigured && functions) {
+      try {
+        const callable = httpsCallable<any, { success: boolean; booking: Booking; error?: string }>(
+          functions,
+          'createBookingSecure'
+        );
+        const res = await callable({
+          vehicleId: bookingData.vehicleId,
+          customerName: bookingData.customerName,
+          customerPhone: bookingData.customerPhone,
+          customerWhatsApp: bookingData.customerWhatsApp,
+          customerNationalId: bookingData.customerNationalId,
+          customerAddress: bookingData.customerAddress,
+          customerLicenseNumber: bookingData.customerLicenseNumber,
+          pickupDate: bookingData.pickupDate,
+          pickupTime: bookingData.pickupTime,
+          returnDate: bookingData.returnDate,
+          returnTime: bookingData.returnTime,
+          notes: bookingData.notes,
+          withDriver: bookingData.withDriver,
+          deliveryLocation: bookingData.deliveryLocation,
+        });
+
+        if (res.data?.success && res.data?.booking) {
+          const serverBooking = res.data.booking;
+          const currentBookings = memoryCache.bookings?.data || [];
+          memoryCache.bookings = {
+            data: [serverBooking, ...currentBookings.filter((b) => b.id !== serverBooking.id)],
+            timestamp: Date.now(),
+          };
+          return serverBooking;
+        }
+        throw new Error(res.data?.error || 'تعذر إنشاء الحجز.');
+      } catch (err: any) {
+        const errMsg = err?.details || err?.message || 'عذراً، تعذر إتمام الحجز عبر الخادم الآمن.';
+        throw new Error(errMsg);
+      }
+    }
+
+    // 2. DEMO / OFFLINE FALLBACK (when Firebase is completely unconfigured)
+    return this.createBookingLocalDemo(bookingData);
+  },
+
+  /**
+   * Demo/Development fallback ONLY (when Firebase is completely unconfigured).
+   * Runs purely in local memory/state with synthetic data.
+   */
+  async createBookingLocalDemo(bookingData: {
+    vehicleId: string;
+    customerName: string;
+    customerPhone: string;
+    customerWhatsApp?: string;
+    customerNationalId?: string;
+    customerAddress?: string;
+    customerLicenseNumber?: string;
+    customerId?: string;
+    customerEmail?: string;
+    pickupDate: string;
+    pickupTime: string;
+    returnDate: string;
+    returnTime: string;
+    rentalDays?: number;
+    dailyPrice?: number;
+    basePrice?: number;
+    discountAmount?: number;
+    insuranceAmount?: number;
+    totalPrice?: number;
+    notes?: string;
+    withDriver?: boolean;
+    deliveryLocation?: string;
+  }): Promise<Booking> {
     const availability = await this.checkAvailability(
       bookingData.vehicleId,
       bookingData.pickupDate,
@@ -365,12 +1377,27 @@ export const dataService = {
     }
 
     const vehicle = await this.getVehicleById(bookingData.vehicleId);
-    const vehicleName = vehicle ? `${vehicle.brand} ${vehicle.model} (${vehicle.year})` : 'سيارة شاكر';
-    const vehicleCategory = vehicle?.category || 'medium';
+    if (!vehicle) {
+      throw new Error('السيارة المطلوبة غير موجودة في الأسطول');
+    }
+    const vehicleName = `${vehicle.brand} ${vehicle.model} (${vehicle.year})`;
+    const vehicleCategory = vehicle.category || 'medium';
 
-    // 2. Generate unique booking number
+    const settings = await this.getSettings();
+    const verifiedDays = calculateRentalDays(bookingData.pickupDate, bookingData.returnDate);
+    const verifiedPricing = calculateRentalPrice(
+      vehicle.category,
+      vehicle.dailyPrice,
+      verifiedDays,
+      settings,
+      {
+        isUserLoggedIn: Boolean(bookingData.customerId),
+        vehicleId: vehicle.id,
+      }
+    );
+
     const bookingNumber = await this.generateBookingNumber();
-    const id = `book-${Date.now()}`;
+    const id = `book-demo-${Date.now()}`;
 
     const newBooking: Booking = {
       ...bookingData,
@@ -379,184 +1406,310 @@ export const dataService = {
       vehicleName,
       vehicleCategory,
       customerWhatsApp: bookingData.customerWhatsApp || bookingData.customerPhone,
+      rentalDays: verifiedDays,
+      dailyPrice: vehicle.dailyPrice,
+      basePrice: verifiedPricing.basePrice,
+      discountAmount: verifiedPricing.discountAmount,
+      insuranceAmount: verifiedPricing.insuranceAmount,
+      totalPrice: verifiedPricing.totalPrice,
       paidAmount: 0,
-      remainingAmount: bookingData.totalPrice,
+      remainingAmount: verifiedPricing.totalPrice,
       status: 'new',
       isDeleted: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    // 3. Concurrency Protection: Atomic Firestore Transaction
-    if (isFirebaseConfigured && db) {
-      try {
-        await runTransaction(db, async (transaction) => {
-          const bookingsCol = collection(db, 'bookings');
-          const q = query(bookingsCol, where('vehicleId', '==', bookingData.vehicleId));
-          const snap = await getDocs(q);
-          const hasConflict = snap.docs.some(docSnap => {
-            const b = docSnap.data() as Booking;
-            if (b.isDeleted || ['cancelled', 'rejected'].includes(b.status)) return false;
-            return b.pickupDate <= bookingData.returnDate && b.returnDate >= bookingData.pickupDate;
-          });
+    // Save to in-memory cache ONLY (never localStorage, never setDoc)
+    const currentBookings = memoryCache.bookings?.data || [];
+    memoryCache.bookings = {
+      data: [newBooking, ...currentBookings.filter((b) => b.id !== id)],
+      timestamp: Date.now(),
+    };
 
-          if (hasConflict) {
-            throw new Error('عذراً، السيارة غير متاحة في الفترة المحددة.');
-          }
-
-          const bookingRef = doc(db, 'bookings', id);
-          transaction.set(bookingRef, newBooking);
-        });
-      } catch (err: any) {
-        if (err.message && (err.message.includes('غير متاحة') || err.message.includes('الفترة المحددة'))) {
-          throw new Error('عذراً، السيارة غير متاحة في الفترة المحددة.');
-        }
-        handleFirestoreError('bookings', id, 'transaction', err, auth?.currentUser?.uid);
-      }
-    }
-
-    // 4. Save to local storage cache
-    const currentBookings = getLocalItem<Booking[]>(STORAGE_KEYS.BOOKINGS, INITIAL_BOOKINGS);
-    setLocalItem(STORAGE_KEYS.BOOKINGS, [newBooking, ...currentBookings]);
-
-    // 5. Update or create Customer CRM profile
     await this.syncCustomerFromBooking(newBooking);
 
-    // 6. Fire notification
     this.addNotification({
       type: 'new_booking',
-      title: 'طلب حجز إلكتروني جديد',
-      message: `حجز جديد برقم ${bookingNumber} للعميل ${newBooking.customerName} على ${vehicleName}`,
+      title: 'طلب حجز إلكتروني تجريبي',
+      message: `حجز تجريبي برقم ${bookingNumber} للعميل ${newBooking.customerName} على ${vehicleName}`,
       bookingId: id,
       vehicleId: bookingData.vehicleId,
     });
 
-    this.logAudit(`إنشاء حجز جديد: ${bookingNumber}`, 'bookings', id);
+    this.logAudit(`إنشاء حجز تجريبي: ${bookingNumber}`, 'bookings', id);
     return newBooking;
   },
 
-  async updateBookingStatus(id: string, newStatus: BookingStatus): Promise<Booking> {
-    const bookings = getLocalItem<Booking[]>(STORAGE_KEYS.BOOKINGS, INITIAL_BOOKINGS);
-    const index = bookings.findIndex(b => b.id === id);
-    if (index === -1) throw new Error('الحجز غير موجود');
+  async updateBookingStatus(id: string, newStatus: BookingStatus): Promise<Booking | null> {
+    const cleanId = (id || '').trim();
+    const currentBookings = memoryCache.bookings?.data || [];
 
-    const targetBooking = bookings[index];
+    const idx = currentBookings.findIndex(b =>
+      b.id === cleanId ||
+      b.bookingNumber === cleanId ||
+      b.id?.toLowerCase() === cleanId.toLowerCase() ||
+      b.bookingNumber?.toLowerCase() === cleanId.toLowerCase()
+    );
 
-    // Concurrency guard: If confirming or renting, re-verify availability
-    if (['confirmed', 'rented'].includes(newStatus)) {
-      const avail = await this.checkAvailability(
-        targetBooking.vehicleId,
-        targetBooking.pickupDate,
-        targetBooking.returnDate,
-        targetBooking.id
-      );
-      if (!avail.available) {
-        throw new Error('عذراً، السيارة غير متاحة في الفترة المحددة.');
-      }
+    if (idx === -1) {
+      // الحجز غير موجود بالكاش المحلي حالياً - لا تلفّق أي بيانات، فقط تجاهل صامت
+      // (البيانات الحقيقية محدّثة أصلاً على الخادم عبر updateBookingStatusSecure،
+      // وستُجلب صح عند إعادة تحميل القائمة القادمة)
+      return null;
     }
 
-    const prevStatus = targetBooking.status;
-    const updated: Booking = {
-      ...targetBooking,
+    const updatedBooking: Booking = {
+      ...currentBookings[idx],
       status: newStatus,
       updatedAt: new Date().toISOString(),
     };
 
-    bookings[index] = updated;
-    setLocalItem(STORAGE_KEYS.BOOKINGS, bookings);
+    const newList = [...currentBookings];
+    newList[idx] = updatedBooking;
+    memoryCache.bookings = { data: newList, timestamp: Date.now() };
 
-    // If status became rented, update vehicle status to rented
-    if (newStatus === 'rented') {
-      await this.updateVehicle(updated.vehicleId, { status: 'rented' });
-    } else if (newStatus === 'completed' || newStatus === 'cancelled' || newStatus === 'rejected') {
-      await this.updateVehicle(updated.vehicleId, { status: 'available' });
+    return updatedBooking;
+  },
+
+  async hideBookingForCustomer(bookingId: string): Promise<void> {
+    const cleanId = (bookingId || '').trim();
+    if (!cleanId || !auth?.currentUser) {
+      throw new Error('يجب تسجيل الدخول لإتمام هذا الإجراء.');
     }
-
-    // Add status notification
-    let notifTitle = 'تحديث حالة الحجز';
-    let notifMsg = `تم تغيير حالة الحجز ${updated.bookingNumber} إلى: ${this.getStatusLabel(newStatus)}`;
-    if (newStatus === 'confirmed') {
-      notifTitle = 'تم تأكيد حجزك بنجاح';
-      notifMsg = `تم تأكيد حجز السيارة ${updated.vehicleName} برقم ${updated.bookingNumber}.`;
-    } else if (newStatus === 'cancelled') {
-      notifTitle = 'تم إلغاء الحجز';
+    if (isFirebaseConfigured && db) {
+      await safeFirestore(
+        updateDoc(doc(db, 'bookings', cleanId), {
+          hiddenFromCustomer: true,
+          updatedAt: serverTimestamp(),
+        }),
+        5000
+      );
     }
+    // تحديث الكاش المحلي فوراً
+    if (memoryCache.bookings?.data) {
+      memoryCache.bookings.data = memoryCache.bookings.data.filter(b => b.id !== cleanId);
+      memoryCache.bookings.timestamp = Date.now();
+    }
+  },
 
-    this.addNotification({
-      type: newStatus === 'confirmed' ? 'booking_confirmed' : (newStatus === 'cancelled' ? 'booking_cancelled' : 'new_booking'),
-      title: notifTitle,
-      message: notifMsg,
-      bookingId: id,
-      vehicleId: updated.vehicleId,
-    });
-
-    this.logAudit(`تعديل حالة الحجز ${updated.bookingNumber} من ${prevStatus} إلى ${newStatus}`, 'bookings', id);
+  /**
+   * Hard Delete a booking permanently from Firestore and memory cache.
+   * Requires staff/admin authorization with Firebase Auth Custom Claims.
+   */
+  async deleteBooking(bookingId: string): Promise<boolean> {
+    if (!isStaffOrAdmin()) {
+      throw new Error('عذراً، لا تمتلك الصلاحيات الإدارية الكافية لحذف الحجز.');
+    }
+    const cleanId = (bookingId || '').trim();
+    if (!cleanId) {
+      throw new Error('معرف الحجز غير صالح.');
+    }
 
     if (isFirebaseConfigured && db) {
       try {
-        await updateDoc(doc(db, 'bookings', id), { status: newStatus, updatedAt: new Date().toISOString() });
-      } catch (err) {
-        handleFirestoreError('bookings', id, 'update', err, auth?.currentUser?.uid);
+        const docRef = doc(db, 'bookings', cleanId);
+        await safeFirestore(deleteDoc(docRef), 8000);
+      } catch (err: any) {
+        console.error('Firestore deleteBooking error:', err);
+        throw new Error(err?.message || 'تعذر حذف الحجز من قاعدة البيانات السحابية.');
       }
     }
 
-    return updated;
+    // Immediately remove from local in-memory cache
+    if (memoryCache.bookings?.data) {
+      memoryCache.bookings.data = memoryCache.bookings.data.filter(
+        (b) => b.id !== cleanId && b.bookingNumber !== cleanId
+      );
+      memoryCache.bookings.timestamp = Date.now();
+    }
+
+    this.logAudit(`حذف حجز نهائياً من النظام: ${cleanId}`, 'bookings', cleanId);
+    return true;
   },
 
   // -------------------------------------------------------------
   // Payments
   // -------------------------------------------------------------
-  async recordPayment(paymentData: Omit<Payment, 'id' | 'createdAt'>): Promise<Payment> {
-    const id = `pay-${Date.now()}`;
-    const newPayment: Payment = {
-      ...paymentData,
-      id,
-      createdAt: new Date().toISOString(),
-    };
+  async recordPayment(
+    paymentData: Omit<Payment, 'id' | 'createdAt'> & { allowOverpayment?: boolean }
+  ): Promise<Payment> {
+    // 1. Validate amount
+    if (typeof paymentData.amount !== 'number' || isNaN(paymentData.amount) || paymentData.amount <= 0) {
+      throw new Error('مبلغ الدفعة يجب أن يكون أكبر من صفر');
+    }
 
-    // Update booking paid/remaining amounts
-    const bookings = getLocalItem<Booking[]>(STORAGE_KEYS.BOOKINGS, INITIAL_BOOKINGS);
-    const booking = bookings.find(b => b.id === paymentData.bookingId);
-    if (booking) {
-      booking.paidAmount = (booking.paidAmount || 0) + paymentData.amount;
-      booking.remainingAmount = Math.max(0, booking.totalPrice - booking.paidAmount);
-      booking.updatedAt = new Date().toISOString();
-      setLocalItem(STORAGE_KEYS.BOOKINGS, bookings);
+    const cleanBookingId = (paymentData.bookingId || '').trim();
+    let memBookings = memoryCache.bookings?.data || [];
+    let booking = memBookings.find(b =>
+      b.id === cleanBookingId ||
+      b.bookingNumber === cleanBookingId ||
+      b.id?.toLowerCase() === cleanBookingId.toLowerCase() ||
+      b.bookingNumber?.toLowerCase() === cleanBookingId.toLowerCase()
+    ) || null;
 
-      // Customer spending update
-      const customers = getLocalItem<Customer[]>(STORAGE_KEYS.CUSTOMERS, INITIAL_CUSTOMERS);
-      const customer = customers.find(c => c.phone === booking.customerPhone);
-      if (customer) {
-        customer.totalSpending = (customer.totalSpending || 0) + paymentData.amount;
-        setLocalItem(STORAGE_KEYS.CUSTOMERS, customers);
+    // Fallback: If not found in memory cache, try fetching from Firestore directly
+    if (!booking && isFirebaseConfigured && db) {
+      try {
+        const bRef = doc(db, 'bookings', cleanBookingId);
+        const bSnap = await safeFirestore(getDoc(bRef), 2000);
+        if (bSnap.exists()) {
+          const remoteB = bSnap.data() as Booking;
+          const currentB = memoryCache.bookings?.data || [];
+          memoryCache.bookings = {
+            data: [remoteB, ...currentB.filter(item => item.id !== remoteB.id)],
+            timestamp: Date.now()
+          };
+          booking = remoteB;
+        }
+      } catch (lookupErr) {
+        console.warn('Booking lookup in recordPayment note:', lookupErr);
       }
     }
 
-    const currentPayments = getLocalItem<Payment[]>(STORAGE_KEYS.PAYMENTS, []);
-    setLocalItem(STORAGE_KEYS.PAYMENTS, [newPayment, ...currentPayments]);
-    this.logAudit(`تسجيل دفعة مالية بقيمة ${newPayment.amount}$ للحجز ${paymentData.bookingId}`, 'payments', id);
+    // 2. Validate remaining amount if booking exists
+    if (booking) {
+      const currentRemaining =
+        booking.remainingAmount ?? (booking.totalPrice - (booking.paidAmount || 0));
+
+      if (paymentData.amount > currentRemaining && !paymentData.allowOverpayment) {
+        throw new Error(
+          `مبلغ الدفعة ($${paymentData.amount}) يتجاوز المبلغ المتبقي على الحجز ($${currentRemaining}).`
+        );
+      }
+
+      booking.paidAmount = (booking.paidAmount || 0) + paymentData.amount;
+      booking.remainingAmount = Math.max(0, (booking.totalPrice || 0) - booking.paidAmount);
+      booking.updatedAt = new Date().toISOString();
+
+      if (memoryCache.bookings?.data) {
+        memoryCache.bookings.data = [booking, ...memoryCache.bookings.data.filter(b => b.id !== booking.id)];
+        memoryCache.bookings.timestamp = Date.now();
+      }
+    }
+
+    const id = `pay-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const receiptNumber = paymentData.receiptNumber || `REC-2026-${Date.now().toString().slice(-6)}`;
+    const newPayment: Payment = {
+      id,
+      bookingId: cleanBookingId,
+      customerId: paymentData.customerId || (booking ? (booking.customerId || booking.customerPhone) : undefined),
+      amount: paymentData.amount,
+      method: paymentData.method,
+      paymentDate: paymentData.paymentDate || new Date().toISOString().split('T')[0],
+      receiptNumber,
+      notes: paymentData.notes || '',
+      createdAt: new Date().toISOString(),
+    };
+
+    // 3. Write directly to Firestore with comprehensive error handling (No silent failures)
+    if (isFirebaseConfigured && db) {
+      try {
+        // A. Persist payment document to /payments/{id}
+        await safeFirestore(setDoc(doc(db, 'payments', id), newPayment), 3500);
+
+        // B. Update booking paidAmount and remainingAmount in /bookings/{bookingId}
+        if (booking) {
+          await safeFirestore(
+            setDoc(doc(db, 'bookings', booking.id), booking, { merge: true }),
+            3500
+          );
+        }
+      } catch (err: any) {
+        if (err?.code !== 'unavailable') {
+          handleFirestoreError('payments', id, 'write', err, auth?.currentUser?.uid);
+          throw new Error('فشل تسجيل وحفظ الدفعة في قاعدة البيانات السحابية (صلاحيات غير كافية أو خطأ في الاتصال بالخادم).');
+        }
+      }
+    }
+
+    // 4. Update memory cache ONLY (never localStorage)
+    const currentPayments = memoryCache.payments?.data || [];
+    const updatedPayments = [newPayment, ...currentPayments.filter(p => p.id !== id)];
+    memoryCache.payments = { data: updatedPayments, timestamp: Date.now() };
+
+    // Update customer spending in memory
+    if (booking && memoryCache.customers?.data) {
+      const customer = memoryCache.customers.data.find(c => c.phone === booking.customerPhone || c.id === booking.customerId);
+      if (customer) {
+        customer.totalSpending = (customer.totalSpending || 0) + paymentData.amount;
+      }
+    }
+
+    this.logAudit(
+      `تسجيل سند قبض مالي بقيمة $${newPayment.amount} برقم ${receiptNumber} للحجز ${cleanBookingId}`,
+      'payments',
+      id
+    );
 
     return newPayment;
   },
 
-  async getPayments(): Promise<Payment[]> {
-    return getLocalItem<Payment[]>(STORAGE_KEYS.PAYMENTS, []);
+  async getPayments(forceRefresh = false): Promise<Payment[]> {
+    if (!forceRefresh && memoryCache.payments && Date.now() - memoryCache.payments.timestamp < CACHE_TTL_MS) {
+      return memoryCache.payments.data;
+    }
+
+    if (isFirebaseConfigured && db && isStaffOrAdmin()) {
+      try {
+        const col = collection(db, 'payments');
+        const snap = await safeFirestore(getDocs(col), 3000);
+        if (!snap.empty) {
+          const remoteDocs = snap.docs.map(d => ({ ...d.data(), id: d.id } as Payment));
+          remoteDocs.sort(
+            (a, b) =>
+              new Date(b.createdAt || b.paymentDate || 0).getTime() -
+              new Date(a.createdAt || a.paymentDate || 0).getTime()
+          );
+
+          memoryCache.payments = { data: remoteDocs, timestamp: Date.now() };
+          return remoteDocs;
+        }
+      } catch (err: any) {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore getPayments note:', err);
+        }
+      }
+    }
+
+    return memoryCache.payments?.data || [];
   },
 
   // -------------------------------------------------------------
   // Customers CRM
   // -------------------------------------------------------------
-  async getCustomers(): Promise<Customer[]> {
-    return getLocalItem<Customer[]>(STORAGE_KEYS.CUSTOMERS, INITIAL_CUSTOMERS);
+  async getCustomers(forceRefresh = false): Promise<Customer[]> {
+    if (!forceRefresh && memoryCache.customers && Date.now() - memoryCache.customers.timestamp < CACHE_TTL_MS) {
+      return memoryCache.customers.data;
+    }
+
+    // Only query Firestore customers if user is signed in as staff or admin
+    if (isFirebaseConfigured && db && isStaffOrAdmin()) {
+      try {
+        const col = collection(db, 'customers');
+        const snap = await safeFirestore(getDocs(col), 2500);
+        const remoteDocs = snap.docs.map(d => d.data() as Customer);
+
+        memoryCache.customers = { data: remoteDocs, timestamp: Date.now() };
+        return remoteDocs;
+      } catch (err: any) {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore customers query note:', err);
+        }
+      }
+    }
+
+    return memoryCache.customers?.data || [];
   },
 
   async syncCustomerFromBooking(booking: Booking): Promise<Customer> {
-    const customers = getLocalItem<Customer[]>(STORAGE_KEYS.CUSTOMERS, INITIAL_CUSTOMERS);
+    const customers = await this.getCustomers();
     let customer = customers.find(c => c.phone === booking.customerPhone);
 
     if (!customer) {
+      const isAuthUid = booking.customerId && !booking.customerId.startsWith('cust-') && !booking.customerId.startsWith('guest-');
       customer = {
-        id: `cust-${Date.now()}`,
+        id: isAuthUid ? booking.customerId! : `cust-${Date.now()}`,
         fullName: booking.customerName,
         phone: booking.customerPhone,
         whatsapp: booking.customerWhatsApp,
@@ -564,66 +1717,192 @@ export const dataService = {
         drivingLicense: booking.customerLicenseNumber || '',
         address: booking.customerAddress || '',
         totalRentals: 1,
-        totalSpending: 0,
+        totalSpending: booking.paidAmount || 0,
         createdAt: new Date().toISOString(),
       };
       customers.push(customer);
     } else {
       customer.totalRentals = (customer.totalRentals || 0) + 1;
+      customer.totalSpending = (customer.totalSpending || 0) + (booking.paidAmount || 0);
       if (booking.customerNationalId && !customer.nationalId) customer.nationalId = booking.customerNationalId;
       if (booking.customerLicenseNumber && !customer.drivingLicense) customer.drivingLicense = booking.customerLicenseNumber;
       if (booking.customerAddress && !customer.address) customer.address = booking.customerAddress;
     }
 
-    setLocalItem(STORAGE_KEYS.CUSTOMERS, customers);
+    // Update in-memory cache ONLY (never localStorage)
+    memoryCache.customers = { data: customers, timestamp: Date.now() };
+
+    // Prevent direct write if unauthenticated or if generated ID is synthetic (cust-... / guest-...) not matching auth.currentUser.uid
+    if (isFirebaseConfigured && db && auth?.currentUser?.uid) {
+      const currentUid = auth.currentUser.uid;
+      const isMatchingAuthUser = customer.id === currentUid || booking.customerId === currentUid;
+      const isStaff = isStaffOrAdmin();
+
+      if (isMatchingAuthUser || isStaff) {
+        const targetDocId = isMatchingAuthUser ? currentUid : customer.id;
+        try {
+          await safeFirestore(setDoc(doc(db, 'customers', targetDocId), { ...customer, id: targetDocId }, { merge: true }), 8000);
+        } catch (err) {
+          console.warn('Firestore syncCustomerFromBooking note:', err);
+        }
+      }
+    }
+
     return customer;
   },
 
   async updateCustomer(id: string, updates: Partial<Customer>): Promise<Customer> {
-    const customers = getLocalItem<Customer[]>(STORAGE_KEYS.CUSTOMERS, INITIAL_CUSTOMERS);
+    const customers = await this.getCustomers();
     const index = customers.findIndex(c => c.id === id);
     if (index === -1) throw new Error('العميل غير موجود');
 
-    const updated = {
+    const updated: Customer = {
       ...customers[index],
       ...updates,
       updatedAt: new Date().toISOString(),
     };
     customers[index] = updated;
-    setLocalItem(STORAGE_KEYS.CUSTOMERS, customers);
+
+    // In production, update Firestore first and throw on failure
+    if (isFirebaseConfigured && db) {
+      try {
+        await safeFirestore(setDoc(doc(db, 'customers', id), updated, { merge: true }), 2500);
+      } catch (err: any) {
+        if (err?.code !== 'unavailable') {
+          handleFirestoreError('customers', id, 'write', err, auth?.currentUser?.uid);
+          throw new Error('فشل تحديث بيانات العميل في السحابة.');
+        }
+      }
+    }
+
+    // Update in-memory cache ONLY
+    memoryCache.customers = { data: customers, timestamp: Date.now() };
+
     this.logAudit(`تعديل بيانات العميل: ${updated.fullName}`, 'customers', id);
     return updated;
   },
 
-  // -------------------------------------------------------------
-  // Rental Contracts
-  // -------------------------------------------------------------
-  async getContracts(): Promise<Contract[]> {
-    return getLocalItem<Contract[]>(STORAGE_KEYS.CONTRACTS, []);
+  /**
+   * Helper to scan Firestore & memory cache for matching seed customer and booking records
+   */
+  async findMatchingSeedRecords(): Promise<{
+    matchingSeedCustomers: Array<{ id: string; fullName: string; phone: string; source: 'firestore' | 'local' }>;
+    matchingSeedBookings: Array<{ id: string; bookingNumber: string; customerName: string; source: 'firestore' | 'local' }>;
+    realCustomers: Array<{ id: string; fullName: string; phone: string; source: 'firestore' | 'local' }>;
+    realBookings: Array<{ id: string; bookingNumber: string; customerName: string; source: 'firestore' | 'local' }>;
+  }> {
+    const seedCustomerIdentifiers = new Set(['cust-101', 'cust-102', 'cust-103', 'أحمد محمود العلي', 'المهندس وسيم البيطار', 'رامي خالد النجار']);
+    const seedBookingIdentifiers = new Set(['book-2026-001', 'book-2026-002', 'SHK-2026-000001', 'SHK-2026-000002']);
+
+    const matchingSeedCustomers: Array<{ id: string; fullName: string; phone: string; source: 'firestore' | 'local' }> = [];
+    const matchingSeedBookings: Array<{ id: string; bookingNumber: string; customerName: string; source: 'firestore' | 'local' }> = [];
+    const realCustomers: Array<{ id: string; fullName: string; phone: string; source: 'firestore' | 'local' }> = [];
+    const realBookings: Array<{ id: string; bookingNumber: string; customerName: string; source: 'firestore' | 'local' }> = [];
+
+    // 1. Check Firestore
+    if (isFirebaseConfigured && db) {
+      try {
+        const cSnap = await safeFirestore(getDocs(collection(db, 'customers')), 3000);
+        cSnap.docs.forEach(d => {
+          const c = d.data() as Customer;
+          const isSeed = seedCustomerIdentifiers.has(c.id) || seedCustomerIdentifiers.has(c.fullName) || c.id?.startsWith('cust-10');
+          if (isSeed) {
+            matchingSeedCustomers.push({ id: c.id || d.id, fullName: c.fullName, phone: c.phone, source: 'firestore' });
+          } else {
+            realCustomers.push({ id: c.id || d.id, fullName: c.fullName, phone: c.phone, source: 'firestore' });
+          }
+        });
+
+        const bSnap = await safeFirestore(getDocs(collection(db, 'bookings')), 3000);
+        bSnap.docs.forEach(d => {
+          const b = d.data() as Booking;
+          const isSeed = seedBookingIdentifiers.has(b.id) || seedBookingIdentifiers.has(b.bookingNumber) || seedCustomerIdentifiers.has(b.customerName) || b.id === 'book-2026-001' || b.id === 'book-2026-002';
+          if (isSeed) {
+            matchingSeedBookings.push({ id: b.id || d.id, bookingNumber: b.bookingNumber, customerName: b.customerName, source: 'firestore' });
+          } else {
+            realBookings.push({ id: b.id || d.id, bookingNumber: b.bookingNumber, customerName: b.customerName, source: 'firestore' });
+          }
+        });
+      } catch (err) {
+        console.warn('Scan Firestore error:', err);
+      }
+    }
+
+    // 2. Check memory cache
+    const memC = memoryCache.customers?.data || [];
+    memC.forEach(c => {
+      const isSeed = seedCustomerIdentifiers.has(c.id) || seedCustomerIdentifiers.has(c.fullName) || c.id?.startsWith('cust-10');
+      if (isSeed && !matchingSeedCustomers.some(m => m.id === c.id)) {
+        matchingSeedCustomers.push({ id: c.id, fullName: c.fullName, phone: c.phone, source: 'local' });
+      } else if (!isSeed && !realCustomers.some(r => r.id === c.id)) {
+        realCustomers.push({ id: c.id, fullName: c.fullName, phone: c.phone, source: 'local' });
+      }
+    });
+
+    const memB = memoryCache.bookings?.data || [];
+    memB.forEach(b => {
+      const isSeed = seedBookingIdentifiers.has(b.id) || seedBookingIdentifiers.has(b.bookingNumber) || seedCustomerIdentifiers.has(b.customerName);
+      if (isSeed && !matchingSeedBookings.some(m => m.id === b.id)) {
+        matchingSeedBookings.push({ id: b.id, bookingNumber: b.bookingNumber, customerName: b.customerName, source: 'local' });
+      } else if (!isSeed && !realBookings.some(r => r.id === b.id)) {
+        realBookings.push({ id: b.id, bookingNumber: b.bookingNumber, customerName: b.customerName, source: 'local' });
+      }
+    });
+
+    return {
+      matchingSeedCustomers,
+      matchingSeedBookings,
+      realCustomers,
+      realBookings,
+    };
   },
 
-  async generateContract(booking: Booking, vehicle: Vehicle): Promise<Contract> {
-    const settings = await this.getSettings();
-    const id = `cntr-${Date.now()}`;
-    const contractNumber = `CNT-${booking.bookingNumber.replace('SHK-', '')}`;
+  /**
+   * Deletes specific confirmed seed document IDs from Firestore and local caches
+   */
+  async deleteConfirmedSeedDocuments(targetIds: { customerIds: string[]; bookingIds: string[] }): Promise<{ deletedCustomers: number; deletedBookings: number }> {
+    let deletedCustomers = 0;
+    let deletedBookings = 0;
 
-    const newContract: Contract = {
-      id,
-      contractNumber,
-      bookingId: booking.id,
-      vehicleId: vehicle.id,
-      customerId: booking.customerPhone,
-      termsAndConditions: settings.rentalTerms,
-      status: 'active',
-      mileageAtPickup: vehicle.currentMileage,
-      fuelAtPickup: 'full',
-      createdAt: new Date().toISOString(),
-    };
+    // 1. Delete from Firestore
+    if (isFirebaseConfigured && db) {
+      for (const cId of targetIds.customerIds) {
+        try {
+          await safeFirestore(deleteDoc(doc(db, 'customers', cId)), 2500);
+          deletedCustomers++;
+        } catch (err) {
+          console.warn(`Could not delete customer doc ${cId}:`, err);
+        }
+      }
 
-    const contracts = getLocalItem<Contract[]>(STORAGE_KEYS.CONTRACTS, []);
-    setLocalItem(STORAGE_KEYS.CONTRACTS, [newContract, ...contracts]);
-    this.logAudit(`توليد عقد إيجار برقم ${contractNumber}`, 'contracts', id);
-    return newContract;
+      for (const bId of targetIds.bookingIds) {
+        try {
+          await safeFirestore(deleteDoc(doc(db, 'bookings', bId)), 2500);
+          deletedBookings++;
+        } catch (err) {
+          console.warn(`Could not delete booking doc ${bId}:`, err);
+        }
+      }
+    }
+
+    // 2. Clean memory caches and purge any residual local storage items
+    const remainingCustomers = (memoryCache.customers?.data || []).filter(
+      c => !targetIds.customerIds.includes(c.id)
+    );
+    memoryCache.customers = { data: remainingCustomers, timestamp: Date.now() };
+
+    const remainingBookings = (memoryCache.bookings?.data || []).filter(
+      b => !targetIds.bookingIds.includes(b.id) && !targetIds.bookingIds.includes(b.bookingNumber)
+    );
+    memoryCache.bookings = { data: remainingBookings, timestamp: Date.now() };
+
+    try {
+      localStorage.removeItem('shaker_customers_v1');
+      localStorage.removeItem('shaker_bookings_v1');
+      localStorage.removeItem('shaker_payments_v1');
+    } catch {}
+
+    return { deletedCustomers, deletedBookings };
   },
 
   // -------------------------------------------------------------
@@ -724,13 +2003,86 @@ export const dataService = {
     const current = this.getNotifications();
     const updated = current.map(n => n.id === id ? { ...n, read: true } : n);
     setLocalItem(STORAGE_KEYS.NOTIFICATIONS, updated);
+    if (isFirebaseConfigured && db) {
+      try {
+        updateDoc(doc(db, 'notifications', id), { read: true }).catch(() => {});
+      } catch {}
+    }
+  },
+
+  /**
+   * Real-time subscription to administrative notifications collection.
+   * Updates memoryCache and localStorage on snapshot, with graceful offline fallback.
+   * Returns an unsubscribe callback.
+   */
+  subscribeToNotifications(callback: (notifications: AppNotification[]) => void): () => void {
+    if (!isFirebaseConfigured || !db) {
+      callback(this.getNotifications());
+      return () => {};
+    }
+
+    try {
+      const col = collection(db, 'notifications');
+      const unsubscribe = onSnapshot(
+        col,
+        (snap) => {
+          try {
+            const remoteNotifs = snap.docs
+              .map((d) => {
+                const data = d.data();
+                return {
+                  id: d.id,
+                  type: data.type || 'new_booking',
+                  title: data.title || '',
+                  message: data.message || '',
+                  bookingId: data.bookingId,
+                  vehicleId: data.vehicleId,
+                  read: Boolean(data.read),
+                  createdAt: data.createdAt?.toDate
+                    ? data.createdAt.toDate().toISOString()
+                    : (data.createdAt || new Date().toISOString()),
+                } as AppNotification;
+              })
+              .sort((a, b) => {
+                const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                return timeB - timeA;
+              });
+
+            setLocalItem(STORAGE_KEYS.NOTIFICATIONS, remoteNotifs);
+            if (memoryCache.notifications !== undefined) {
+              memoryCache.notifications = { data: remoteNotifs, timestamp: Date.now() };
+            }
+            callback(remoteNotifs);
+          } catch (procErr) {
+            console.warn('Error processing notifications snapshot:', procErr);
+          }
+        },
+        (err) => {
+          console.warn('onSnapshot notifications note (falling back to local):', err?.message || err);
+          callback(this.getNotifications());
+        }
+      );
+
+      return () => {
+        try {
+          unsubscribe();
+        } catch (unsubErr) {
+          console.warn('Error unsubscribing from notifications:', unsubErr);
+        }
+      };
+    } catch (err) {
+      console.warn('Error establishing onSnapshot for notifications:', err);
+      callback(this.getNotifications());
+      return () => {};
+    }
   },
 
   // -------------------------------------------------------------
   // Audit Logs
   // -------------------------------------------------------------
   logAudit(action: string, entity: string, entityId: string, details?: string) {
-    const current = getLocalItem<AuditLog[]>(STORAGE_KEYS.AUDIT, []);
+    const current = memoryCache.auditLogs?.data || [];
     const newLog: AuditLog = {
       id: `audit-${Date.now()}`,
       user: 'مدير النظام (admin)',
@@ -740,11 +2092,11 @@ export const dataService = {
       timestamp: new Date().toISOString(),
       details,
     };
-    setLocalItem(STORAGE_KEYS.AUDIT, [newLog, ...current].slice(0, 100));
+    memoryCache.auditLogs = { data: [newLog, ...current].slice(0, 100), timestamp: Date.now() };
   },
 
   getAuditLogs(): AuditLog[] {
-    return getLocalItem<AuditLog[]>(STORAGE_KEYS.AUDIT, []);
+    return memoryCache.auditLogs?.data || [];
   },
 
   // Status helper
@@ -765,30 +2117,137 @@ export const dataService = {
   // Firestore Users & Uploaded Files Management (Admin View)
   // -------------------------------------------------------------
   /**
+   * فحص الاتصال بقاعدة بيانات Cloud Firestore السحابية وقياس زمن الاستجابة الفعلي
+   */
+  async testFirestoreConnection(): Promise<{
+    success: boolean;
+    latencyMs: number;
+    message: string;
+    databaseId: string;
+    usersCount: number;
+    filesCount: number;
+  }> {
+    const startTime = Date.now();
+    const databaseId = firestoreDatabaseId || 'ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1';
+
+    if (!isFirebaseConfigured || !db) {
+      return {
+        success: false,
+        latencyMs: 0,
+        message: 'إعدادات Firebase غير مهيأة محلياً',
+        databaseId,
+        usersCount: 0,
+        filesCount: 0,
+      };
+    }
+
+    try {
+      // Test read on users collection and files collection
+      const usersSnap = await safeFirestore(getDocs(collection(db, 'users')), 6000);
+      const filesSnap = await safeFirestore(getDocs(collection(db, 'files')), 6000).catch(() => null);
+      const latencyMs = Date.now() - startTime;
+
+      const usersCount = usersSnap.size;
+      const filesCount = filesSnap ? filesSnap.size : 0;
+
+      return {
+        success: true,
+        latencyMs,
+        message: `تم الاتصال بقاعدة بيانات Firestore بنجاح وبزمن استجابة ${latencyMs} ميلي ثانية`,
+        databaseId,
+        usersCount,
+        filesCount,
+      };
+    } catch (err: any) {
+      const latencyMs = Date.now() - startTime;
+      return {
+        success: false,
+        latencyMs,
+        message: `تعذر الوصول السحابي المباشر (${err?.message || 'غير متاح'}). النظام يعمل بذاكرة التخزين المحلية.`,
+        databaseId,
+        usersCount: 0,
+        filesCount: 0,
+      };
+    }
+  },
+
+  /**
+   * إنشاء مستخدم جديد وحفظه مباشرة في Cloud Firestore
+   */
+  async createUser(userData: {
+    email: string;
+    displayName: string;
+    phone?: string;
+    role?: FirestoreUser['role'];
+  }): Promise<FirestoreUser> {
+    const id = `user-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const newUser: FirestoreUser = {
+      id,
+      uid: id,
+      email: userData.email.trim(),
+      displayName: userData.displayName.trim(),
+      phone: userData.phone?.trim() || '',
+      role: userData.role || 'customer',
+      createdAt: new Date().toISOString(),
+      uploadedFilesCount: 0,
+    };
+
+    if (isFirebaseConfigured && db) {
+      try {
+        await safeFirestore(setDoc(doc(db, 'users', id), newUser), 5000);
+      } catch (err) {
+        console.warn('Could not write new user to Firestore:', err);
+      }
+    }
+
+    // Update volatile memory cache
+    const allUsers = memoryCache.users?.data || [];
+    memoryCache.users = { data: [newUser, ...allUsers.filter(u => u.id !== id)], timestamp: Date.now() };
+
+    return newUser;
+  },
+
+  /**
    * جلب قائمة المستخدمين بالكامل من Firestore لعرضها في لوحة تحكم الإدارة
    */
-  async getAllUsers(): Promise<FirestoreUser[]> {
+  async getAllUsers(forceRefresh = false): Promise<FirestoreUser[]> {
+    if (!forceRefresh && memoryCache.users && Date.now() - memoryCache.users.timestamp < CACHE_TTL_MS) {
+      return memoryCache.users.data;
+    }
+
     if (isFirebaseConfigured && db) {
       try {
         const usersCol = collection(db, 'users');
-        const snap = await getDocs(usersCol);
+        const [snap, filesSnap] = await Promise.all([
+          safeFirestore(getDocs(usersCol), 2500),
+          safeFirestore(getDocs(collection(db, 'files')), 2000).catch(() => null),
+        ]);
+
+        // Fetch all files count from Firestore files collection to ensure 100% precision
+        const filesCountByUser: Record<string, number> = {};
+        if (filesSnap && filesSnap.docs) {
+          filesSnap.docs.forEach((fDoc) => {
+            const fData = fDoc.data() as UploadedFile;
+            if (fData.userId) {
+              filesCountByUser[fData.userId] = (filesCountByUser[fData.userId] || 0) + 1;
+            }
+          });
+        }
+
         if (!snap.empty) {
           const users: FirestoreUser[] = [];
           for (const docSnap of snap.docs) {
             const data = docSnap.data() as Partial<FirestoreUser>;
             const uid = docSnap.id;
 
-            // Fetch user's uploaded files count from subcollection
-            let filesCount = data.uploadedFilesCount;
-            if (filesCount === undefined) {
-              try {
-                const filesSubCol = collection(db, 'users', uid, 'files');
-                const filesSnap = await getDocs(filesSubCol);
-                filesCount = filesSnap.size;
-              } catch {
-                filesCount = 0;
-              }
-            }
+            const presetFilesCount = INITIAL_UPLOADED_FILES[uid]?.length || 0;
+            const firestoreLiveFilesCount = filesCountByUser[uid] || 0;
+
+            const computedFilesCount = Math.max(
+              firestoreLiveFilesCount,
+              data.uploadedFilesCount || 0,
+              presetFilesCount
+            );
 
             users.push({
               id: uid,
@@ -798,56 +2257,58 @@ export const dataService = {
               phone: data.phone || '',
               role: data.role || 'customer',
               createdAt: data.createdAt || new Date().toISOString(),
-              uploadedFilesCount: filesCount,
+              uploadedFilesCount: computedFilesCount,
+              verificationStatus: data.verificationStatus || 'pending',
+              verifiedAt: data.verifiedAt,
             });
           }
 
           // Sort by createdAt descending (newest accounts first)
           users.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          
+          memoryCache.users = { data: users, timestamp: Date.now() };
           return users;
-        } else {
-          // If Firestore users collection is currently empty, seed it with the initial users
-          try {
-            for (const user of INITIAL_FIRESTORE_USERS) {
-              await setDoc(doc(db, 'users', user.id), {
-                id: user.id,
-                uid: user.uid,
-                email: user.email,
-                displayName: user.displayName,
-                phone: user.phone || '',
-                role: user.role,
-                createdAt: user.createdAt,
-                uploadedFilesCount: user.uploadedFilesCount || 0,
-              });
-
-              // Seed files subcollection
-              const userFiles = INITIAL_UPLOADED_FILES[user.id] || [];
-              for (const file of userFiles) {
-                await setDoc(doc(db, 'users', user.id, 'files', file.id), file);
-                await setDoc(doc(db, 'files', file.id), file);
-              }
-            }
-          } catch (seedErr) {
-            console.warn('Could not auto-seed Firestore users:', seedErr);
-          }
         }
-      } catch (err) {
-        console.warn('Firestore getAllUsers error, falling back to local store:', err);
+      } catch (err: any) {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore getAllUsers error:', err);
+        }
       }
     }
 
-    // Local storage fallback
-    const localUsers = getLocalItem<FirestoreUser[]>(STORAGE_KEYS.USERS, INITIAL_FIRESTORE_USERS);
-    const localFiles = getLocalItem<UploadedFile[]>(STORAGE_KEYS.FILES, []);
+    return memoryCache.users?.data || [];
+  },
 
-    // Update counts dynamically based on files in local store
-    return localUsers.map((u) => {
-      const userFiles = localFiles.filter((f) => f.userId === u.id || f.userId === u.uid);
-      return {
-        ...u,
-        uploadedFilesCount: userFiles.length,
-      };
-    });
+  /**
+   * Fetch single user profile directly from Firestore
+   */
+  async getUserProfile(userId: string): Promise<FirestoreUser | null> {
+    if (isFirebaseConfigured && db) {
+      try {
+        const userDocRef = doc(db, 'users', userId);
+        const snap = await safeFirestore(getDoc(userDocRef), 2000);
+        if (snap.exists()) {
+          const data = snap.data() as Partial<FirestoreUser>;
+          return {
+            id: snap.id,
+            uid: snap.id,
+            email: data.email || '',
+            displayName: data.displayName || '',
+            phone: data.phone || '',
+            role: data.role || 'customer',
+            createdAt: data.createdAt || new Date().toISOString(),
+            uploadedFilesCount: data.uploadedFilesCount || 0,
+            verificationStatus: data.verificationStatus || 'pending',
+            verifiedAt: data.verifiedAt,
+          };
+        }
+      } catch (err) {
+        console.warn('Error fetching user profile from Firestore:', err);
+      }
+    }
+
+    const cached = memoryCache.users?.data?.find(u => u.id === userId || u.uid === userId);
+    return cached || null;
   },
 
   /**
@@ -858,8 +2319,59 @@ export const dataService = {
   },
 
   /**
+   * تحديث دور المستخدم (عميل / موظف / مدير) في Firestore والذاكرة المحلية
+   */
+  async updateUserRole(
+    uid: string,
+    newRole: 'customer' | 'employee' | 'admin'
+  ): Promise<void> {
+    if (!uid || !uid.trim()) {
+      throw new Error('معرف المستخدم غير صالح');
+    }
+
+    const cleanUid = uid.trim();
+
+    // 1. Update Custom Claims server-side via Firebase Cloud Function (sole authority)
+    if (isFirebaseConfigured && functions) {
+      try {
+        const setRoleFn = httpsCallable<{ targetUid: string; newRole: string }, any>(functions, 'setUserRole');
+        await setRoleFn({ targetUid: cleanUid, newRole });
+      } catch (err: any) {
+        console.error('Failed to update user role via Cloud Function:', err);
+        throw new Error(err?.message || 'تعذر تعديل الصلاحيات. تأكد من امتلاك صلاحية Admin.');
+      }
+    }
+
+    // 2. If the current user updated their own role, force refresh token claims immediately
+    if (auth?.currentUser && auth.currentUser.uid === cleanUid) {
+      try {
+        await auth.currentUser.getIdTokenResult(true);
+      } catch {
+        // Ignore token refresh error
+      }
+    }
+
+    // 3. Update memory cache ONLY (never localStorage for user data or secrets)
+    const currentUsers = memoryCache.users?.data || [];
+    const updatedUsers = currentUsers.map((u) =>
+      u.id === cleanUid || u.uid === cleanUid
+        ? { ...u, role: newRole }
+        : u
+    );
+    memoryCache.users = { data: updatedUsers, timestamp: Date.now() };
+
+    // Clean any residual demo users in localStorage
+    try {
+      localStorage.removeItem('shaker_demo_users_v1');
+    } catch {}
+
+    this.logAudit(`تعديل دور المستخدم (${cleanUid}) إلى ${newRole}`, 'users', cleanUid);
+  },
+
+  /**
    * جلب الملفات والوثائق الخاصة بمستخدم معين باستخدام معرفه (userId)
    * تبحث في كل من المجلد الفرعي /users/{userId}/files وفي مجموعة /files الرئيسية
+   * يتم الاحتفاظ بالملفات في الذاكرة الحية فقط حفاظاً على سرية وخصوصية الوثائق
    */
   async getFilesForUser(userId: string): Promise<UploadedFile[]> {
     if (!userId || !userId.trim()) {
@@ -874,7 +2386,7 @@ export const dataService = {
         // 1. Fetch from subcollection: /users/{userId}/files
         try {
           const filesSubCol = collection(db, 'users', cleanUserId, 'files');
-          const subSnap = await getDocs(filesSubCol);
+          const subSnap = await safeFirestore(getDocs(filesSubCol), 3500);
           subSnap.docs.forEach((d) => {
             const fileData = d.data() as UploadedFile;
             collectedFilesMap.set(d.id, {
@@ -884,14 +2396,14 @@ export const dataService = {
             });
           });
         } catch (subErr) {
-          console.warn(`Could not fetch subcollection files for ${cleanUserId}:`, subErr);
+          // Subcollection query failed or offline
         }
 
         // 2. Fetch from root files collection: /files where userId == cleanUserId
         try {
           const rootFilesCol = collection(db, 'files');
           const q = query(rootFilesCol, where('userId', '==', cleanUserId));
-          const rootSnap = await getDocs(q);
+          const rootSnap = await safeFirestore(getDocs(q), 3500);
           rootSnap.docs.forEach((d) => {
             const fileData = d.data() as UploadedFile;
             if (!collectedFilesMap.has(d.id)) {
@@ -903,7 +2415,22 @@ export const dataService = {
             }
           });
         } catch (rootErr) {
-          console.warn(`Could not query root files collection for ${cleanUserId}:`, rootErr);
+          // Root query fallback: scan root files collection if filtered query has issue
+          try {
+            const allFilesSnap = await safeFirestore(getDocs(collection(db, 'files')), 3500);
+            allFilesSnap.docs.forEach((d) => {
+              const fileData = d.data() as UploadedFile;
+              if (fileData.userId === cleanUserId || (fileData as any).uid === cleanUserId) {
+                if (!collectedFilesMap.has(d.id)) {
+                  collectedFilesMap.set(d.id, {
+                    ...fileData,
+                    id: d.id,
+                    userId: cleanUserId,
+                  });
+                }
+              }
+            });
+          } catch {}
         }
 
         if (collectedFilesMap.size > 0) {
@@ -914,24 +2441,11 @@ export const dataService = {
           return filesArray;
         }
       } catch (err) {
-        console.warn(`Firestore getFilesForUser error for ${cleanUserId}:`, err);
+        // Ignore offline error
       }
     }
 
-    // 3. Fallback to local storage
-    const allLocalFiles = getLocalItem<UploadedFile[]>(STORAGE_KEYS.FILES, []);
-    const localMatching = allLocalFiles.filter(
-      (f) => f.userId === cleanUserId || (f as any).uid === cleanUserId
-    );
-
-    if (localMatching.length > 0) {
-      localMatching.sort(
-        (a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime()
-      );
-      return localMatching;
-    }
-
-    // 4. Fallback to initial preset files
+    // Fallback to initial preset files in memory only
     const preset = INITIAL_UPLOADED_FILES[cleanUserId] || [];
     return [...preset].sort(
       (a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime()
@@ -951,50 +2465,103 @@ export const dataService = {
       ...fileData,
       id: fileId,
       uploadedAt: new Date().toISOString(),
+      verified: false,
+      status: 'manual_review',
     };
 
     if (isFirebaseConfigured && db) {
       try {
         // Store in subcollection
-        await setDoc(doc(db, 'users', fileData.userId, 'files', fileId), newFile);
+        safeFirestore(setDoc(doc(db, 'users', fileData.userId, 'files', fileId), newFile), 2500).catch(() => {});
         // Store in root files collection for index access
-        await setDoc(doc(db, 'files', fileId), newFile);
+        safeFirestore(setDoc(doc(db, 'files', fileId), newFile), 2500).catch(() => {});
 
         // Update uploadedFilesCount on user doc
         try {
           const userDocRef = doc(db, 'users', fileData.userId);
-          const userSnap = await getDoc(userDocRef);
+          const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
           if (userSnap.exists()) {
-            const currentCount = (userSnap.data().uploadedFilesCount || 0) + 1;
-            await updateDoc(userDocRef, { uploadedFilesCount: currentCount });
+            const userData = userSnap.data();
+            const currentCount = (userData.uploadedFilesCount || 0) + 1;
+            const updatePayload: Record<string, any> = { uploadedFilesCount: currentCount };
+            if (userData.verificationStatus !== 'verified') {
+              updatePayload.verificationStatus = 'manual_review';
+              updatePayload.verified = false;
+            }
+            safeFirestore(updateDoc(userDocRef, updatePayload), 1500).catch(() => {});
           }
-        } catch (uErr) {
-          console.warn('Error updating user file count in Firestore:', uErr);
+        } catch {
+          // Ignore offline error
         }
-      } catch (err) {
-        console.warn('Firestore uploadUserFile error, saving to local store:', err);
+      } catch {
+        // Fallback
       }
     }
 
-    // Update local storage
-    const allFiles = getLocalItem<UploadedFile[]>(STORAGE_KEYS.FILES, []);
-    const updatedFiles = [newFile, ...allFiles];
-    setLocalItem(STORAGE_KEYS.FILES, updatedFiles);
-
-    // Update user file count locally
-    const allUsers = getLocalItem<FirestoreUser[]>(STORAGE_KEYS.USERS, INITIAL_FIRESTORE_USERS);
-    const updatedUsers = allUsers.map((u) => {
-      if (u.id === fileData.userId || u.uid === fileData.userId) {
-        return {
-          ...u,
-          uploadedFilesCount: (u.uploadedFilesCount || 0) + 1,
-        };
-      }
-      return u;
-    });
-    setLocalItem(STORAGE_KEYS.USERS, updatedUsers);
+    // Update user file count in memory cache ONLY
+    if (memoryCache.users?.data) {
+      memoryCache.users.data = memoryCache.users.data.map((u) => {
+        if (u.id === fileData.userId || u.uid === fileData.userId) {
+          return {
+            ...u,
+            uploadedFilesCount: (u.uploadedFilesCount || 0) + 1,
+          };
+        }
+        return u;
+      });
+    }
 
     return newFile;
+  },
+
+  /**
+   * Delete a user's uploaded file from Firestore and Firebase Storage
+   */
+  async deleteUserFile(userId: string, fileId: string, storagePath?: string): Promise<void> {
+    if (isFirebaseConfigured && db) {
+      try {
+        // Delete from subcollection
+        safeFirestore(deleteDoc(doc(db, 'users', userId, 'files', fileId)), 2500).catch(() => {});
+        // Delete from root files collection
+        safeFirestore(deleteDoc(doc(db, 'files', fileId)), 2500).catch(() => {});
+
+        // Decrement user uploadedFilesCount
+        try {
+          const userDocRef = doc(db, 'users', userId);
+          const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
+          if (userSnap.exists()) {
+            const currentCount = Math.max(0, (userSnap.data().uploadedFilesCount || 1) - 1);
+            safeFirestore(updateDoc(userDocRef, { uploadedFilesCount: currentCount }), 1500).catch(() => {});
+          }
+        } catch {
+          // Ignore offline error
+        }
+      } catch {
+        // Fallback
+      }
+    }
+
+    // If storagePath provided, delete from Firebase Storage
+    if (storagePath) {
+      try {
+        await storageService.deleteFile(storagePath);
+      } catch (err) {
+        console.warn('Error deleting file from storage:', err);
+      }
+    }
+
+    // Update user file count in memory cache ONLY
+    if (memoryCache.users?.data) {
+      memoryCache.users.data = memoryCache.users.data.map((u) => {
+        if (u.id === userId || u.uid === userId) {
+          return {
+            ...u,
+            uploadedFilesCount: Math.max(0, (u.uploadedFilesCount || 1) - 1),
+          };
+        }
+        return u;
+      });
+    }
   },
 
   async syncUserToFirestore(authUser: { uid: string; email: string; displayName: string; phone?: string; role: string; createdAt?: string }): Promise<void> {
@@ -1012,20 +2579,23 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       try {
         const userDocRef = doc(db, 'users', authUser.uid);
-        const snap = await getDoc(userDocRef);
+        const snap = await safeFirestore(getDoc(userDocRef), 1500);
         if (!snap.exists()) {
-          await setDoc(userDocRef, firestoreUser);
+          safeFirestore(setDoc(userDocRef, firestoreUser), 2000).catch(() => {});
         }
-      } catch (err) {
-        console.warn('Firestore syncUserToFirestore error:', err);
+      } catch {
+        // Offline mode fallback
       }
     }
 
-    // Update local users
-    const allUsers = getLocalItem<FirestoreUser[]>(STORAGE_KEYS.USERS, INITIAL_FIRESTORE_USERS);
-    const exists = allUsers.some((u) => u.uid === authUser.uid || u.email.toLowerCase() === authUser.email.toLowerCase());
+    // Update memory users cache ONLY
+    const currentUsers = memoryCache.users?.data || [];
+    const exists = currentUsers.some((u) => u.uid === authUser.uid || u.email.toLowerCase() === authUser.email.toLowerCase());
     if (!exists) {
-      setLocalItem(STORAGE_KEYS.USERS, [firestoreUser, ...allUsers]);
+      memoryCache.users = {
+        data: [firestoreUser, ...currentUsers],
+        timestamp: Date.now(),
+      };
     }
   },
 };

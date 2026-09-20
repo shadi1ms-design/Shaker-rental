@@ -79,7 +79,7 @@ export const ContactPage: React.FC = () => {
                 <MapPin className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-bold text-white block">موقع الشركة والمكتب الرئيسي:</span>
-                  <span className="text-slate-300">الجمهورية العربية السورية – دمشق – جرمانا، شارع الخضر، مقابل المركز الثقافي</span>
+                  <span className="text-slate-300">الجمهورية العربية السورية – دمشق – جرمانا، شارع النسيم</span>
                 </div>
               </div>
 
@@ -152,7 +152,7 @@ export const ContactPage: React.FC = () => {
                   <label className="block text-slate-400 mb-1 font-semibold">الاسم الكريم</label>
                   <input
                     type="text"
-                    value={name}
+                    value={name || ''}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="مثال: يوسف العلي"
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-amber-500"
@@ -164,7 +164,7 @@ export const ContactPage: React.FC = () => {
                   <label className="block text-slate-400 mb-1 font-semibold">رقم الهاتف أو الواتساب</label>
                   <input
                     type="tel"
-                    value={phone}
+                    value={phone || ''}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="0944123456"
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-amber-500"
@@ -175,7 +175,7 @@ export const ContactPage: React.FC = () => {
                 <div>
                   <label className="block text-slate-400 mb-1 font-semibold">نص الرسالة أو الاستفسار</label>
                   <textarea
-                    value={message}
+                    value={message || ''}
                     onChange={(e) => setMessage(e.target.value)}
                     rows={4}
                     placeholder="اكتب استفسارك عن السيارة أو المدة المطلوبة هنا..."

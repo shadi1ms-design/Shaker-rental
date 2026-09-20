@@ -1,5 +1,5 @@
 import React from 'react';
-import { Phone, MessageCircle, MapPin, Clock, ShieldCheck, Heart } from 'lucide-react';
+import { Phone, MessageCircle, MapPin, Clock } from 'lucide-react';
 import { openWhatsAppChat } from '../services/whatsapp';
 
 interface FooterProps {
@@ -79,15 +79,6 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                   من نحن وشروط التأجير
                 </button>
               </li>
-              <li>
-                <button
-                  onClick={() => onNavigate('admin')}
-                  className="text-amber-400/80 hover:text-amber-400 transition-colors flex items-center gap-1"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>بوابة الموظفين والإدارة</span>
-                </button>
-              </li>
             </ul>
           </div>
 
@@ -97,7 +88,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             <div className="space-y-2.5">
               <div className="flex items-start gap-2">
                 <MapPin className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span>الجمهورية العربية السورية – دمشق – جرمانا</span>
+                <span>الجمهورية العربية السورية – دمشق – جرمانا، شارع النسيم</span>
               </div>
               <div className="flex items-start gap-2">
                 <Clock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Vehicle, Booking, AppSettings, SearchFilters } from './types';
 import { dataService } from './services/dataService';
@@ -13,10 +13,14 @@ import { ContactPage } from './components/ContactPage';
 import { AuthModal } from './components/AuthModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { AdminDashboard, AdminTabType } from './components/AdminDashboard';
+import { EmailVerificationGate } from './components/EmailVerificationGate';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
+import { VehicleImagePlaceholder } from './components/VehicleImagePlaceholder';
 import {
   MessageCircle,
   Shield,
+  ShieldCheck,
   Phone,
   CheckCircle2,
   Sparkles,
@@ -27,13 +31,25 @@ import {
   HelpCircle,
   LogIn,
   KeyRound,
-  ArrowRight
+  ArrowRight,
+  ArrowLeft,
+  Bot,
+  Plane
 } from 'lucide-react';
 
 function MainAppContent() {
-  const { user, isAdmin, isSuperAdmin, isEmployee, isSpecificAdminUser, isLoadingAuth, loginWithEmail, logout } = useAuth();
+  const {
+    user,
+    isSuperAdmin,
+    isAdmin,
+    isEmployee,
+    isLoadingAuth,
+    loginWithEmail,
+    loginWithGoogle,
+    logout
+  } = useAuth();
 
-  const isStaffAuthorized = isAdmin || isSuperAdmin || isEmployee || isSpecificAdminUser;
+  const isStaffAuthorized = isAdmin || isEmployee;
 
   // App Navigation View
   const [currentView, setCurrentView] = useState<'home' | 'catalog' | 'about' | 'admin'>(() => {
@@ -43,11 +59,11 @@ function MainAppContent() {
     return 'home';
   });
 
-  // Core Data State
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [isLoading, setIsLoading] = useState(true);
+  // Core Data State - Immediate cache bootstrap for 0ms initial render
+  const [vehicles, setVehicles] = useState<Vehicle[]>(() => dataService.getCachedVehicles());
+  const [bookings, setBookings] = useState<Booking[]>(() => dataService.getCachedBookings());
+  const [settings, setSettings] = useState<AppSettings>(() => dataService.getCachedSettings());
+  const [isLoading, setIsLoading] = useState(false);
 
   // Admin login form state
   const [adminEmail, setAdminEmail] = useState('');
@@ -68,37 +84,65 @@ function MainAppContent() {
   // Success Notification
   const [lastCreatedBooking, setLastCreatedBooking] = useState<Booking | null>(null);
 
+  // Home Page Interaction State
+  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
+  const [previewImageErrors, setPreviewImageErrors] = useState<Record<string, boolean>>({});
+
+  // Admin auto-navigation ref to avoid trapping user in an infinite redirect loop
+  const hasAutoNavigatedAdminRef = useRef(false);
+
   // Listen to browser popstate (back/forward navigation)
   useEffect(() => {
     const handleLocationChange = () => {
-      if (window.location.pathname.startsWith('/admin')) {
+      const path = window.location.pathname;
+
+      if (path.startsWith('/admin')) {
         setCurrentView('admin');
-      } else if (currentView === 'admin') {
+      } else if (path.includes('/cars') || path.includes('/catalog')) {
+        setCurrentView('catalog');
+      } else if (path.includes('/about') || path.includes('/contact')) {
+        setCurrentView('about');
+      } else {
         setCurrentView('home');
       }
     };
     window.addEventListener('popstate', handleLocationChange);
     return () => window.removeEventListener('popstate', handleLocationChange);
-  }, [currentView]);
+  }, []);
 
-  // When designated admin logs in, automatically show admin view
+  // When admin logs in, automatically show admin view once instead of normal dashboard
   useEffect(() => {
-    if (isSpecificAdminUser && currentView !== 'admin') {
+    if (isAdmin && !hasAutoNavigatedAdminRef.current) {
+      hasAutoNavigatedAdminRef.current = true;
+      setIsProfileModalOpen(false);
       setCurrentView('admin');
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin')) {
+        window.history.replaceState(null, '', '/admin/dashboard');
+      }
+    } else if (!isAdmin) {
+      hasAutoNavigatedAdminRef.current = false;
     }
-  }, [isSpecificAdminUser]);
+  }, [isAdmin]);
 
   // Load initial data from dataService
   const refreshData = async () => {
     try {
-      const [vList, bList, sSettings] = await Promise.all([
+      const [vList, sSettings] = await Promise.all([
         dataService.getVehicles(),
-        dataService.getBookings(),
         dataService.getSettings(),
       ]);
       setVehicles(vList);
-      setBookings(bList);
       setSettings(sSettings);
+
+      if (isStaffAuthorized) {
+        const bList = await dataService.getBookings(true);
+        setBookings(bList);
+      } else if (user?.uid) {
+        const bList = await dataService.getBookingsForCustomer(user.uid);
+        setBookings(bList);
+      } else {
+        setBookings([]);
+      }
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
@@ -107,8 +151,31 @@ function MainAppContent() {
   };
 
   useEffect(() => {
+    // Initial fetch / fallback
     refreshData();
-  }, []);
+
+    // Real-time listener for vehicles fleet
+    const unsubscribeVehicles = dataService.subscribeToVehicles((updatedVehicles) => {
+      setVehicles(updatedVehicles);
+    });
+
+    // Real-time listener for bookings
+    let unsubscribeBookings = () => {};
+    if (isStaffAuthorized) {
+      unsubscribeBookings = dataService.subscribeToBookings((updatedBookings) => {
+        setBookings(updatedBookings);
+      });
+    } else if (user?.uid) {
+      unsubscribeBookings = dataService.subscribeToCustomerBookings(user.uid, (customerBookings) => {
+        setBookings(customerBookings);
+      });
+    }
+
+    return () => {
+      unsubscribeVehicles();
+      unsubscribeBookings();
+    };
+  }, [user?.uid, isStaffAuthorized]);
 
   // Handle search submitted from Hero section
   const handleHeroSearch = (filters: SearchFilters) => {
@@ -122,18 +189,25 @@ function MainAppContent() {
   };
 
   const getAdminTabFromPath = (path: string): AdminTabType => {
-    if (path.includes('/admin/vehicles')) return 'vehicles';
-    if (path.includes('/admin/customers')) return 'customers';
+    if (path.includes('/admin/vehicles')) return isAdmin ? 'vehicles' : 'bookings';
+    if (path.includes('/admin/customers')) return isAdmin ? 'overview' : 'bookings';
     if (path.includes('/admin/bookings')) return 'bookings';
+    if (path.includes('/admin/calendar')) return 'bookings';
     if (path.includes('/admin/rentals')) return 'bookings';
-    if (path.includes('/admin/contracts')) return 'contracts';
-    if (path.includes('/admin/payments')) return 'payments';
-    if (path.includes('/admin/maintenance')) return 'maintenance';
-    if (path.includes('/admin/reports')) return 'reports';
-    if (path.includes('/admin/settings')) return 'settings';
-    if (path.includes('/admin/notifications')) return 'notifications';
-    if (path.includes('/admin/users')) return 'firestore_users';
-    return 'overview';
+    if (path.includes('/admin/contracts')) return 'bookings';
+    if (path.includes('/admin/payments')) return 'bookings';
+    if (path.includes('/admin/maintenance')) return isAdmin ? 'vehicles' : 'bookings';
+    if (path.includes('/admin/reports')) return isAdmin ? 'reports' : 'bookings';
+    if (path.includes('/admin/settings')) return isAdmin ? 'settings' : 'bookings';
+    if (path.includes('/admin/notifications')) return isAdmin ? 'notifications' : 'bookings';
+    if (path.includes('/admin/firebase')) return isSuperAdmin ? 'firestore_users' : (isAdmin ? 'overview' : 'bookings');
+    if (path.includes('/admin/users')) return isSuperAdmin ? 'firestore_users' : (isAdmin ? 'overview' : 'bookings');
+    if (path.includes('/admin/staff')) return isSuperAdmin ? 'staff' : (isAdmin ? 'overview' : 'bookings');
+    if (path.includes('/admin/activity') || path.includes('/admin/audit')) return isSuperAdmin ? 'activity_log' : (isAdmin ? 'overview' : 'bookings');
+    if (path.includes('/admin/dashboard')) return isAdmin ? 'overview' : 'bookings';
+    if (isSuperAdmin) return 'firestore_users';
+    if (isAdmin) return 'overview';
+    return 'bookings';
   };
 
   const handleAdminLoginSubmit = async (e: React.FormEvent) => {
@@ -150,8 +224,8 @@ function MainAppContent() {
     }
   };
 
-  // If viewing admin or URL is on an /admin route
-  if (currentView === 'admin' || (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin'))) {
+  // If viewing admin
+  if (currentView === 'admin') {
     // 1. Wait for auth resolution - do not render protected routes before auth state is ready
     if (isLoadingAuth) {
       return (
@@ -194,9 +268,9 @@ function MainAppContent() {
                 <label className="block text-xs font-bold text-slate-300 mb-1.5">البريد الإلكتروني الإداري</label>
                 <input
                   type="email"
-                  value={adminEmail}
+                  value={adminEmail || ''}
                   onChange={(e) => setAdminEmail(e.target.value)}
-                  placeholder="admin@shaker-rent.com أو shadi1ms@gmail.com"
+                  placeholder="name@example.com"
                   required
                   dir="ltr"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-amber-500"
@@ -207,7 +281,7 @@ function MainAppContent() {
                 <label className="block text-xs font-bold text-slate-300 mb-1.5">كلمة المرور</label>
                 <input
                   type="password"
-                  value={adminPassword}
+                  value={adminPassword || ''}
                   onChange={(e) => setAdminPassword(e.target.value)}
                   placeholder="••••••••"
                   required
@@ -230,20 +304,54 @@ function MainAppContent() {
                   </>
                 )}
               </button>
+
+              <div className="relative flex items-center justify-center my-3">
+                <div className="border-t border-slate-800 w-full" />
+                <span className="bg-slate-900 px-2.5 text-[10px] text-slate-400 font-medium">أو</span>
+                <div className="border-t border-slate-800 w-full" />
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setAdminLoginError(null);
+                  setAdminLoginLoading(true);
+                  try {
+                    if (typeof loginWithGoogle === 'function') {
+                      await loginWithGoogle();
+                    }
+                  } catch (err: any) {
+                    setAdminLoginError(err?.message || 'تعذر تسجيل الدخول الإداري عبر Google.');
+                  } finally {
+                    setAdminLoginLoading(false);
+                  }
+                }}
+                disabled={adminLoginLoading}
+                className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs transition-all shadow-md flex items-center justify-center gap-2 border border-slate-300 disabled:opacity-50"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  />
+                </svg>
+                <span>دخول إداري معتمد عبر Google</span>
+              </button>
             </form>
 
             <div className="pt-2 border-t border-slate-800 space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setAdminEmail('shadi1ms@gmail.com');
-                  setAdminPassword('123456');
-                }}
-                className="w-full py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-amber-300 text-xs font-bold transition-colors border border-amber-500/20"
-              >
-                تعبئة بيانات الحساب الرئيسي المعتمد (shadi1ms@gmail.com)
-              </button>
-
               <button
                 type="button"
                 onClick={() => {
@@ -280,20 +388,42 @@ function MainAppContent() {
     );
   }
 
+  // Mandatory Email Verification Gate for new customer accounts created on/after 2026-09-19
+  const EMAIL_VERIFICATION_CUTOFF_DATE = new Date('2026-09-19T00:00:00.000Z').getTime();
+  const userCreatedAtTime = user?.createdAt ? new Date(user.createdAt).getTime() : Date.now();
+  const isAccountNewerThanCutoff = userCreatedAtTime >= EMAIL_VERIFICATION_CUTOFF_DATE;
+
+  const requiresEmailVerification = Boolean(
+    user &&
+    !isAdmin &&
+    !isEmployee &&
+    user.isPasswordProvider !== false &&
+    !user.emailVerified &&
+    isAccountNewerThanCutoff
+  );
+
+  if (!isLoadingAuth && requiresEmailVerification) {
+    return <EmailVerificationGate />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-cairo">
       {/* Top Navigation */}
       <Navbar
         currentView={currentView}
         onNavigate={(view) => {
-          if (view === 'cars') {
+          if (view === 'cars' || view === 'catalog') {
             setCurrentView('catalog');
-          } else if (view === 'contact') {
+            if (typeof window !== 'undefined') window.history.pushState(null, '', '/cars');
+          } else if (view === 'contact' || view === 'about') {
             setCurrentView('about');
+            if (typeof window !== 'undefined') window.history.pushState(null, '', '/about');
           } else if (view === 'admin') {
             setCurrentView('admin');
+            if (typeof window !== 'undefined') window.history.pushState(null, '', '/admin/dashboard');
           } else {
             setCurrentView('home');
+            if (typeof window !== 'undefined') window.history.pushState(null, '', '/');
           }
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
@@ -303,7 +433,7 @@ function MainAppContent() {
           setIsAuthModalOpen(true);
         }}
         onOpenProfile={() => {
-          if (isSpecificAdminUser) {
+          if (isAdmin) {
             setCurrentView('admin');
           } else {
             setIsProfileModalOpen(true);
@@ -353,32 +483,41 @@ function MainAppContent() {
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => {
                     setActiveBookingFilters(undefined);
                     setCurrentView('catalog');
+                    if (typeof window !== 'undefined') window.history.pushState(null, '', '/cars');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
                   }}
-                  className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1.5"
+                  className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-orange-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
                 >
-                  <span>عرض جميع سيارات الأسطول ({vehicles.length})</span>
-                  <span>←</span>
+                  <span>تصفح كامل الأسطول</span>
+                  <span className="text-xs opacity-90 font-mono font-medium">({vehicles.length})</span>
+                  <ArrowLeft className="w-4 h-4 text-white" />
                 </button>
               </div>
 
-              {/* Cars Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {vehicles.slice(0, 6).map((vehicle) => (
+              {/* Cars Grid (2 items preview) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto">
+                {vehicles.slice(0, 2).map((vehicle) => (
                   <div
                     key={vehicle.id}
                     className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl overflow-hidden transition-all duration-300 hover:shadow-2xl hover:shadow-amber-500/5 group flex flex-col justify-between"
                   >
                     <div>
                       {/* Image Frame */}
-                      <div className="relative h-52 bg-slate-950 overflow-hidden">
-                        <img
-                          src={vehicle.imageUrl}
-                          alt={`${vehicle.brand} ${vehicle.model}`}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        />
+                      <div className="relative h-56 bg-slate-950 overflow-hidden">
+                        {!vehicle.imageUrl || previewImageErrors[vehicle.id] ? (
+                          <VehicleImagePlaceholder brand={vehicle.brand} model={vehicle.model} />
+                        ) : (
+                          <img
+                            src={vehicle.imageUrl}
+                            alt={`${vehicle.brand} ${vehicle.model}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            onError={() => setPreviewImageErrors((prev) => ({ ...prev, [vehicle.id]: true }))}
+                          />
+                        )}
                         <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-slate-950/80 backdrop-blur-md text-[11px] font-bold text-amber-400 border border-amber-500/30">
                           {vehicle.category === 'light'
                             ? 'اقتصادي (Light)'
@@ -386,9 +525,14 @@ function MainAppContent() {
                             ? 'سيدان متوسط (Medium)'
                             : 'جيب عائلي 7 ركاب'}
                         </div>
-                        <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md text-[11px] font-mono font-bold text-slate-300">
-                          لوحة: {vehicle.plateNumber}
-                        </div>
+                        {vehicle.status === 'available' && (
+                          <div className="absolute top-3 left-3">
+                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                              <span>متاحة الآن ●</span>
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Content Info */}
@@ -468,63 +612,7 @@ function MainAppContent() {
               </div>
             </section>
 
-            {/* Why Choose Shaker Section */}
-            <section className="bg-slate-900/60 border-y border-slate-800 py-16">
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="text-center max-w-2xl mx-auto mb-12">
-                  <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-full inline-block mb-3">
-                    لماذا تختار شاكر؟
-                  </span>
-                  <h2 className="text-2xl sm:text-3xl font-black text-white">
-                    خدمات تأجير استثنائية ترتقي لتطلعاتكم
-                  </h2>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                  <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-3">
-                    <div className="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-400 flex items-center justify-center mx-auto">
-                      <Clock className="w-6 h-6" />
-                    </div>
-                    <h3 className="font-bold text-white text-base">تسليم سريع وفوري</h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      إجراءات تسليم بسيطة وسريعة خلال 5 دقائق في مقرنا بجرمانا أو مع التوصيل لموقعك.
-                    </p>
-                  </div>
-
-                  <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-3">
-                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
-                      <Shield className="w-6 h-6" />
-                    </div>
-                    <h3 className="font-bold text-white text-base">تأمين مسترد مضمون</h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      استرداد فوري لمبلغ التأمين ($300 - $500) عند إعادة السيارة وفحصها بنزاهة تامة.
-                    </p>
-                  </div>
-
-                  <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-3">
-                    <div className="w-12 h-12 rounded-2xl bg-blue-500/10 text-blue-400 flex items-center justify-center mx-auto">
-                      <Award className="w-6 h-6" />
-                    </div>
-                    <h3 className="font-bold text-white text-base">صيانة دورية كل 5000 كم</h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      رقابة صارمة على غيار الزيوت وفحص الفرامل والإطارات لضمان راحة بالك وسلامة عائلتك.
-                    </p>
-                  </div>
-
-                  <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-3">
-                    <div className="w-12 h-12 rounded-2xl bg-purple-500/10 text-purple-400 flex items-center justify-center mx-auto">
-                      <Sparkles className="w-6 h-6" />
-                    </div>
-                    <h3 className="font-bold text-white text-base">خصومات للفترات الطويلة</h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      خصم $5 يومياً للحجوزات الأسبوعية وأسعار حصرية شهرية تبدأ من $500 فقط.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* FAQ Section */}
+            {/* FAQ Section (Accordion) */}
             <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
               <div className="text-center mb-10">
                 <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-full inline-block mb-3">
@@ -535,36 +623,60 @@ function MainAppContent() {
                 </h2>
               </div>
 
-              <div className="space-y-4 text-xs sm:text-sm">
-                <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
-                  <h3 className="font-bold text-white text-sm sm:text-base flex items-center gap-2">
-                    <HelpCircle className="w-4 h-4 text-amber-400" />
-                    ما هي الأوراق المطلوبة لاستئجار سيارة في سوريا؟
-                  </h3>
-                  <p className="text-slate-400 leading-relaxed pr-6">
-                    يلزم توفر الهوية الشخصية (أو جواز السفر الساري للمغتربين والزوار)، ورخصة قيادة سارية المفعول، بالإضافة إلى مبلغ التأمين النقدي المسترد.
-                  </p>
-                </div>
+              <div className="space-y-3">
+                {[
+                  {
+                    q: 'ما هي الأوراق المطلوبة لاستئجار سيارة في سوريا؟',
+                    a: 'يلزم توفر الهوية الشخصية (أو جواز السفر الساري للمغتربين والزوار)، ورخصة قيادة سارية المفعول، بالإضافة إلى مبلغ التأمين النقدي المسترد.'
+                  },
+                  {
+                    q: 'كيف يمكنني الاستفادة من خصومات التأجير؟',
+                    a: 'بمجرد تسجيل الدخول بحسابك في موقعنا، يتم تطبيق خصم الأعضاء الحصري تلقائياً على قيمة الحجز لجميع السيارات المشمولة بالعرض بنسبة الخصم المعتمدة.'
+                  },
+                  {
+                    q: 'هل يتوفر استلام وتسليم في مطار دمشق الدولي أو مواقع أخرى؟',
+                    a: 'نعم، نوفر خدمة تسليم واستلام السيارات في مطار دمشق الدولي، بالإضافة إلى تسليم السيارة مباشرة في موقعك أو فندقك في دمشق وريفها بالتنسيق المسبق.'
+                  },
+                  {
+                    q: 'ما هي شروط وسياسة الكيلومترات والوقود؟',
+                    a: 'يتم تسليم السيارة بحالة وقود محددة ونظيفة، ويُطلب إعادتها بنفس المستوى، مع عداد كيلومترات يومي رحب ومناسب لجميع تنقلاتك داخل وخارج المدينة.'
+                  }
+                ].map((item, idx) => {
+                  const isOpen = openFaqIndex === idx;
+                  return (
+                    <div
+                      key={idx}
+                      className="rounded-2xl bg-slate-900 border border-slate-800/80 overflow-hidden transition-all duration-300"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setOpenFaqIndex(isOpen ? null : idx)}
+                        className="w-full p-5 text-right flex items-center justify-between gap-4 hover:bg-slate-800/40 transition-colors cursor-pointer"
+                        aria-expanded={isOpen}
+                      >
+                        <h3 className="font-bold text-white text-sm sm:text-base flex items-center gap-2.5">
+                          <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span>{item.q}</span>
+                        </h3>
+                        <ChevronDown
+                          className={`w-5 h-5 text-slate-400 shrink-0 transition-transform duration-300 ${
+                            isOpen ? 'rotate-180 text-amber-400' : ''
+                          }`}
+                        />
+                      </button>
 
-                <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
-                  <h3 className="font-bold text-white text-sm sm:text-base flex items-center gap-2">
-                    <HelpCircle className="w-4 h-4 text-amber-400" />
-                    كيف يتم حساب مبلغ التأمين المسترد؟
-                  </h3>
-                  <p className="text-slate-400 leading-relaxed pr-6">
-                    وفقاً لسياسة شركة شاكر: الحجوزات القصيرة (1 إلى 2 يوم) يكون مبلغ التأمين $500، بينما الحجوزات لأكثر من يومين يكون التأمين $300 فقط. يُعاد المبلغ كاملاً للمستأجر فور تسليم السيارة بحالتها.
-                  </p>
-                </div>
-
-                <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
-                  <h3 className="font-bold text-white text-sm sm:text-base flex items-center gap-2">
-                    <HelpCircle className="w-4 h-4 text-amber-400" />
-                    هل يوجد خصم للحجوزات الأسبوعية أو الشهرية؟
-                  </h3>
-                  <p className="text-slate-400 leading-relaxed pr-6">
-                    نعم بالتأكيد! للحجوزات الأسبوعية (7 أيام فأكثر) يتم خصم $5 عن كل يوم تلقائياً، والاشتراكات الشهرية تبدأ من $500 لفئة السيدان الاقتصادي و$600 للفئة المتوسطة و$700 لفئة الجيب 7 ركاب.
-                  </p>
-                </div>
+                      <div
+                        className={`transition-all duration-300 ease-in-out px-5 overflow-hidden ${
+                          isOpen ? 'max-h-96 pb-5 opacity-100' : 'max-h-0 pb-0 opacity-0'
+                        }`}
+                      >
+                        <p className="text-xs sm:text-sm text-slate-300 leading-relaxed pr-6 border-t border-slate-800/60 pt-3">
+                          {item.a}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           </div>
@@ -604,6 +716,7 @@ function MainAppContent() {
         <CarDetailsModal
           vehicle={selectedVehicleForDetails}
           onClose={() => setSelectedVehicleForDetails(null)}
+          onBook={(v) => handleSelectCarForBooking(v)}
           onBookNow={(v) => handleSelectCarForBooking(v)}
         />
       )}
@@ -625,6 +738,7 @@ function MainAppContent() {
           initialStartDate={activeBookingFilters?.pickupDate}
           initialEndDate={activeBookingFilters?.returnDate}
           onClose={() => setSelectedVehicleForBooking(null)}
+          onOpenAuth={() => setIsAuthModalOpen(true)}
           onBookingCreated={(b) => {
             setLastCreatedBooking(b);
             refreshData();
@@ -640,9 +754,14 @@ function MainAppContent() {
       <AuthModal
         isOpen={isAuthModalOpen}
         initialMode={authModalMode}
+        loginWithGoogle={loginWithGoogle}
         onClose={() => setIsAuthModalOpen(false)}
         onSuccess={() => {
           setIsAuthModalOpen(false);
+          // If customer, show their normal personal dashboard
+          if (!isAdmin) {
+            setIsProfileModalOpen(true);
+          }
         }}
       />
 
@@ -655,6 +774,10 @@ function MainAppContent() {
           setIsProfileModalOpen(false);
           setSelectedVehicleForBooking(vehicles[0] || null);
         }}
+        onOpenAdminView={() => {
+          setIsProfileModalOpen(false);
+          setCurrentView('admin');
+        }}
       />
     </div>
   );
@@ -662,8 +785,10 @@ function MainAppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <MainAppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <MainAppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

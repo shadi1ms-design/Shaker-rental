@@ -5,63 +5,66 @@ import {
   Customer,
   MaintenanceRecord,
   AppSettings,
-  BookingStatus,
-  VehicleStatus,
   Payment,
-  AppNotification
+  AppNotification,
 } from '../types';
 import { dataService } from '../services/dataService';
 import { useAuth } from '../contexts/AuthContext';
-import { openWhatsAppChat } from '../services/whatsapp';
-import { AdminCalendar } from './AdminCalendar';
-import { AdminCustomers } from './AdminCustomers';
+
+// Existing Admin Views
 import { AdminReports } from './AdminReports';
 import { AdminSettings } from './AdminSettings';
+import { AdminUsersFilesView } from './AdminUsersFilesView';
+import { AdminStaffRoles } from './admin/AdminStaffRoles';
+import { AdminActivityLog } from './admin/AdminActivityLog';
+
+// Modular Sub-components for Admin
+import { AdminOverview } from './admin/AdminOverview';
+import { AdminBookings } from './admin/AdminBookings';
+import { AdminVehicles } from './admin/AdminVehicles';
+import { AdminNotifications } from './admin/AdminNotifications';
+
+// Modals
 import { VehicleFormModal } from './VehicleFormModal';
 import { ContractModal } from './ContractModal';
 import { InspectionModal } from './InspectionModal';
-import { MaintenanceModal } from './MaintenanceModal';
 import { PaymentModal } from './PaymentModal';
-import { AdminUsersFilesView } from './AdminUsersFilesView';
-import { ADMIN_USER_ID } from '../contexts/AuthContext';
+import { UserProfileModal } from './UserProfileModal';
+
+// Icons
 import {
   LayoutDashboard,
   Car,
   Calendar,
-  Users,
   BarChart3,
   Settings,
   Plus,
-  Search,
-  CheckCircle2,
-  Clock,
-  AlertTriangle,
-  ClipboardCheck,
   Wrench,
-  ChevronRight,
-  Filter,
-  Eye,
-  CreditCard,
-  Droplet,
-  Trash2,
-  Edit3,
   FolderOpen,
   Shield,
   FileText,
-  DollarSign,
-  Bell
+  Bell,
+  RefreshCw,
+  Trash2,
+  ExternalLink,
+  CheckCircle2,
+  AlertTriangle,
+  Lock,
+  UserCheck,
+  Activity,
+  User,
+  X,
+  Copy,
+  Mail
 } from 'lucide-react';
 
 export type AdminTabType =
   | 'firestore_users'
+  | 'staff'
+  | 'activity_log'
   | 'overview'
   | 'vehicles'
   | 'bookings'
-  | 'calendar'
-  | 'customers'
-  | 'contracts'
-  | 'payments'
-  | 'maintenance'
   | 'reports'
   | 'settings'
   | 'notifications';
@@ -83,898 +86,370 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToSite,
   initialTab,
 }) => {
-  const { user, isSuperAdmin, isAdmin } = useAuth();
+  const { user, isSuperAdmin, isAdmin, isLoadingAuth } = useAuth();
 
-  const isDesignatedAdmin = user?.uid === ADMIN_USER_ID || user?.email === 'shadi1ms@gmail.com';
+  // Role-based Tab Access Policy
+  const isTabAuthorized = (tabId: AdminTabType): boolean => {
+    if (tabId === 'firestore_users' || tabId === 'staff' || tabId === 'activity_log') {
+      return Boolean(isSuperAdmin);
+    }
+    if (tabId === 'settings' || tabId === 'reports' || tabId === 'overview' || tabId === 'vehicles' || tabId === 'notifications') {
+      return Boolean(isAdmin);
+    }
+    if (tabId === 'bookings') {
+      return true; // الموظف والمدير معًا
+    }
+    return false;
+  };
 
-  // Active Admin Sub-tab (default to firestore_users for the designated admin user)
-  const [activeTab, setActiveTab] = useState<AdminTabType>(
-    initialTab || (isDesignatedAdmin ? 'firestore_users' : 'overview')
-  );
+  // Active Admin Tab - Respect initialTab if authorized, fallback to overview or bookings
+  const [activeTab, setActiveTab] = useState<AdminTabType>(() => {
+    if (initialTab && isTabAuthorized(initialTab)) {
+      return initialTab;
+    }
+    return isAdmin ? 'overview' : 'bookings';
+  });
+
+  // Ensure activeTab conforms to user's permissions
+  useEffect(() => {
+    if (initialTab && isTabAuthorized(initialTab)) {
+      setActiveTab(initialTab);
+    } else if (!isTabAuthorized(activeTab)) {
+      setActiveTab(isAdmin ? 'overview' : 'bookings');
+    }
+  }, [initialTab, isAdmin, isSuperAdmin]);
 
   const handleTabChange = (tab: AdminTabType) => {
     setActiveTab(tab);
     const pathMap: Record<AdminTabType, string> = {
+      firestore_users: '/admin/users',
+      staff: '/admin/staff',
+      activity_log: '/admin/activity',
       overview: '/admin/dashboard',
       vehicles: '/admin/vehicles',
       bookings: '/admin/bookings',
-      calendar: '/admin/bookings',
-      customers: '/admin/customers',
-      contracts: '/admin/contracts',
-      payments: '/admin/payments',
-      maintenance: '/admin/maintenance',
       reports: '/admin/reports',
       settings: '/admin/settings',
       notifications: '/admin/notifications',
-      firestore_users: '/admin/users',
     };
-    if (window.location.pathname.startsWith('/admin')) {
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
       window.history.replaceState(null, '', pathMap[tab]);
     }
   };
 
   // Modals state
+  const [showAccountDetails, setShowAccountDetails] = useState(false);
+  const [copiedUid, setCopiedUid] = useState(false);
+  const [showMyProfile, setShowMyProfile] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null | undefined>(undefined); // undefined = closed, null = new
   const [contractBooking, setContractBooking] = useState<Booking | null>(null);
   const [inspectionVehicle, setInspectionVehicle] = useState<Vehicle | null>(null);
   const [inspectionBookingId, setInspectionBookingId] = useState<string>('');
-  const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
-  const [paymentBooking, setPaymentBooking] = useState<Booking | null>(null);
+  const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<Booking | null>(null);
+  const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
+  const [isDeletingVehicle, setIsDeletingVehicle] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Filter states for Bookings tab
-  const [bookingFilterStatus, setBookingFilterStatus] = useState<string>('all');
-  const [bookingSearch, setBookingSearch] = useState<string>('');
+  // Aux Data State - Instant cached bootstrap
+  const [customers, setCustomers] = useState<Customer[]>(() => dataService.getCachedCustomers());
+  const [payments, setPayments] = useState<Payment[]>(() => dataService.getCachedPayments());
+  const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>(() => dataService.getCachedMaintenanceRecords());
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => dataService.getNotifications());
 
-  // Maintenance records & customers loaded
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>([]);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [vehiclesNeedingOil, setVehiclesNeedingOil] = useState<Array<{ vehicle: Vehicle; kmSinceOil: number; isUrgent: boolean }>>([]);
+  // Vehicles needing oil change computed reactively in 0ms without network roundtrip
+  const vehiclesNeedingOil = React.useMemo(() => {
+    return dataService.calculateVehiclesNeedingOil(vehicles, settings.oilChangeIntervalKm || 5000);
+  }, [vehicles, settings.oilChangeIntervalKm]);
+
+  // Cloud Sync State
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<{ message: string; success: boolean } | null>(null);
 
   useEffect(() => {
     loadAuxData();
-  }, []);
+
+    // Subscribe to real-time administrative notifications (admin only)
+    let unsubscribeNotifications: (() => void) | undefined;
+    if (isAdmin) {
+      unsubscribeNotifications = dataService.subscribeToNotifications((updatedNotifs) => {
+        setNotifications(updatedNotifs);
+      });
+    }
+
+    return () => {
+      if (unsubscribeNotifications) {
+        unsubscribeNotifications();
+      }
+    };
+  }, [isAdmin]);
 
   const loadAuxData = async () => {
-    const [custs, maints, oilNeeds, pmts, notifs] = await Promise.all([
-      dataService.getCustomers(),
-      dataService.getMaintenanceRecords(),
-      dataService.getVehiclesNeedingMaintenance(),
-      dataService.getPayments(),
-      dataService.getNotifications(),
-    ]);
-    setCustomers(custs);
-    setMaintenanceRecords(maints);
-    setVehiclesNeedingOil(oilNeeds);
-    setPayments(pmts);
-    setNotifications(notifs);
-  };
-
-  // KPIs
-  const totalVehicles = vehicles.length;
-  const availableVehicles = vehicles.filter((v) => v.status === 'available').length;
-  const rentedVehicles = vehicles.filter((v) => v.status === 'rented').length;
-  const inMaintenance = vehicles.filter((v) => v.status === 'maintenance').length;
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayBookings = bookings.filter((b) => b.createdAt.startsWith(todayStr)).length;
-  const activeRentals = bookings.filter((b) => b.status === 'rented').length;
-
-  const monthlyRevenue = bookings.reduce((acc, b) => acc + (b.paidAmount || 0), 0);
-  const outstandingBalance = bookings.reduce((acc, b) => acc + (b.remainingAmount ?? (b.totalPrice - (b.paidAmount || 0))), 0);
-
-  // Status badge helper
-  const getStatusBadge = (status: BookingStatus) => {
-    switch (status) {
-      case 'new':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">طلب جديد</span>;
-      case 'reviewing':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">قيد المراجعة</span>;
-      case 'confirmed':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">مؤكد</span>;
-      case 'rented':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">جاري التأجير</span>;
-      case 'completed':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300">مكتمل ومستلم</span>;
-      case 'cancelled':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300">ملغي</span>;
-      case 'rejected':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-rose-900/40 text-rose-400">مرفوض</span>;
-    }
-  };
-
-  const handleUpdateBookingStatus = async (bookingId: string, status: BookingStatus) => {
     try {
-      await dataService.updateBookingStatus(bookingId, status);
-      onRefreshData();
-      loadAuxData();
+      const [custs, pmts] = await Promise.all([
+        dataService.getCustomers(true),
+        dataService.getPayments(),
+      ]);
+      setCustomers(custs || []);
+      setPayments(pmts || []);
+
+      if (isAdmin) {
+        const [maints, notifs] = await Promise.all([
+          dataService.getMaintenanceRecords(),
+          dataService.getNotifications(),
+        ]);
+        setMaintenanceRecords(maints || []);
+        setNotifications(notifs || []);
+      }
     } catch (err) {
-      console.error(err);
+      console.warn('Auxiliary admin data loading note:', err);
     }
   };
 
-  const handleDeleteVehicle = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذه السيارة من الأسطول النشط؟')) return;
+  const handleSyncAllWithFirestore = async () => {
     try {
-      await dataService.deleteVehicle(id);
-      onRefreshData();
-    } catch (err) {
-      console.error(err);
+      setIsSyncing(true);
+      setSyncStatus(null);
+      const res = await dataService.syncAllSystemData();
+      await onRefreshData();
+      await loadAuxData();
+      const successMsg = `تمت المزامنة السحابية بنجاح: تم تأكيد ومزامنة أسطول السيارات (${res.vehicles.total} سيارة) وسجل الحجوزات (${res.bookings.total} حجز) مع قاعدة بيانات Cloud Firestore.`;
+      setSyncStatus({
+        message: successMsg,
+        success: true,
+      });
+      setTimeout(() => {
+        setSyncStatus(null);
+      }, 7000);
+    } catch (err: any) {
+      console.error('Sync all error:', err);
+      const errorMsg = `تعذر إتمام المزامنة مع قاعدة البيانات: ${err?.message || 'خطأ في الاتصال'}`;
+      setSyncStatus({
+        message: errorMsg,
+        success: false,
+      });
+    } finally {
+      setIsSyncing(false);
     }
   };
+
+  const confirmDeleteVehicle = async () => {
+    if (!vehicleToDelete) return;
+    try {
+      setIsDeletingVehicle(true);
+      setDeleteError(null);
+      await dataService.deleteVehicle(vehicleToDelete.id);
+      setVehicleToDelete(null);
+      await onRefreshData();
+      await loadAuxData();
+    } catch (err: any) {
+      console.error('Failed to delete vehicle:', err);
+      setDeleteError(err?.message || 'تعذر حذف السيارة من قاعدة البيانات.');
+    } finally {
+      setIsDeletingVehicle(false);
+    }
+  };
+
+  if (isLoadingAuth) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-cairo" dir="rtl">
+        <div className="text-center space-y-4 max-w-sm w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl">
+          <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          <h3 className="text-base font-bold text-white">جاري التحقق من صلاحيات الدخول المعتمدة...</h3>
+          <p className="text-xs text-slate-400">يرجى الانتظار ريثما يتم تدقيق مطالبات الأمان المشفرة.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Admin Bar */}
-      <div className="bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black">
-            <LayoutDashboard className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base sm:text-lg font-black text-white">
-                لوحة إدارة شاكر لتأجير السيارات
-              </h2>
-              {/* Mandatory Admin Badge Indicator */}
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-500 text-slate-950 flex items-center gap-1 shadow-sm uppercase tracking-wide">
-                <Shield className="w-3 h-3" />
-                Admin
-              </span>
-            </div>
-            <span className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-              <span>المشرف: {user?.displayName}</span>
-              <span>•</span>
-              <span className="font-mono text-amber-300/90 text-[10px]">
-                UID: {user?.uid || ADMIN_USER_ID}
-              </span>
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowMaintenanceModal(true)}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 flex items-center gap-1.5 border border-slate-700 transition-colors"
-          >
-            <Wrench className="w-3.5 h-3.5 text-amber-400" />
-            <span>تسجيل صيانة/زيت</span>
-          </button>
-
-          <button
-            onClick={() => setEditingVehicle(null)}
-            className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-all shadow-sm"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>إضافة سيارة</span>
-          </button>
-
-          <button
-            onClick={onBackToSite}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xs font-semibold"
-          >
-            عرض الموقع
-          </button>
-        </div>
-      </div>
-
-      {/* Admin Tabs Navigation */}
-      <div className="bg-slate-900/60 border-b border-slate-800 px-4 sm:px-8 overflow-x-auto">
-        <div className="flex items-center gap-2 py-2 min-w-max">
-          {[
-            { id: 'firestore_users', label: 'المستخدمون والملفات (Firestore)', icon: FolderOpen, highlight: true },
-            { id: 'overview', label: 'المؤشرات العامة', icon: LayoutDashboard },
-            { id: 'bookings', label: `الحجوزات والتأجير (${bookings.length})`, icon: Calendar },
-            { id: 'vehicles', label: `أسطول السيارات (${vehicles.length})`, icon: Car },
-            { id: 'calendar', label: 'التقويم التفاعلي', icon: Clock },
-            { id: 'customers', label: `سجل العملاء CRM (${customers.length})`, icon: Users },
-            { id: 'contracts', label: `العقود الرسمية`, icon: FileText },
-            { id: 'payments', label: `سندات القبض (${payments.length})`, icon: DollarSign },
-            { id: 'maintenance', label: `الصيانة وغيار الزيت (${maintenanceRecords.length})`, icon: Wrench },
-            { id: 'reports', label: 'التقارير المالية والتشغيلية', icon: BarChart3 },
-            { id: 'settings', label: 'إعدادات النظام والأسعار', icon: Settings },
-            { id: 'notifications', label: `التنبيهات (${notifications.length})`, icon: Bell },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
+      {/* Sticky Top Header & Tabs Bar Container */}
+      <div className="sticky top-0 z-30 shadow-md">
+        {/* Top Admin Header Bar */}
+        <header className="bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => setShowAccountDetails(true)}
+              className="w-8 h-8 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center font-black shadow-sm shrink-0 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+              title="عرض تفاصيل الحساب والمعرف (UID)"
+              aria-label="عرض تفاصيل الحساب"
+            >
+              <LayoutDashboard className="w-4 h-4" />
+            </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm sm:text-lg font-black text-white">
+                  لوحة إدارة شاكر لتأجير السيارات
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 flex items-center gap-1 shadow-sm uppercase tracking-wider">
+                  <Shield className="w-3 h-3" />
+                  {isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Staff'}
+                </span>
+              </div>
               <button
-                key={tab.id}
-                onClick={() => handleTabChange(tab.id as any)}
-                className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
-                  isActive
-                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                    : (tab as any).highlight
-                    ? 'text-amber-300 hover:text-white hover:bg-slate-800/80 border border-amber-500/30'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-                }`}
+                type="button"
+                onClick={() => setShowAccountDetails(true)}
+                className="flex text-[11px] text-slate-400 hover:text-amber-300 items-center gap-1.5 mt-0.5 transition-colors cursor-pointer group text-right"
+                title="عرض تفاصيل الحساب والمعرف (UID)"
               >
-                <Icon className="w-4 h-4" />
-                <span>{tab.label}</span>
+                <User className="w-3 h-3 text-slate-400 group-hover:text-amber-400 transition-colors" />
+                <span>المشرف: <span className="text-slate-300 group-hover:text-amber-300 font-medium underline decoration-slate-700 underline-offset-2 transition-colors">{user?.displayName || user?.email || 'مسؤول النظام'}</span></span>
               </button>
-            );
-          })}
-        </div>
+            </div>
+          </div>
+
+          {/* Global Action Buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowMyProfile(true)}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700/80 transition-all text-xs font-bold flex items-center gap-1.5 shadow-sm"
+              title="حسابي الشخصي وحجوزاتي"
+            >
+              <User className="w-3.5 h-3.5 text-amber-400" />
+              <span>حسابي الشخصي</span>
+            </button>
+
+            <button
+              onClick={onBackToSite}
+              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition-colors"
+              title="عرض الموقع"
+              aria-label="عرض الموقع"
+            >
+              <ExternalLink className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
+
+        {/* Admin Tabs Navigation Bar */}
+        <nav className="bg-slate-900/95 backdrop-blur-sm border-b border-slate-800 px-4 sm:px-8 py-1 overflow-x-auto scrollbar-thin">
+          <div className="flex items-center gap-2 py-3 min-w-max">
+            {[
+              { id: 'bookings', label: `الحجوزات والتأجير (${bookings.length})`, icon: Calendar },
+              { id: 'vehicles', label: `أسطول السيارات (${vehicles.length})`, icon: Car },
+              { id: 'firestore_users', label: 'المستخدمون والملفات (Firestore)', icon: FolderOpen },
+              { id: 'staff', label: 'إدارة الموظفين والصلاحيات', icon: UserCheck },
+              { id: 'activity_log', label: 'سجل النشاطات', icon: Activity },
+              { id: 'overview', label: 'المؤشرات العامة', icon: LayoutDashboard },
+              { id: 'reports', label: 'التقارير المالية والتشغيلية', icon: BarChart3 },
+              { id: 'settings', label: 'إعدادات النظام والأسعار', icon: Settings },
+              { id: 'notifications', label: `التنبيهات (${notifications.length})`, icon: Bell },
+            ]
+              .filter((tab) => isTabAuthorized(tab.id as AdminTabType))
+              .map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => handleTabChange(tab.id as AdminTabType)}
+                    className={`px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shrink-0 ${
+                      isActive
+                        ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/25 text-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/60 text-xs'
+                    }`}
+                  >
+                    <Icon className="w-[18px] h-[18px] shrink-0" />
+                    <span className="whitespace-nowrap">{tab.label}</span>
+                  </button>
+                );
+              })}
+            {/* Safety end spacing for smooth horizontal scrolling on mobile */}
+            <div className="w-2 shrink-0" />
+          </div>
+        </nav>
       </div>
 
       {/* Main Admin Content Container */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-8 space-y-8">
-        {/* TAB 0: FIRESTORE USERS & FILES (Mandated Admin View) */}
-        {activeTab === 'firestore_users' && (
-          <AdminUsersFilesView onBackToOverview={() => setActiveTab('overview')} />
-        )}
-        {activeTab === 'overview' && (
-          <div className="space-y-8">
-            {/* Top Greeting mandated by Prompt Section 16 */}
-            <div className="bg-gradient-to-r from-amber-500/15 via-slate-900 to-slate-900 border border-amber-500/30 rounded-3xl p-6 sm:p-8 relative overflow-hidden">
-              <h1 className="text-2xl sm:text-3xl font-black text-white mb-2">
-                مرحباً بك في نظام شاكر لتأجير السيارات
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-                نظام الإدارة الشامل والذكي لمتابعة الحجوزات الإلكترونية، حركة الأسطول، العقود الرسمية المطبوعة، وتنبيهات غيار الزيت الدورية كل 5000 كم في دمشق وجرمانا.
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-8 space-y-8">
+        {/* UNAUTHORIZED ACCESS GUARD FALLBACK */}
+        {!isTabAuthorized(activeTab) && (
+          <div className="bg-slate-900/90 border border-rose-500/30 rounded-3xl p-8 sm:p-12 text-center max-w-lg mx-auto my-12 space-y-5 shadow-2xl backdrop-blur-sm">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+              <Lock className="w-8 h-8" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-black text-white">غير مصرح لك بالوصول لهذا القسم</h2>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                {activeTab === 'settings' || activeTab === 'reports'
+                  ? 'يتطلب الوصول إلى هذا القسم صلاحيات إدارة عليا (مدير نظام / Admin). دور حسابك الحالي لا يمتلك الإذن الكافي.'
+                  : 'يتطلب الوصول إلى هذا القسم صلاحيات المدير العام للمنظومة (Super Admin).'}
               </p>
             </div>
-
-            {/* 6 Metric Cards mandated by Section 16 */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-                <span className="text-[11px] text-slate-400 block">إجمالي الأسطول</span>
-                <span className="text-2xl font-black text-white font-mono">{totalVehicles}</span>
-                <span className="text-[10px] text-emerald-400 block">متاح: {availableVehicles}</span>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-                <span className="text-[11px] text-slate-400 block">حجوزات اليوم</span>
-                <span className="text-2xl font-black text-amber-400 font-mono">{todayBookings}</span>
-                <span className="text-[10px] text-slate-400 block">إجمالي: {bookings.length}</span>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-                <span className="text-[11px] text-slate-400 block">تأجيرات نشطة</span>
-                <span className="text-2xl font-black text-blue-400 font-mono">{activeRentals}</span>
-                <span className="text-[10px] text-slate-400 block">في حوزة العملاء</span>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-                <span className="text-[11px] text-slate-400 block">المقبوضات المحصلة</span>
-                <span className="text-2xl font-black text-emerald-400 font-mono">${monthlyRevenue}</span>
-                <span className="text-[10px] text-slate-400 block">مدفوعات نقدية</span>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-                <span className="text-[11px] text-slate-400 block">المتبقي بذمة العملاء</span>
-                <span className="text-2xl font-black text-rose-400 font-mono">${outstandingBalance}</span>
-                <span className="text-[10px] text-rose-400 block">تحصيل عند التسليم</span>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-                <span className="text-[11px] text-slate-400 block">تنبيهات الزيت والصيانة</span>
-                <span className="text-2xl font-black text-amber-400 font-mono">{vehiclesNeedingOil.length}</span>
-                <span className="text-[10px] text-amber-300 block">تحتاج غيار زيت</span>
-              </div>
-            </div>
-
-            {/* Widgets Section: Upcoming Bookings & Maintenance Overdue */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Upcoming & Recent Bookings Widget */}
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-amber-400" />
-                    أحدث طلبات الحجز المستلمة
-                  </h3>
-                  <button
-                    onClick={() => setActiveTab('bookings')}
-                    className="text-xs text-amber-400 hover:underline"
-                  >
-                    عرض الكل ←
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  {bookings.slice(0, 4).map((b) => (
-                    <div
-                      key={b.id}
-                      className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 flex items-center justify-between gap-3 text-xs"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-amber-400">{b.bookingNumber}</span>
-                          <span className="font-bold text-white">{b.customerName}</span>
-                        </div>
-                        <p className="text-slate-400 mt-1">
-                          {b.vehicleName} • من {b.pickupDate} إلى {b.returnDate} ({b.rentalDays} أيام)
-                        </p>
-                      </div>
-
-                      <div className="text-left flex flex-col items-end gap-1">
-                        <span className="font-mono font-bold text-white">${b.totalPrice}</span>
-                        {getStatusBadge(b.status)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Oil Change & Maintenance Reminders Widget (Section 15) */}
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                    <Droplet className="w-4 h-4 text-amber-400" />
-                    تنبيهات صيانة وتبديل الزيت (قاعدة 5,000 كم)
-                  </h3>
-                  <button
-                    onClick={() => setShowMaintenanceModal(true)}
-                    className="text-xs text-amber-400 hover:underline"
-                  >
-                    تسجيل غيار جديد +
-                  </button>
-                </div>
-
-                {vehiclesNeedingOil.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-slate-400 bg-slate-950 rounded-2xl">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
-                    كافة سيارات الأسطول ضمن المسافة المسموحة لتغيير الزيت (أقل من 5000 كم).
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {vehiclesNeedingOil.map((item) => (
-                      <div
-                        key={item.vehicle.id}
-                        className={`p-3.5 rounded-2xl border flex items-center justify-between text-xs ${
-                          item.isUrgent
-                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                            : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                        }`}
-                      >
-                        <div>
-                          <span className="font-bold block text-white">
-                            {item.vehicle.brand} {item.vehicle.model} ({item.vehicle.plateNumber})
-                          </span>
-                          <span className="text-[11px] opacity-80">
-                            المقطوع منذ آخر غيار: {item.kmSinceOil.toLocaleString()} كم (
-                            {item.isUrgent ? 'تجاوزت الحد المسموح!' : 'اقتربت من 5000 كم'})
-                          </span>
-                        </div>
-
-                        <button
-                          onClick={() => setShowMaintenanceModal(true)}
-                          className="px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-400"
-                        >
-                          تسجيل غيار
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            <button
+              onClick={() => handleTabChange(isAdmin ? 'overview' : 'bookings')}
+              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 inline-flex items-center gap-2"
+            >
+              <span>{isAdmin ? 'العودة إلى لوحة المؤشرات العامة' : 'العودة إلى إدارة الحجوزات'}</span>
+            </button>
           </div>
         )}
 
-        {/* TAB 2: BOOKINGS & RENTALS MANAGEMENT */}
-        {activeTab === 'bookings' && (
-          <div className="space-y-6">
-            {/* Filter & Search Controls */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                {[
-                  { id: 'all', label: 'الكل' },
-                  { id: 'new', label: 'طلبات جديدة' },
-                  { id: 'confirmed', label: 'مؤكدة' },
-                  { id: 'rented', label: 'جاري التأجير' },
-                  { id: 'completed', label: 'مكتملة' },
-                  { id: 'cancelled', label: 'ملغاة' },
-                ].map((st) => (
-                  <button
-                    key={st.id}
-                    onClick={() => setBookingFilterStatus(st.id)}
-                    className={`px-3 py-2 rounded-xl font-bold transition-all ${
-                      bookingFilterStatus === st.id
-                        ? 'bg-amber-500 text-slate-950 shadow-sm'
-                        : 'bg-slate-950 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    {st.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="relative w-full md:w-72">
-                <input
-                  type="text"
-                  value={bookingSearch}
-                  onChange={(e) => setBookingSearch(e.target.value)}
-                  placeholder="بحث برقم الحجز أو العميل أو الهاتف..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 pl-9 text-xs text-white focus:outline-none focus:border-amber-500"
-                />
-                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
-              </div>
-            </div>
-
-            {/* Bookings List Table */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-right border-collapse min-w-[850px]">
-                  <thead>
-                    <tr className="bg-slate-950 text-slate-400 border-b border-slate-800 font-bold">
-                      <th className="p-3.5">رقم الحجز</th>
-                      <th className="p-3.5">المستأجر</th>
-                      <th className="p-3.5">السيارة</th>
-                      <th className="p-3.5">فترة الإيجار</th>
-                      <th className="p-3.5">الإجمالي</th>
-                      <th className="p-3.5">المتبقي</th>
-                      <th className="p-3.5">الحالة</th>
-                      <th className="p-3.5 text-center">الإجراءات والعمليات</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {bookings
-                      .filter((b) => {
-                        if (bookingFilterStatus !== 'all' && b.status !== bookingFilterStatus) return false;
-                        if (bookingSearch.trim()) {
-                          const q = bookingSearch.toLowerCase();
-                          return (
-                            b.bookingNumber.toLowerCase().includes(q) ||
-                            b.customerName.toLowerCase().includes(q) ||
-                            b.customerPhone.includes(q) ||
-                            b.vehicleName.toLowerCase().includes(q)
-                          );
-                        }
-                        return true;
-                      })
-                      .map((b) => {
-                        const targetVehicle = vehicles.find((v) => v.id === b.vehicleId) || vehicles?.[0] || null;
-                        return (
-                          <tr key={b.id} className="hover:bg-slate-800/40 transition-colors">
-                            <td className="p-3.5 font-mono font-black text-amber-400">
-                              {b.bookingNumber}
-                            </td>
-
-                            <td className="p-3.5">
-                              <div className="font-bold text-white">{b.customerName}</div>
-                              <div className="text-[11px] text-slate-400 font-mono" dir="ltr">{b.customerPhone}</div>
-                            </td>
-
-                            <td className="p-3.5 text-slate-300 font-medium">
-                              {b.vehicleName}
-                            </td>
-
-                            <td className="p-3.5 text-slate-400">
-                              <div>من: {b.pickupDate}</div>
-                              <div>إلى: {b.returnDate} ({b.rentalDays} أيام)</div>
-                            </td>
-
-                            <td className="p-3.5 font-bold font-mono text-white text-sm">
-                              ${b.totalPrice}
-                            </td>
-
-                            <td className="p-3.5 font-mono">
-                              <span className={b.remainingAmount ? 'text-rose-400 font-bold' : 'text-emerald-400'}>
-                                ${b.remainingAmount ?? (b.totalPrice - (b.paidAmount || 0))}
-                              </span>
-                            </td>
-
-                            <td className="p-3.5">
-                              {getStatusBadge(b.status)}
-                            </td>
-
-                            <td className="p-3.5">
-                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                {/* Contract Print */}
-                                <button
-                                  onClick={() => setContractBooking(b)}
-                                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400"
-                                  title="طباعة عقد الإيجار الرسمي A4"
-                                >
-                                  <FileText className="w-4 h-4" />
-                                </button>
-
-                                {/* Inspection Sheet */}
-                                <button
-                                  onClick={() => {
-                                    setInspectionVehicle(targetVehicle);
-                                    setInspectionBookingId(b.id);
-                                  }}
-                                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400"
-                                  title="نموذج فحص وتسليم السيارة"
-                                >
-                                  <ClipboardCheck className="w-4 h-4" />
-                                </button>
-
-                                {/* Payment */}
-                                <button
-                                  onClick={() => setPaymentBooking(b)}
-                                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400"
-                                  title="تسجيل دفعة مالية"
-                                >
-                                  <DollarSign className="w-4 h-4" />
-                                </button>
-
-                                {/* Status Workflow Actions */}
-                                {b.status === 'new' && (
-                                  <button
-                                    onClick={() => handleUpdateBookingStatus(b.id, 'confirmed')}
-                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px]"
-                                  >
-                                    تأكيد
-                                  </button>
-                                )}
-
-                                {b.status === 'confirmed' && (
-                                  <button
-                                    onClick={() => handleUpdateBookingStatus(b.id, 'rented')}
-                                    className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px]"
-                                  >
-                                    تسليم السيارة
-                                  </button>
-                                )}
-
-                                {b.status === 'rented' && (
-                                  <button
-                                    onClick={() => handleUpdateBookingStatus(b.id, 'completed')}
-                                    className="px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-emerald-400 font-bold text-[11px]"
-                                  >
-                                    استلام وإتمام
-                                  </button>
-                                )}
-
-                                <button
-                                  onClick={() => openWhatsAppChat(b)}
-                                  className="p-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white"
-                                  title="مراسلة العميل واتساب"
-                                >
-                                  💬
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: VEHICLES FLEET MANAGEMENT */}
-        {activeTab === 'vehicles' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-3xl p-6">
-              <div>
-                <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Car className="w-5 h-5 text-amber-400" />
-                  أسطول سيارات شاكر
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  إدارة سيارات الأسطول، تعديل الأسعار، ومتابعة العدادات وحالات الصيانة
-                </p>
-              </div>
-
-              <button
-                onClick={() => setEditingVehicle(null)}
-                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2 shadow-md shadow-amber-500/20"
-              >
-                <Plus className="w-4 h-4" />
-                <span>إضافة سيارة جديدة</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {vehicles.map((v) => {
-                const kmSinceOil = (v.currentMileage || 0) - (v.lastOilChangeMileage || 0);
-                const isOverdue = kmSinceOil >= 5000;
-
-                return (
-                  <div
-                    key={v.id}
-                    className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden flex flex-col justify-between shadow-lg"
-                  >
-                    <div>
-                      <div className="relative h-44 bg-slate-950">
-                        <img
-                          src={v.imageUrl}
-                          alt={v.model}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md text-[11px] font-bold text-amber-400 border border-amber-500/30">
-                          {v.category === 'light' ? 'اقتصادي' : v.category === 'medium' ? 'متوسط' : 'جيب 7 مقاعد'}
-                        </div>
-                        <div className="absolute top-3 left-3">
-                          <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                            v.status === 'available' ? 'bg-emerald-500/30 text-emerald-300' : 'bg-blue-500/30 text-blue-300'
-                          }`}>
-                            {v.status === 'available' ? 'متاحة' : v.status === 'rented' ? 'مؤجرة' : 'صيانة'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="p-5 space-y-3">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className="text-xs text-slate-400">{v.brand}</span>
-                            <h4 className="font-bold text-white text-base">{v.model} ({v.year})</h4>
-                            <span className="text-xs text-slate-400 block font-mono">{v.plateNumber}</span>
-                          </div>
-                          <div className="text-left">
-                            <span className="text-xl font-black text-amber-400">${v.dailyPrice}</span>
-                            <span className="text-[10px] text-slate-400 block">/ يوم</span>
-                          </div>
-                        </div>
-
-                        {/* Mileage and Oil Stats */}
-                        <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-xs space-y-1">
-                          <div className="flex justify-between text-slate-400">
-                            <span>العداد الحالي:</span>
-                            <span className="text-white font-mono">{v.currentMileage.toLocaleString()} كم</span>
-                          </div>
-                          <div className="flex justify-between text-slate-400">
-                            <span>المقطوع من آخر زيت:</span>
-                            <span className={`font-mono font-bold ${isOverdue ? 'text-rose-400' : 'text-emerald-400'}`}>
-                              {kmSinceOil.toLocaleString()} كم {isOverdue && '(تحتاج زيت!)'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="p-4 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => {
-                          setInspectionVehicle(v);
-                          setInspectionBookingId('');
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-400 text-xs font-bold"
-                        title="فحص الهيكل والتسليم"
-                      >
-                        فحص
-                      </button>
-
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => setEditingVehicle(v)}
-                          className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200"
-                          title="تعديل السيارة"
-                        >
-                          <Edit3 className="w-4 h-4 text-amber-400" />
-                        </button>
-
-                        {isAdmin && (
-                          <button
-                            onClick={() => handleDeleteVehicle(v.id)}
-                            className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400"
-                            title="حذف السيارة"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 4: CALENDAR */}
-        {activeTab === 'calendar' && (
-          <AdminCalendar
+        {/* TAB 1: OVERVIEW */}
+        {activeTab === 'overview' && (
+          <AdminOverview
             vehicles={vehicles}
             bookings={bookings}
-            maintenanceRecords={maintenanceRecords}
-            onSelectBooking={(b) => setContractBooking(b)}
+            onNavigateTab={handleTabChange}
+            onOpenAddVehicle={() => setEditingVehicle(null)}
+            onSyncAll={handleSyncAllWithFirestore}
+            isSyncing={isSyncing}
           />
         )}
 
-        {/* TAB 5: CUSTOMER CRM */}
-        {activeTab === 'customers' && (
-          <AdminCustomers customers={customers} bookings={bookings} />
+        {/* TAB 2: BOOKINGS & RENTALS */}
+        {activeTab === 'bookings' && (
+          <AdminBookings
+            bookings={bookings}
+            vehicles={vehicles}
+            onRefreshData={() => {
+              onRefreshData();
+              loadAuxData();
+            }}
+            onOpenContract={(b) => setContractBooking(b)}
+            onOpenInspection={(v, bookingId) => {
+              setInspectionVehicle(v);
+              setInspectionBookingId(bookingId);
+            }}
+            onOpenPayment={(b) => setSelectedBookingForPayment(b)}
+            onDeleteBooking={async (bookingId) => {
+              await dataService.deleteBooking(bookingId);
+              onRefreshData();
+              loadAuxData();
+            }}
+            isSyncing={isSyncing}
+            onSyncWithFirestore={handleSyncAllWithFirestore}
+            syncStatus={syncStatus}
+          />
         )}
 
-        {/* TAB: CONTRACTS */}
-        {activeTab === 'contracts' && (
-          <div className="space-y-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-black text-white">العقود الرسمية لتأجير السيارات</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  إدارة وطباعة العقود المعتمدة قانونياً لشركة شاكر لتأجير السيارات المتضمنة كافة الشروط والبيانات
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-              <div className="divide-y divide-slate-800/60">
-                {bookings.map((b) => {
-                  const veh = vehicles.find((v) => v.id === b.vehicleId);
-                  return (
-                    <div key={b.id} className="p-5 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-800/30 transition-colors">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-amber-400">{b.bookingNumber}</span>
-                          <span className="text-sm font-black text-white">{b.customerName}</span>
-                          {getStatusBadge(b.status)}
-                        </div>
-                        <div className="text-xs text-slate-400 flex items-center gap-3">
-                          <span>المركبة: {b.vehicleName}</span>
-                          <span>•</span>
-                          <span>الفترة: من {b.pickupDate} إلى {b.returnDate} ({b.rentalDays} يوم)</span>
-                          <span>•</span>
-                          <span className="font-mono font-bold text-slate-300">القيمة: ${b.totalPrice}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setContractBooking(b)}
-                          className="px-4 py-2 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500 hover:text-slate-950 font-bold text-xs flex items-center gap-2 border border-amber-500/30 transition-all shadow-sm"
-                        >
-                          <FileText className="w-4 h-4" />
-                          <span>عرض وطباعة العقد</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+        {/* TAB 3: FLEET VEHICLES */}
+        {activeTab === 'vehicles' && (
+          <AdminVehicles
+            vehicles={vehicles}
+            onRefreshData={() => {
+              onRefreshData();
+              loadAuxData();
+            }}
+            onOpenAddVehicle={() => setEditingVehicle(null)}
+            onOpenEditVehicle={(v) => setEditingVehicle(v)}
+            onDeleteVehicle={(v) => {
+              setDeleteError(null);
+              setVehicleToDelete(v);
+            }}
+            onOpenInspection={(v) => {
+              setInspectionVehicle(v);
+              setInspectionBookingId('');
+            }}
+            isSyncing={isSyncing}
+            onSyncWithFirestore={handleSyncAllWithFirestore}
+            syncStatus={syncStatus}
+          />
         )}
 
-        {/* TAB: PAYMENTS */}
-        {activeTab === 'payments' && (
-          <div className="space-y-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h3 className="text-xl font-black text-white">سندات القبض والدفعات المالية</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  سجل الدفعات والمقبوضات النقدية والتحويلات الخاصة بعقود التأجير
-                </p>
-              </div>
-              <div className="flex items-center gap-4 bg-slate-950/60 border border-slate-800 px-4 py-2.5 rounded-2xl">
-                <div>
-                  <span className="text-[10px] text-slate-400 block">إجمالي المقبوضات</span>
-                  <span className="text-base font-black text-emerald-400 font-mono">${monthlyRevenue}</span>
-                </div>
-                <div className="h-6 w-px bg-slate-800" />
-                <div>
-                  <span className="text-[10px] text-slate-400 block">المتبقي للتحصيل</span>
-                  <span className="text-base font-black text-rose-400 font-mono">${outstandingBalance}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-              {payments.length === 0 ? (
-                <div className="p-12 text-center text-slate-400 text-xs">
-                  لا توجد سندات قبض مسجلة حالياً
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-800/60">
-                  {payments.map((p) => (
-                    <div key={p.id} className="p-5 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-800/30 transition-colors">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-emerald-400">${p.amount}</span>
-                          <span className="text-xs font-bold text-slate-300">سند رقم: {p.receiptNumber}</span>
-                          <span className="text-[11px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300">
-                            {p.method === 'cash' ? 'نقدي' : p.method === 'transfer' ? 'حوالة' : 'بطاقة'}
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-400">
-                          <span>العميل: {p.customerName}</span>
-                          <span className="mx-2">•</span>
-                          <span>التاريخ: {new Date(p.date).toLocaleDateString('ar-SY')}</span>
-                          {p.notes && <span className="mx-2">• {p.notes}</span>}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB: MAINTENANCE */}
-        {activeTab === 'maintenance' && (
-          <div className="space-y-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h3 className="text-xl font-black text-white">إدارة الصيانة وغيار الزيت الدوري</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  متابعة فترات غيار الزيت كل 5000 كم والصيانة الوقائية لأسطول سيارات شاكر
-                </p>
-              </div>
-              <button
-                onClick={() => setShowMaintenanceModal(true)}
-                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-2 shadow-sm transition-all"
-              >
-                <Wrench className="w-4 h-4" />
-                <span>تسجيل صيانة أو غيار زيت جديد</span>
-              </button>
-            </div>
-
-            {/* Oil change alert warning */}
-            {vehiclesNeedingOil.length > 0 && (
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold text-amber-400 flex items-center gap-2">
-                  <Droplet className="w-4 h-4" />
-                  <span>تنبيهات غيار الزيت النشطة ({vehiclesNeedingOil.length})</span>
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {vehiclesNeedingOil.map(({ vehicle, kmSinceOil, isUrgent }) => (
-                    <div
-                      key={vehicle.id}
-                      className={`p-4 rounded-2xl border ${
-                        isUrgent
-                          ? 'bg-rose-500/10 border-rose-500/30'
-                          : 'bg-amber-500/10 border-amber-500/30'
-                      } space-y-2`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-white text-sm">
-                          {vehicle.brand} {vehicle.model}
-                        </span>
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            isUrgent ? 'bg-rose-500 text-white' : 'bg-amber-500 text-slate-950'
-                          }`}
-                        >
-                          {isUrgent ? 'عاجل جداً' : 'مستحق'}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-300 flex justify-between font-mono">
-                        <span>قاطع منذ آخر غيار:</span>
-                        <span className="font-bold">{kmSinceOil} كم</span>
-                      </div>
-                      <div className="text-xs text-slate-400 flex justify-between font-mono">
-                        <span>العداد الحالي:</span>
-                        <span>{vehicle.currentMileage} كم</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Maintenance records table */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-              <div className="p-5 border-b border-slate-800">
-                <h4 className="text-xs font-bold text-white">سجل العمليات السابقة</h4>
-              </div>
-              <div className="divide-y divide-slate-800/60">
-                {maintenanceRecords.map((m) => (
-                  <div key={m.id} className="p-5 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-800/30 transition-colors">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-white">{m.vehicleName}</span>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-amber-400">
-                          {m.type === 'oil_change' ? 'غيار زيت وفلتر' : m.type === 'periodic' ? 'صيانة دورية' : 'إصلاح عطل'}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-400 flex items-center gap-3">
-                        <span>العداد: {m.mileageAtService} كم</span>
-                        <span>•</span>
-                        <span>التاريخ: {m.date}</span>
-                        {m.technician && <span>• الفني: {m.technician}</span>}
-                        <span>• التكلفة: ${m.cost}</span>
-                      </div>
-                      {m.description && <p className="text-xs text-slate-300 mt-1">{m.description}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 6: REPORTS */}
-        {activeTab === 'reports' && (
+        {/* TAB 4: REPORTS (Admin Only) */}
+        {isAdmin && activeTab === 'reports' && (
           <AdminReports
             vehicles={vehicles}
             bookings={bookings}
@@ -983,52 +458,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           />
         )}
 
-        {/* TAB 7: SETTINGS */}
-        {activeTab === 'settings' && (
-          <AdminSettings settings={settings} onSettingsUpdated={onRefreshData} />
+        {/* TAB 5: SETTINGS (Admin Only) */}
+        {isAdmin && activeTab === 'settings' && (
+          <AdminSettings
+            settings={settings}
+            vehicles={vehicles}
+            onSettingsUpdated={onRefreshData}
+          />
         )}
 
-        {/* TAB: NOTIFICATIONS */}
+        {/* TAB 6: NOTIFICATIONS */}
         {activeTab === 'notifications' && (
-          <div className="space-y-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8">
-              <h3 className="text-xl font-black text-white">مركز التنبيهات والإشعارات</h3>
-              <p className="text-xs text-slate-400 mt-1">
-                سجل إشعارات الحجوزات الجديدة، تحديثات الحالات، وتنبيهات الصيانة
-              </p>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-              {notifications.length === 0 ? (
-                <div className="p-12 text-center text-slate-400 text-xs">
-                  لا توجد تنبيهات حالياً
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-800/60">
-                  {notifications.map((n) => (
-                    <div key={n.id} className="p-5 flex items-start gap-4 hover:bg-slate-800/30 transition-colors">
-                      <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                        <Bell className="w-4 h-4" />
-                      </div>
-                      <div className="space-y-1 flex-1">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-white">{n.title}</h4>
-                          <span className="text-[10px] text-slate-500 font-mono">
-                            {new Date(n.createdAt).toLocaleTimeString('ar-SY')}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-300">{n.message}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          <AdminNotifications
+            notifications={notifications}
+          />
         )}
-      </div>
 
-      {/* MODALS */}
+        {/* TAB 7: STAFF ROLES & PERMISSIONS (Super Admin Only) */}
+        {isSuperAdmin && activeTab === 'staff' && (
+          <AdminStaffRoles onBackToOverview={() => handleTabChange('overview')} />
+        )}
+
+        {/* TAB 8: FIRESTORE USERS & FILES (Super Admin Only) */}
+        {isSuperAdmin && activeTab === 'firestore_users' && (
+          <AdminUsersFilesView onBackToOverview={() => handleTabChange('overview')} />
+        )}
+
+        {/* TAB 9: ACTIVITY & AUDIT LOG (Super Admin Only) */}
+        {isSuperAdmin && activeTab === 'activity_log' && (
+          <AdminActivityLog onBackToOverview={() => handleTabChange('overview')} />
+        )}
+      </main>
+
+      {/* ALL MODALS */}
       {/* 1. Vehicle Add/Edit */}
       {editingVehicle !== undefined && (
         <VehicleFormModal
@@ -1036,6 +498,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           onClose={() => setEditingVehicle(undefined)}
           onSaved={() => {
             onRefreshData();
+            loadAuxData();
             setEditingVehicle(undefined);
           }}
         />
@@ -1078,29 +541,208 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           vehicle={inspectionVehicle}
           bookingId={inspectionBookingId}
           onClose={() => setInspectionVehicle(null)}
-          onSaved={() => onRefreshData()}
-        />
-      )}
-
-      {/* 4. Maintenance / Oil Modal */}
-      {showMaintenanceModal && (
-        <MaintenanceModal
-          vehicles={vehicles}
-          onClose={() => setShowMaintenanceModal(false)}
-          onRecordAdded={() => {
+          onSaved={() => {
             onRefreshData();
             loadAuxData();
           }}
         />
       )}
 
-      {/* 5. Payment Modal */}
-      {paymentBooking && (
+      {/* 3.5. Payment Modal for Booking */}
+      {selectedBookingForPayment && (
         <PaymentModal
-          booking={paymentBooking}
-          onClose={() => setPaymentBooking(null)}
-          onPaymentRecorded={() => onRefreshData()}
+          booking={selectedBookingForPayment}
+          onClose={() => setSelectedBookingForPayment(null)}
+          onPaymentRecorded={() => {
+            onRefreshData();
+            loadAuxData();
+            setSelectedBookingForPayment(null);
+          }}
         />
+      )}
+
+      {/* 4. Vehicle Deletion Confirmation Modal with Feedback */}
+      {vehicleToDelete && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-white">حذف السيارة من الأسطول</h3>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                هل أنت متأكد من رغبتك في حذف السيارة &ldquo;{vehicleToDelete.brand} {vehicleToDelete.model} ({vehicleToDelete.year})&rdquo; من الأسطول النشط؟
+              </p>
+            </div>
+
+            {deleteError && (
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold text-right flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingVehicle}
+                onClick={confirmDeleteVehicle}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/20 disabled:opacity-50"
+              >
+                <span>{isDeletingVehicle ? 'جاري الحذف...' : 'تأكيد الحذف'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingVehicle}
+                onClick={() => {
+                  setVehicleToDelete(null);
+                  setDeleteError(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Personal Profile & Bookings Management Modal (Admin Access) */}
+      {showMyProfile && (
+        <UserProfileModal
+          isOpen={showMyProfile}
+          bookings={bookings}
+          onClose={() => setShowMyProfile(false)}
+          onOpenBooking={() => {
+            setShowMyProfile(false);
+            onBackToSite();
+          }}
+          onOpenAdminView={() => setShowMyProfile(false)}
+        />
+      )}
+
+      {/* 6. Account Details Modal (تفاصيل الحساب) */}
+      {showAccountDetails && (
+        <div 
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => {
+            setShowAccountDetails(false);
+            setCopiedUid(false);
+          }}
+        >
+          <div 
+            className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-5 shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header with Close button */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center shadow-inner">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">تفاصيل الحساب</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">معلومات حساب المشرف ومعرّف الهوية الرقمية</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountDetails(false);
+                  setCopiedUid(false);
+                }}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                title="إغلاق"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Account Info Fields */}
+            <div className="space-y-3 text-xs">
+              {/* Name */}
+              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
+                <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-slate-400" />
+                  <span>الاسم:</span>
+                </span>
+                <span className="text-white font-bold text-sm">
+                  {user?.displayName || 'مسؤول النظام'}
+                </span>
+              </div>
+
+              {/* Email */}
+              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
+                <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-slate-400" />
+                  <span>البريد الإلكتروني:</span>
+                </span>
+                <span className="text-slate-200 font-mono text-xs dir-ltr">
+                  {user?.email || '—'}
+                </span>
+              </div>
+
+              {/* Role */}
+              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
+                <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-slate-400" />
+                  <span>الدور الوظيفي:</span>
+                </span>
+                <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-amber-500 text-slate-950 flex items-center gap-1 shadow-sm uppercase tracking-wider">
+                  <Shield className="w-3 h-3" />
+                  <span>{isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Staff'}</span>
+                </span>
+              </div>
+
+              {/* UID */}
+              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400 font-semibold">معرّف الحساب (UID):</span>
+                  {user?.uid && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(user.uid);
+                        setCopiedUid(true);
+                        setTimeout(() => setCopiedUid(false), 2000);
+                      }}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-sans transition-colors cursor-pointer"
+                    >
+                      {copiedUid ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-emerald-400 font-bold">تم النسخ</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>نسخ المعرّف</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+                <div className="font-mono text-amber-300/95 text-xs select-all break-all bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 dir-ltr text-left">
+                  {user?.uid || '—'}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Action */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountDetails(false);
+                  setCopiedUid(false);
+                }}
+                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors cursor-pointer"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

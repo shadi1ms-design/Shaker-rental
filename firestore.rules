@@ -2,171 +2,243 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Default deny catch-all
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     // Helper functions
     function isSignedIn() {
       return request.auth != null;
     }
 
-    // Designated master administrator (UID or official email)
-    function isDesignatedAdmin() {
-      return isSignedIn() && (
-        request.auth.uid == "qEGp4XPEsZdaPTb8sGOR06sJj4A2" ||
-        request.auth.token.email == "shadi1ms@gmail.com"
-      );
-    }
-
-    function hasUserDoc() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
-    }
-
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    // Check token custom claims (Zero-read Role-based Authentication via Firebase Auth Token Claims)
+    function hasTokenRole(roles) {
+      return isSignedIn() && ('role' in request.auth.token) && (request.auth.token.role in roles);
     }
 
     function isSuperAdmin() {
       return isSignedIn() && (
-        isDesignatedAdmin() ||
-        (hasUserDoc() && (getUserData().role in ['superAdmin', 'super_admin']))
+        hasTokenRole(['super_admin', 'superAdmin', 'owner']) ||
+        (request.auth.token.keys().hasAny(['super_admin', 'superAdmin', 'owner']) && (
+          request.auth.token.get('super_admin', false) == true ||
+          request.auth.token.get('superAdmin', false) == true ||
+          request.auth.token.get('owner', false) == true
+        ))
       );
     }
 
     function isAdmin() {
       return isSuperAdmin() || (
-        hasUserDoc() && (getUserData().role in ['admin'])
+        isSignedIn() && (
+          hasTokenRole(['admin']) ||
+          (request.auth.token.keys().hasAny(['admin']) && request.auth.token.get('admin', false) == true)
+        )
       );
     }
 
     function isEmployee() {
       return isAdmin() || (
-        hasUserDoc() && (getUserData().role in ['employee'])
+        isSignedIn() && (
+          hasTokenRole(['employee', 'staff', 'manager']) ||
+          (request.auth.token.keys().hasAny(['employee', 'staff', 'manager']) && (
+            request.auth.token.get('employee', false) == true ||
+            request.auth.token.get('staff', false) == true ||
+            request.auth.token.get('manager', false) == true
+          ))
+        )
       );
     }
 
-    // Users collection: users/{uid}
+    // Health check and connection test document - restricted to authorized staff & admin
+    match /test/{docId} {
+      allow read, write: if isEmployee();
+    }
+
+    // Users collection: users/{userId}
+    // Client SDK updates CANNOT modify 'role' or escalate 'verificationStatus' to 'verified' under any circumstances.
+    // Verification transitions to 'verified' and role assignments are strictly managed via Cloud Functions / Admin SDK.
     match /users/{userId} {
-      allow read: if isEmployee() || (
-        isSignedIn() && request.auth.uid == userId
+      allow read: if isEmployee() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isSignedIn() && request.auth.uid == userId && (
+        (!('role' in request.resource.data) || request.resource.data.role in ['customer', 'user']) &&
+        (!('verificationStatus' in request.resource.data) || request.resource.data.verificationStatus in ['pending', 'manual_review', 'unverified']) &&
+        (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
+        (!('identityVerified' in request.resource.data) || request.resource.data.identityVerified == false) &&
+        (!('verifiedAt' in request.resource.data)) &&
+        (!('verifiedBy' in request.resource.data)) &&
+        (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted == false) &&
+        (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == false) &&
+        (!('isStaff' in request.resource.data) || request.resource.data.isStaff == false) &&
+        (!('active' in request.resource.data) || request.resource.data.active == true)
       );
-      allow create: if isSuperAdmin() || (
-        isSignedIn() && request.auth.uid == userId
+      allow update: if (
+        isSignedIn() && 
+        request.auth.uid == userId && 
+        (!('role' in request.resource.data) || request.resource.data.role == resource.data.get('role', 'customer')) &&
+        (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == resource.data.get('isAdmin', false)) &&
+        (!('isStaff' in request.resource.data) || request.resource.data.isStaff == resource.data.get('isStaff', false)) &&
+        (!('active' in request.resource.data) || request.resource.data.active == resource.data.get('active', true)) &&
+        (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted == resource.data.get('isDeleted', false)) &&
+        (!('verificationStatus' in request.resource.data) || 
+          request.resource.data.verificationStatus == resource.data.get('verificationStatus', 'pending') ||
+          (request.resource.data.verificationStatus in ['pending', 'manual_review'] && resource.data.get('verificationStatus', 'pending') != 'verified')) &&
+        (!('verified' in request.resource.data) || request.resource.data.verified == resource.data.get('verified', false)) &&
+        (!('identityVerified' in request.resource.data) || request.resource.data.identityVerified == resource.data.get('identityVerified', false)) &&
+        (!('verifiedAt' in request.resource.data) || request.resource.data.verifiedAt == resource.data.get('verifiedAt', '')) &&
+        (!('verifiedBy' in request.resource.data) || request.resource.data.verifiedBy == resource.data.get('verifiedBy', '')) &&
+        (!('phone' in request.resource.data) || !isEmployee() || isSuperAdmin() || request.resource.data.phone == resource.data.get('phone', ''))
+      ) || (
+        isAdmin() &&
+        (!('role' in request.resource.data) || request.resource.data.role == resource.data.get('role', 'customer'))
       );
-      allow update: if isSuperAdmin() || (
-        isSignedIn() && request.auth.uid == userId
-      );
-      allow delete: if isSuperAdmin();
+      allow delete: if isAdmin();
 
       // Subcollection for user files (/users/{userId}/files/{fileId})
       match /files/{fileId} {
-        allow read: if isEmployee() || (
-          isSignedIn() && request.auth.uid == userId
+        allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+        allow create: if isAdmin() || (
+          isSignedIn() && request.auth.uid == userId &&
+          (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
+          (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
         );
-        allow create, update, delete: if isEmployee() || (
-          isSignedIn() && request.auth.uid == userId
+        allow update: if isAdmin() || (
+          isSignedIn() && request.auth.uid == userId &&
+          (!('verified' in request.resource.data) || request.resource.data.verified == resource.data.get('verified', false)) &&
+          (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending') || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
         );
+        allow delete: if isAdmin();
       }
     }
 
-    // Top-level files index: /files/{fileId}
+    // Top-level files index: /files/{fileId} (Protected against file hijacking)
     match /files/{fileId} {
-      allow read: if isEmployee() || (
-        isSignedIn() && resource.data.userId == request.auth.uid
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (
+        isSignedIn() && request.resource.data.userId == request.auth.uid &&
+        (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
+        (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
       );
-      allow create: if isEmployee() || (
-        isSignedIn() && request.resource.data.userId == request.auth.uid
-      );
-      allow update, delete: if isEmployee() || (
-        isSignedIn() && resource.data.userId == request.auth.uid
-      );
-    }
-
-    // Settings collection: settings/company (standard) & settings/global (fallback)
-    // Non-sensitive company profile, contact, rates, and public rental terms are readable publicly
-    match /settings/{settingsId} {
-      allow read: if settingsId == 'company' || settingsId == 'global' || isEmployee();
-      allow write: if isAdmin();
-    }
-
-    // Fleet Vehicles collection
-    match /vehicles/{vehicleId} {
-      allow read: if true;
-      allow write: if isEmployee();
-    }
-
-    // Bookings collection
-    match /bookings/{bookingId} {
-      allow read: if isEmployee() || (
-        isSignedIn() && (
-          resource.data.customerId == request.auth.uid ||
-          resource.data.customerEmail == request.auth.token.email
-        )
-      );
-      allow create: if request.resource.data.customerName is string &&
-                       request.resource.data.customerPhone is string &&
-                       request.resource.data.vehicleId is string &&
-                       request.resource.data.totalPrice is number;
-      allow update: if isEmployee() || (
-        isSignedIn() && resource.data.customerId == request.auth.uid
+      allow update: if isAdmin() || (
+        isSignedIn() && 
+        resource.data.userId == request.auth.uid && 
+        request.resource.data.userId == request.auth.uid &&
+        (!('verified' in request.resource.data) || request.resource.data.verified == resource.data.get('verified', false)) &&
+        (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending') || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
       );
       allow delete: if isAdmin();
     }
 
-    // Customers CRM collection
-    match /customers/{customerId} {
-      allow read: if isEmployee() || (
-        isSignedIn() && (
-          resource.data.userId == request.auth.uid ||
-          customerId == request.auth.uid
-        )
-      );
-      allow write: if isEmployee() || (
-        isSignedIn() && (
-          request.resource.data.userId == request.auth.uid ||
-          customerId == request.auth.uid
-        )
-      );
+    // Booking Counter internal setting - protected from public disclosure
+    match /settings/bookingCounter {
+      allow read, write: if isEmployee();
     }
 
-    // Legal Rental Contracts collection
-    match /contracts/{contractId} {
-      allow read: if isEmployee() || (
-        isSignedIn() && resource.data.customerId == request.auth.uid
+    // Sensitive / Financial settings
+    match /settings/financial {
+      allow read, write: if isAdmin();
+    }
+
+    // Settings collection: settings/company & settings/global & settings/rates
+    // Public general company settings are readable, modifications strictly restricted to Admin
+    match /settings/{settingsId} {
+      allow read: if settingsId in ['company', 'global', 'rates'];
+      allow write: if isAdmin();
+    }
+
+    // Fleet Vehicles collection - public read for all visitors, modifications strictly restricted to staff
+    match /vehicles/{vehicleId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+
+      // Internal lock subcollection for atomic concurrency management
+      match /_internal/{docId} {
+        allow read, write: if isAdmin();
+      }
+    }
+
+    // Bookings collection:
+    // Staff can manage all bookings directly. Client-side booking creation is handled exclusively via the
+    // server-authoritative createBookingSecure Cloud Function (Admin SDK) to enforce price integrity.
+    // Authenticated customers can read their own bookings and can cancel their pending bookings.
+    match /bookings/{bookingId} {
+      allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow create: if isEmployee();
+      allow update: if isEmployee() || (
+        isSignedIn() && 
+        resource.data.customerId == request.auth.uid && 
+        resource.data.status in ['new', 'pending', 'reviewing'] &&
+        request.resource.data.status == 'cancelled' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+      ) || (
+        isSignedIn() &&
+        resource.data.customerId == request.auth.uid &&
+        resource.data.status in ['cancelled', 'rejected', 'completed'] &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenFromCustomer', 'updatedAt'])
       );
+      allow delete: if isEmployee();
+    }
+
+    // Customers CRM collection - CRM notes, stats, verification, and records are strictly managed by staff
+    // Regular customer can only create their initial self-record without tampering with financials/roles/verification
+    match /customers/{customerId} {
+      allow read: if isEmployee() || (isSignedIn() && request.auth.uid == customerId);
+      allow create: if isEmployee() || (
+        isSignedIn() && 
+        request.auth.uid == customerId && 
+        request.resource.data.id == customerId &&
+        (!('role' in request.resource.data) || request.resource.data.role in ['customer', 'user']) &&
+        (!('totalSpending' in request.resource.data) || request.resource.data.totalSpending == 0) &&
+        (!('totalRentals' in request.resource.data) || request.resource.data.totalRentals == 0) &&
+        (!('verificationStatus' in request.resource.data) || request.resource.data.verificationStatus in ['pending', 'manual_review', 'unverified']) &&
+        (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
+        (!('verifiedAt' in request.resource.data)) &&
+        (!('verifiedBy' in request.resource.data)) &&
+        (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted == false) &&
+        (!('isBlacklisted' in request.resource.data) || request.resource.data.isBlacklisted == false)
+      );
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Legal Rental Contracts collection - restricted to staff and contract party
+    match /contracts/{contractId} {
+      allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
       allow write: if isEmployee();
     }
 
     // Payments and financial receipts collection
     match /payments/{paymentId} {
-      allow read: if isEmployee() || (
-        isSignedIn() && resource.data.customerId == request.auth.uid
-      );
-      allow write: if isAdmin();
+      allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow write: if isEmployee();
     }
 
     // Maintenance records and oil change logs
     match /maintenanceRecords/{recordId} {
-      allow read, write: if isEmployee();
+      allow read, write: if isAdmin();
     }
 
     // Vehicle inspections
     match /vehicleInspections/{inspectionId} {
-      allow read, write: if isEmployee();
+      allow read, write: if isAdmin();
     }
 
-    // Administrative notifications
+    // Administrative notifications - creation and management restricted to staff & Cloud Functions (prevents spam)
     match /notifications/{notificationId} {
-      allow read, write: if isEmployee();
+      allow read, update, delete: if isAdmin();
+      allow create: if isAdmin();
     }
 
-    // Audit logs (immutable)
+    // Audit logs (Immutable - write operations strictly restricted to Cloud Functions via Admin SDK)
     match /auditLogs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isEmployee() || isSignedIn();
+      allow read: if isSuperAdmin();
+      allow create: if false;
       allow update, delete: if false;
+    }
+
+    // Rate limits internal state (Restricted exclusively to Cloud Functions via Admin SDK)
+    match /rateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    // System security bootstrap & internal configuration (Restricted exclusively to Cloud Functions via Admin SDK)
+    match /system_config/{configId} {
+      allow read, write: if false;
     }
   }
 }

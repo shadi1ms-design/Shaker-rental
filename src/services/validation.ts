@@ -14,6 +14,13 @@ export const bookingFormSchema = z.object({
   returnTime: z.string().min(1, 'يرجى اختيار وقت التسليم'),
   notes: z.string().max(1000, 'الملاحظات يجب ألا تتجاوز 1000 حرف').optional().or(z.literal('')),
 }).refine((data) => {
+  if (!data.pickupDate) return true;
+  const today = new Date().toISOString().split('T')[0];
+  return data.pickupDate >= today;
+}, {
+  message: 'تاريخ الاستلام لا يمكن أن يكون في الماضي',
+  path: ['pickupDate'],
+}).refine((data) => {
   if (!data.pickupDate || !data.returnDate) return true;
   return new Date(data.returnDate) >= new Date(data.pickupDate);
 }, {
@@ -35,7 +42,13 @@ export const vehicleFormSchema = z.object({
   currentMileage: z.number().min(0, 'عداد الكيلومترات يجب ألا يكون سالباً'),
   lastOilChangeMileage: z.number().min(0, 'عداد آخر تغيير زيت'),
   status: z.enum(['available', 'reserved', 'rented', 'maintenance', 'inactive']),
-  imageUrl: z.string().url('يرجى إدخال رابط صورة صالح').or(z.string().min(1)),
+  imageUrl: z.string().trim().refine((val) => {
+    if (!val) return false;
+    const lower = val.toLowerCase();
+    if (lower.startsWith('javascript:') || lower.startsWith('vbscript:')) return false;
+    return lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:image/') || lower.startsWith('/');
+  }, { message: 'يرجى إدخال رابط صورة صالح وآمن' }),
+  images: z.array(z.string()).optional(),
   description: z.string().max(1000).optional().or(z.literal('')),
 });
 
