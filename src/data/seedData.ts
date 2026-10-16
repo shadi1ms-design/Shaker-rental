@@ -259,38 +259,14 @@ export const INITIAL_CUSTOMERS: Customer[] = [];
 
 export const INITIAL_BOOKINGS: Booking[] = [];
 
-export const INITIAL_MAINTENANCE_RECORDS: MaintenanceRecord[] = [
-  {
-    id: 'maint-01',
-    vehicleId: 'veh-spectra-2008-blk',
-    serviceType: 'oil_change',
-    mileage: 140200,
-    cost: 45,
-    serviceDate: '2026-08-20',
-    nextDueMileage: 145200,
-    technicianNotes: 'تغيير زيت تخليقي أصلي 10W-40 وفلتر الزيت وفحص مستوى سائل التبريد.',
-    performedBy: 'ورشة الشام لصيانة السيارات',
-    createdAt: '2026-08-20T16:00:00Z',
-  },
-  {
-    id: 'maint-02',
-    vehicleId: 'veh-optima-2014-slv',
-    serviceType: 'brakes',
-    mileage: 95500,
-    cost: 80,
-    serviceDate: '2026-08-15',
-    technicianNotes: 'تبديل فحمات الفرامل الأمامية والخلفية وتنسيم الهواء.',
-    performedBy: 'مركز السعادة جرمانا',
-    createdAt: '2026-08-15T11:30:00Z',
-  }
-];
+export const INITIAL_MAINTENANCE_RECORDS: MaintenanceRecord[] = [];
 
 export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').UploadedFile[] } = {
   'user-tariq-001': [
     {
       id: 'file-tar-01',
       userId: 'user-tariq-001',
-      userEmail: 'tariq.naser@gmail.com',
+      userEmail: 'customer001@example.invalid',
       fileName: 'driver_license_tariq.jpg',
       fileUrl: 'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&w=800&q=80',
       fileType: 'image/jpeg',
@@ -301,7 +277,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-tar-02',
       userId: 'user-tariq-001',
-      userEmail: 'tariq.naser@gmail.com',
+      userEmail: 'customer001@example.invalid',
       fileName: 'national_id_front_back.pdf',
       fileUrl: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
       fileType: 'application/pdf',
@@ -312,7 +288,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-tar-03',
       userId: 'user-tariq-001',
-      userEmail: 'tariq.naser@gmail.com',
+      userEmail: 'customer001@example.invalid',
       fileName: 'rental_agreement_2026_signed.pdf',
       fileUrl: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80',
       fileType: 'application/pdf',
@@ -325,7 +301,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-sam-01',
       userId: 'user-samir-002',
-      userEmail: 'samir.khoury@outlook.com',
+      userEmail: 'customer002@example.invalid',
       fileName: 'intl_driving_permit.pdf',
       fileUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=800&q=80',
       fileType: 'application/pdf',
@@ -336,7 +312,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-sam-02',
       userId: 'user-samir-002',
-      userEmail: 'samir.khoury@outlook.com',
+      userEmail: 'customer002@example.invalid',
       fileName: 'passport_scan.jpg',
       fileUrl: 'https://images.unsplash.com/photo-1544717302-de2939b7ef71?auto=format&fit=crop&w=800&q=80',
       fileType: 'image/jpeg',
@@ -349,7 +325,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-ahm-01',
       userId: 'user-ahmad-003',
-      userEmail: 'ahmad.hasan@yahoo.com',
+      userEmail: 'customer003@example.invalid',
       fileName: 'driver_license_ahmad.png',
       fileUrl: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?auto=format&fit=crop&w=800&q=80',
       fileType: 'image/png',
@@ -360,7 +336,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-ahm-02',
       userId: 'user-ahmad-003',
-      userEmail: 'ahmad.hasan@yahoo.com',
+      userEmail: 'customer003@example.invalid',
       fileName: 'syrian_id_card.jpg',
       fileUrl: 'https://images.unsplash.com/photo-1589330694653-ded6df03f754?auto=format&fit=crop&w=800&q=80',
       fileType: 'image/jpeg',
@@ -371,7 +347,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-ahm-03',
       userId: 'user-ahmad-003',
-      userEmail: 'ahmad.hasan@yahoo.com',
+      userEmail: 'customer003@example.invalid',
       fileName: 'proof_of_residence_damascus.pdf',
       fileUrl: 'https://images.unsplash.com/photo-1554224154-26032ffc0d07?auto=format&fit=crop&w=800&q=80',
       fileType: 'application/pdf',
@@ -382,7 +358,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-ahm-04',
       userId: 'user-ahmad-003',
-      userEmail: 'ahmad.hasan@yahoo.com',
+      userEmail: 'customer003@example.invalid',
       fileName: 'inspection_check_pickup.jpg',
       fileUrl: 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?auto=format&fit=crop&w=800&q=80',
       fileType: 'image/jpeg',
@@ -395,7 +371,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-nour-01',
       userId: 'user-nour-004',
-      userEmail: 'nour.damascus@gmail.com',
+      userEmail: 'customer004@example.invalid',
       fileName: 'driving_license_valid_2028.jpg',
       fileUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=800&q=80',
       fileType: 'image/jpeg',
@@ -408,7 +384,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-reem-01',
       userId: 'user-reem-005',
-      userEmail: 'reem.alali@gmail.com',
+      userEmail: 'customer005@example.invalid',
       fileName: 'passport_reem_alali.pdf',
       fileUrl: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=800&q=80',
       fileType: 'application/pdf',
@@ -419,7 +395,7 @@ export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').Uplo
     {
       id: 'file-reem-02',
       userId: 'user-reem-005',
-      userEmail: 'reem.alali@gmail.com',
+      userEmail: 'customer005@example.invalid',
       fileName: 'uae_driving_license.jpg',
       fileUrl: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&w=800&q=80',
       fileType: 'image/jpeg',
@@ -434,9 +410,9 @@ export const INITIAL_FIRESTORE_USERS: import('../types').FirestoreUser[] = [
   {
     id: 'user-tariq-001',
     uid: 'user-tariq-001',
-    email: 'tariq.naser@gmail.com',
+    email: 'customer001@example.invalid',
     displayName: 'طارق الناصر',
-    phone: '00963933445566',
+    phone: '0000000000',
     role: 'customer',
     createdAt: '2026-02-14T09:30:00Z',
     uploadedFilesCount: 3,
@@ -445,9 +421,9 @@ export const INITIAL_FIRESTORE_USERS: import('../types').FirestoreUser[] = [
   {
     id: 'user-samir-002',
     uid: 'user-samir-002',
-    email: 'samir.khoury@outlook.com',
+    email: 'customer002@example.invalid',
     displayName: 'سمير الخوري',
-    phone: '00963944112233',
+    phone: '0000000000',
     role: 'customer',
     createdAt: '2026-03-01T14:15:00Z',
     uploadedFilesCount: 2,
@@ -456,9 +432,9 @@ export const INITIAL_FIRESTORE_USERS: import('../types').FirestoreUser[] = [
   {
     id: 'user-ahmad-003',
     uid: 'user-ahmad-003',
-    email: 'ahmad.hasan@yahoo.com',
+    email: 'customer003@example.invalid',
     displayName: 'أحمد حسن الشيخ',
-    phone: '00963988776655',
+    phone: '0000000000',
     role: 'customer',
     createdAt: '2026-04-10T11:00:00Z',
     uploadedFilesCount: 4,
@@ -467,9 +443,9 @@ export const INITIAL_FIRESTORE_USERS: import('../types').FirestoreUser[] = [
   {
     id: 'user-nour-004',
     uid: 'user-nour-004',
-    email: 'nour.damascus@gmail.com',
+    email: 'customer004@example.invalid',
     displayName: 'نور الدين الدمشقي',
-    phone: '00963955667788',
+    phone: '0000000000',
     role: 'customer',
     createdAt: '2026-05-18T10:20:00Z',
     uploadedFilesCount: 1,
@@ -478,9 +454,9 @@ export const INITIAL_FIRESTORE_USERS: import('../types').FirestoreUser[] = [
   {
     id: 'user-reem-005',
     uid: 'user-reem-005',
-    email: 'reem.alali@gmail.com',
+    email: 'customer005@example.invalid',
     displayName: 'ريم العلي',
-    phone: '00963933998877',
+    phone: '0000000000',
     role: 'customer',
     createdAt: '2026-06-08T16:45:00Z',
     uploadedFilesCount: 2,

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Vehicle, Booking, Payment, MaintenanceRecord } from '../types';
+import { Vehicle, Booking } from '../types';
 import {
   BarChart3,
   Download,
@@ -9,29 +9,22 @@ import {
   DollarSign,
   PieChart,
   Car,
-  Wrench,
   Clock
 } from 'lucide-react';
 
 interface AdminReportsProps {
   vehicles?: Vehicle[];
   bookings?: Booking[];
-  payments?: Payment[];
-  maintenanceRecords?: MaintenanceRecord[];
 }
 
 export const AdminReports: React.FC<AdminReportsProps> = ({
   vehicles = [],
   bookings = [],
-  payments = [],
-  maintenanceRecords = [],
 }) => {
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all'>('month');
 
   const safeVehicles = vehicles || [];
   const safeBookings = bookings || [];
-  const safePayments = payments || [];
-  const safeMaintenance = maintenanceRecords || [];
 
   // Filter bookings based on selected period
   const filteredBookings = useMemo(() => {
@@ -65,10 +58,6 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
   const totalOutstanding = useMemo(() => {
     return Math.max(0, totalRevenue - totalCollected);
   }, [totalRevenue, totalCollected]);
-
-  const totalMaintenanceCost = useMemo(() => {
-    return safeMaintenance.reduce((acc, m) => acc + (m.cost || 0), 0);
-  }, [safeMaintenance]);
 
   // Fleet utilization
   const rentedVehiclesCount = safeVehicles.filter((v) => v.status === 'rented').length;
@@ -204,15 +193,6 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
           </div>
           <div className="text-2xl font-black text-amber-400 font-mono">{utilizationRate}%</div>
           <div className="text-[11px] text-slate-400">{rentedVehiclesCount} سيارة مؤجرة من أصل {vehicles.length}</div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span>إجمالي تكاليف الصيانة والزيوت</span>
-            <Wrench className="w-4 h-4 text-blue-400" />
-          </div>
-          <div className="text-2xl font-black text-blue-400 font-mono">${totalMaintenanceCost}</div>
-          <div className="text-[11px] text-slate-400">{maintenanceRecords.length} عمليات صيانة مسجلة</div>
         </div>
       </div>
 

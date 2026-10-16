@@ -181,7 +181,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const userDocRef = doc(db, 'users', fbUser.uid);
               const userSnap = await Promise.race([
                 getDoc(userDocRef),
-                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
               ]);
 
               if (userSnap.exists()) {
@@ -549,7 +549,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const userDocRef = doc(db, 'users', fbUser.uid);
             const userSnap = await Promise.race([
               getDoc(userDocRef),
-              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500))
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
             ]);
 
             if (userSnap.exists()) {

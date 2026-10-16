@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateUploadedFileSignature = exports.enforceLoginLockout = exports.resetLoginAttempts = exports.recordFailedLogin = exports.checkLoginAllowed = exports.deleteUserAccount = exports.toggleUserAccountStatus = exports.syncMyRole = exports.bootstrapInitialAdmin = exports.setUserRole = exports.cleanupSeedData = exports.checkMaintenanceAndRentals = exports.syncFleetMaintenance = exports.verifyCustomerIdentity = exports.calculateDynamicPricing = exports.generateRentalContractPdf = exports.sendBookingNotification = exports.updateBookingStatusSecure = exports.createBookingSecure = void 0;
+exports.telegramWebhook = exports.sendTelegramBookingAlert = exports.validateUploadedFileSignature = exports.enforceLoginLockout = exports.resetLoginAttempts = exports.recordFailedLogin = exports.checkLoginAllowed = exports.deleteUserAccount = exports.toggleUserAccountStatus = exports.syncMyRole = exports.bootstrapInitialAdmin = exports.setUserRole = exports.cleanupSeedData = exports.checkMaintenanceAndRentals = exports.syncFleetMaintenance = exports.verifyCustomerIdentity = exports.calculateDynamicPricing = exports.generateRentalContractPdf = exports.sendBookingNotification = exports.updateBookingStatusSecure = exports.createBookingSecure = exports.ALLOWED_TRANSITIONS = void 0;
+exports.applyBookingStatusChange = applyBookingStatusChange;
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const firestore_1 = require("firebase-admin/firestore");
@@ -142,6 +143,19 @@ function sanitizeString(input, maxLen = 100) {
         .slice(0, maxLen);
 }
 /**
+ * Booking Lifecycle State Machine: Strict allowed transitions.
+ * Terminal states (completed, cancelled, rejected) permit no further transitions.
+ */
+exports.ALLOWED_TRANSITIONS = {
+    new: ['confirmed', 'rejected'],
+    reviewing: ['confirmed', 'rejected'],
+    confirmed: ['rented', 'cancelled'],
+    rented: ['completed'],
+    completed: [],
+    cancelled: [],
+    rejected: [],
+};
+/**
  * 1. Cloud Function: createBookingSecure (region: asia-south1)
  * Enforces:
  * - Strict authentication & context.auth.uid ownership
@@ -152,32 +166,67 @@ function sanitizeString(input, maxLen = 100) {
  * - Sequential number generation
  * - Minimal client data requirement
  */
-exports.createBookingSecure = functions.region(FUNCTION_REGION).https.onCall(async (data, context) => {
-    // 1. Authentication & Ownership Check
-    const callerUid = context.auth?.uid || null;
-    const isStaff = isCallerStaff(context.auth?.token);
-    // 2. User ID & Customer Identification
-    let customerId;
-    let customerEmail = '';
-    if (callerUid) {
-        customerId = callerUid;
-        customerEmail = (context.auth?.token?.email || '').toLowerCase().trim();
-        if (data?.customerId && data.customerId !== callerUid) {
-            if (!isStaff) {
-                throw new functions.https.HttpsError('permission-denied', 'محاولة تزوير هوية المستخدم مرفوضة (User ID Spoofing Rejected). لا يمكنك الحجز باسم حساب آخر.');
-            }
-            customerId = String(data.customerId).trim();
-            if (data.customerEmail)
-                customerEmail = String(data.customerEmail).toLowerCase().trim();
-        }
-        if (data?.userId && data.userId !== callerUid && !isStaff) {
-            throw new functions.https.HttpsError('permission-denied', 'محاولة تزوير معرف المستخدم مرفوضة (User ID Spoofing Rejected).');
-        }
+exports.createBookingSecure = functions
+    .region(FUNCTION_REGION)
+    .https.onCall(async (data, context) => {
+    if (!context.auth || !context.auth.uid) {
+        throw new functions.https.HttpsError('unauthenticated', 'يجب تسجيل الدخول قبل إنشاء الحجز.');
     }
-    else {
-        // Guest / Visitor booking
-        customerId = String(data?.customerId || '').trim() || `guest-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-        customerEmail = String(data?.customerEmail || '').toLowerCase().trim();
+    const callerUid = context.auth.uid;
+    const isStaff = isCallerStaff(context.auth?.token);
+    let customerId = callerUid;
+    let customerEmail = (context.auth.token?.email || '').toLowerCase().trim();
+    if (data?.customerId && data.customerId !== callerUid) {
+        if (!isStaff) {
+            throw new functions.https.HttpsError('permission-denied', 'محاولة تزوير هوية المستخدم مرفوضة (User ID Spoofing Rejected). لا يمكنك الحجز باسم حساب آخر.');
+        }
+        customerId = String(data.customerId).trim();
+        if (data.customerEmail)
+            customerEmail = String(data.customerEmail).toLowerCase().trim();
+    }
+    if (data?.userId && data.userId !== callerUid && !isStaff) {
+        throw new functions.https.HttpsError('permission-denied', 'محاولة تزوير معرف المستخدم مرفوضة (User ID Spoofing Rejected).');
+    }
+    // 2. Server-Side Rate Limiting Check (5 bookings per 10 minutes per customerId or IP)
+    if (!isStaff) {
+        const callerIp = String(context.rawRequest?.ip || 'unknown-ip');
+        const ipKey = getIpRateLimitKey(callerIp);
+        const rateLimitTargetId = customerId || ipKey;
+        const rateLimitDocRef = db.collection('rateLimits').doc(`booking_${rateLimitTargetId}`);
+        const BOOKING_RATE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes sliding window
+        const nowMs = Date.now();
+        await db.runTransaction(async (transaction) => {
+            const rlSnap = await transaction.get(rateLimitDocRef);
+            let count = 1;
+            let firstAttemptAt = nowMs;
+            if (rlSnap.exists) {
+                const rlData = rlSnap.data();
+                const prevFirst = Number(rlData?.firstAttemptAt || nowMs);
+                if (nowMs - prevFirst < BOOKING_RATE_WINDOW_MS) {
+                    count = Number(rlData?.count || rlData?.attempts || 0) + 1;
+                    firstAttemptAt = prevFirst;
+                }
+                else {
+                    count = 1;
+                    firstAttemptAt = nowMs;
+                }
+            }
+            else {
+                count = 1;
+                firstAttemptAt = nowMs;
+            }
+            if (count > 5) {
+                throw new functions.https.HttpsError('resource-exhausted', 'تم تجاوز الحد المسموح به لإنشاء الحجوزات مؤقتاً (الحد الأقصى 5 حجوزات خلال 10 دقائق). يرجى الانتظار قليلاً قبل المحاولة مجدداً.');
+            }
+            transaction.set(rateLimitDocRef, {
+                target: rateLimitTargetId,
+                count,
+                attempts: count,
+                firstAttemptAt,
+                lastAttemptAt: nowMs,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        });
     }
     // 3. Vehicle ID Extraction & Validation
     const vehicleId = String(data?.vehicleId || '').trim();
@@ -328,7 +377,8 @@ exports.createBookingSecure = functions.region(FUNCTION_REGION).https.onCall(asy
             if (counterDoc.exists) {
                 nextCount = (counterDoc.data()?.lastNumber || 0) + 1;
             }
-            const formattedNumber = `SHK-2026-${String(nextCount).padStart(6, '0')}`;
+            const currentYear = new Date().getFullYear();
+            const formattedNumber = `SHK-${currentYear}-${String(nextCount).padStart(6, '0')}`;
             const newBookingRef = db.collection('bookings').doc();
             // 6c. ALL WRITES AFTER READS
             transaction.set(lockRef, {
@@ -389,12 +439,17 @@ exports.createBookingSecure = functions.region(FUNCTION_REGION).https.onCall(asy
                 read: false,
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
-            // Immutable audit log record
+            // Immutable audit log record with unified identity schema
             const auditRef = db.collection('auditLogs').doc();
+            const actorType = isStaff ? 'staff' : (callerUid ? 'customer' : 'guest');
             transaction.set(auditRef, {
                 id: auditRef.id,
-                user: customerEmail || customerName,
+                user: customerEmail || callerUid,
                 userId: callerUid,
+                actorUid: callerUid || null,
+                actorEmail: customerEmail || null,
+                actorType,
+                customerProvidedName: customerName || null,
                 action: 'BOOKING_CREATED_SECURE',
                 entity: 'bookings',
                 entityId: newBookingRef.id,
@@ -433,15 +488,159 @@ exports.createBookingSecure = functions.region(FUNCTION_REGION).https.onCall(asy
             txErr?.code === 'FAILED_PRECONDITION') {
             throw new functions.https.HttpsError('failed-precondition', 'فهرس قاعدة البيانات لقائمة الحجوزات النشطة (bookings: vehicleId, status) غير جاهز أو قيد الإنشاء حالياً في Firebase. يرجى المحاولة بعد قليل.');
         }
-        throw new functions.https.HttpsError('internal', `خطأ أثناء معالجة الحجز السحابي: ${txErr?.message || 'يرجى المحاولة مجدداً'}`);
+        console.error('خطأ أثناء معالجة الحجز السحابي:', txErr);
+        throw new functions.https.HttpsError('internal', 'حدث خطأ داخلي غير متوقع. يرجى المحاولة لاحقاً أو التواصل مع الدعم الفني.');
     }
 });
+/**
+ * دالة داخلية مشتركة لتغيير حالة الحجز مع فحص التعارض والتسجيل في سجل التدقيق وتحديث حالة السيارة.
+ * تُستخدم بواسطة updateBookingStatusSecure وبواسطة معالج Telegram Webhook.
+ */
+async function applyBookingStatusChange(bookingId, newStatus, actorLabel, actorInfo) {
+    const validStatuses = ['new', 'reviewing', 'confirmed', 'rented', 'completed', 'cancelled', 'rejected'];
+    if (!validStatuses.includes(newStatus)) {
+        return { success: false, message: 'حالة الحجز المطلوبة غير صحيحة.' };
+    }
+    const targetBookingRef = await resolveBookingDocument(bookingId);
+    if (!targetBookingRef) {
+        return { success: false, message: 'الحجز المطلوب غير موجود.' };
+    }
+    // Pre-fetch booking doc once to resolve vehicleRef properly before transaction
+    const preBookingSnap = await targetBookingRef.get();
+    if (!preBookingSnap.exists) {
+        return { success: false, message: 'الحجز المطلوب غير موجود.' };
+    }
+    const preBookingData = preBookingSnap.data();
+    let preResolvedVehicleRef = null;
+    if (preBookingData.vehicleId) {
+        const vRes = await resolveVehicleDocument(String(preBookingData.vehicleId).trim());
+        if (vRes) {
+            preResolvedVehicleRef = vRes.ref;
+        }
+    }
+    try {
+        return await db.runTransaction(async (transaction) => {
+            // 1. ALL READS FIRST (Firestore requires all reads before any writes in transactions)
+            const bookingDoc = await transaction.get(targetBookingRef);
+            if (!bookingDoc.exists) {
+                return { success: false, message: 'الحجز المطلوب غير موجود.' };
+            }
+            const bData = bookingDoc.data();
+            // Read vehicle document if vehicleId is present
+            let vehicleDoc = null;
+            if (preResolvedVehicleRef) {
+                vehicleDoc = await transaction.get(preResolvedVehicleRef);
+            }
+            // Mandatory double-booking conflict check when confirming or renting
+            if (newStatus === 'confirmed' || newStatus === 'rented') {
+                const targetVehicleId = bData.vehicleId || (preResolvedVehicleRef ? preResolvedVehicleRef.id : null);
+                if (targetVehicleId) {
+                    const activeBookingsQuery = db.collection('bookings')
+                        .where('vehicleId', '==', targetVehicleId)
+                        .where('status', 'in', ['confirmed', 'rented']);
+                    const activeSnap = await transaction.get(activeBookingsQuery);
+                    const currentPickup = bData.pickupDate;
+                    const currentReturn = bData.returnDate;
+                    const currentPickupTime = bData.pickupTime || '10:00';
+                    const currentReturnTime = bData.returnTime || '10:00';
+                    const curPickupMs = new Date(`${currentPickup}T${currentPickupTime}:00Z`).getTime();
+                    const curReturnMs = new Date(`${currentReturn}T${currentReturnTime}:00Z`).getTime();
+                    const conflictingDoc = activeSnap.docs.find((doc) => {
+                        if (doc.id === targetBookingRef.id)
+                            return false;
+                        const b = doc.data();
+                        if (b.isDeleted === true || b.status === 'cancelled' || b.status === 'rejected') {
+                            return false;
+                        }
+                        const bPickupTime = b.pickupTime || '10:00';
+                        const bReturnTime = b.returnTime || '10:00';
+                        const bPickupMs = new Date(`${b.pickupDate}T${bPickupTime}:00Z`).getTime();
+                        const bReturnMs = new Date(`${b.returnDate}T${bReturnTime}:00Z`).getTime();
+                        if (isNaN(curPickupMs) || isNaN(curReturnMs) || isNaN(bPickupMs) || isNaN(bReturnMs)) {
+                            return (currentPickup <= b.returnDate && currentReturn >= b.pickupDate);
+                        }
+                        // Interval intersection condition: A_start < B_end && A_end > B_start
+                        return (curPickupMs < bReturnMs && curReturnMs > bPickupMs);
+                    });
+                    if (conflictingDoc) {
+                        return {
+                            success: false,
+                            message: 'تعذر تأكيد هذا الحجز لوجود حجز آخر مؤكد بالفعل على نفس السيارة بفترة متداخلة. يرجى رفض هذا الطلب أو التواصل مع العميل لتغيير التواريخ.',
+                        };
+                    }
+                }
+            }
+            // 2. ALL WRITES AFTER READS
+            // When status changes to rented: update vehicle status to rented
+            if (newStatus === 'rented' && preResolvedVehicleRef && vehicleDoc && vehicleDoc.exists) {
+                transaction.update(preResolvedVehicleRef, {
+                    status: 'rented',
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+            // When status changes to completed, cancelled, or rejected: return vehicle status to available if rented
+            if ((newStatus === 'completed' || newStatus === 'cancelled' || newStatus === 'rejected') && preResolvedVehicleRef && vehicleDoc && vehicleDoc.exists) {
+                if (vehicleDoc.data()?.status === 'rented') {
+                    transaction.update(preResolvedVehicleRef, {
+                        status: 'available',
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+            }
+            // Update ONLY status and updatedAt - totalAmount, pricing and ownership remain IMMUTABLE
+            transaction.update(targetBookingRef, {
+                status: newStatus,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            // Audit log with unified identity schema
+            const auditRef = db.collection('auditLogs').doc();
+            const resolvedActorUid = actorInfo && 'actorUid' in actorInfo
+                ? (actorInfo.actorUid ?? null)
+                : (actorLabel.includes('@') ? null : (actorLabel || null));
+            const resolvedActorEmail = actorInfo?.actorEmail ?? (actorLabel.includes('@') ? actorLabel : null);
+            const resolvedActorType = actorInfo?.actorType ?? 'staff';
+            transaction.set(auditRef, {
+                id: auditRef.id,
+                user: actorLabel,
+                userId: resolvedActorUid || (actorInfo?.telegramUserId ? `telegram:${actorInfo.telegramUserId}` : (actorLabel.includes('@') ? actorLabel : 'staff')),
+                actorUid: resolvedActorUid,
+                actorEmail: resolvedActorEmail,
+                actorType: resolvedActorType,
+                telegramUserId: actorInfo?.telegramUserId ?? null,
+                ...(actorInfo?.telegramName ? { telegramName: actorInfo.telegramName } : {}),
+                action: 'BOOKING_STATUS_UPDATED',
+                entity: 'bookings',
+                entityId: targetBookingRef.id,
+                details: `تحديث حالة الحجز ${bData.bookingNumber || targetBookingRef.id} من ${bData.status} إلى ${newStatus} بواسطة ${actorLabel}`,
+                timestamp: new Date().toISOString(),
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            return {
+                success: true,
+                bookingId: targetBookingRef.id,
+                oldStatus: bData.status,
+                newStatus,
+                message: `تم تحديث حالة الحجز إلى "${newStatus}" بنجاح.`,
+            };
+        });
+    }
+    catch (err) {
+        console.error('[applyBookingStatusChange] Error during status change transaction:', err);
+        return {
+            success: false,
+            message: err?.message || 'حدث خطأ داخلي أثناء تحديث حالة الحجز.',
+        };
+    }
+}
 /**
  * Cloud Function: updateBookingStatusSecure (region: asia-south1)
  * Enforces server-side authority for booking lifecycle status transitions.
  * Prevents unauthorized status tampering, totalAmount changes, or ownership violations.
  */
-exports.updateBookingStatusSecure = functions.region(FUNCTION_REGION).https.onCall(async (data, context) => {
+exports.updateBookingStatusSecure = functions
+    .region(FUNCTION_REGION)
+    .runWith({ enforceAppCheck: true })
+    .https.onCall(async (data, context) => {
     if (!context.auth || !context.auth.uid) {
         throw new functions.https.HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لتحديث حالة الحجز.');
     }
@@ -469,130 +668,50 @@ exports.updateBookingStatusSecure = functions.region(FUNCTION_REGION).https.onCa
         });
         throw new functions.https.HttpsError('not-found', 'الحجز المطلوب غير موجود.');
     }
-    // Pre-fetch booking doc once to resolve vehicleRef properly before transaction
+    // Pre-fetch booking doc to verify ownership and authorization rules
     const preBookingSnap = await targetBookingRef.get();
     if (!preBookingSnap.exists) {
         throw new functions.https.HttpsError('not-found', 'الحجز المطلوب غير موجود.');
     }
-    const preBookingData = preBookingSnap.data();
-    let preResolvedVehicleRef = null;
-    if (preBookingData.vehicleId) {
-        const vRes = await resolveVehicleDocument(String(preBookingData.vehicleId).trim());
-        if (vRes) {
-            preResolvedVehicleRef = vRes.ref;
+    const bData = preBookingSnap.data();
+    const currentStatus = String(bData.status || 'new').toLowerCase().trim();
+    // Booking State Machine validation: Enforce allowed state transitions
+    const allowedNextStatuses = exports.ALLOWED_TRANSITIONS[currentStatus] || [];
+    if (!allowedNextStatuses.includes(newStatus)) {
+        throw new functions.https.HttpsError('failed-precondition', `تحويل حالة الحجز من "${currentStatus}" إلى "${newStatus}" غير مسموح به وفق دورة حياة الحجوزات المعتمدة.`);
+    }
+    const isOwner = bData.customerId === callerUid ||
+        bData.userId === callerUid ||
+        (Boolean(bData.customerEmail) &&
+            String(bData.customerEmail).toLowerCase().trim() ===
+                String(context.auth?.token?.email || '').toLowerCase().trim());
+    // Authorization & Status Transition Rules
+    if (!isStaff) {
+        // Customer can ONLY update their OWN booking
+        if (!isOwner) {
+            throw new functions.https.HttpsError('permission-denied', 'غير مصرح لك بتعديل حجز لا يخص حسابك (Ownership Bypass Rejected).');
+        }
+        // Customer can ONLY cancel pending bookings
+        if (newStatus !== 'cancelled') {
+            throw new functions.https.HttpsError('permission-denied', 'لا يملك العميل صلاحية تغيير الحالة إلى غير "ملغي" (Unauthorized Status Change Rejected).');
         }
     }
-    return await db.runTransaction(async (transaction) => {
-        // 1. ALL READS FIRST (Firestore requires all reads before any writes in transactions)
-        const bookingDoc = await transaction.get(targetBookingRef);
-        if (!bookingDoc.exists) {
-            throw new functions.https.HttpsError('not-found', 'الحجز المطلوب غير موجود.');
-        }
-        const bData = bookingDoc.data();
-        const isOwner = bData.customerId === callerUid ||
-            bData.userId === callerUid ||
-            (Boolean(bData.customerEmail) &&
-                String(bData.customerEmail).toLowerCase().trim() ===
-                    String(context.auth?.token?.email || '').toLowerCase().trim());
-        // Authorization & Status Transition Rules
-        if (!isStaff) {
-            // Customer can ONLY update their OWN booking
-            if (!isOwner) {
-                throw new functions.https.HttpsError('permission-denied', 'غير مصرح لك بتعديل حجز لا يخص حسابك (Ownership Bypass Rejected).');
-            }
-            // Customer can ONLY cancel pending bookings
-            if (newStatus !== 'cancelled') {
-                throw new functions.https.HttpsError('permission-denied', 'لا يملك العميل صلاحية تغيير الحالة إلى غير "ملغي" (Unauthorized Status Change Rejected).');
-            }
-            // Customer can ONLY cancel if current status is new, reviewing, or pending
-            if (!['new', 'reviewing', 'pending'].includes(bData.status)) {
-                throw new functions.https.HttpsError('failed-precondition', 'لا يمكن إلغاء الحجز بعد تأكيده أو بدء التأجير. يرجى التواصل مع إدارة الشركة.');
-            }
-        }
-        // Read vehicle document if vehicleId is present
-        let vehicleDoc = null;
-        if (preResolvedVehicleRef) {
-            vehicleDoc = await transaction.get(preResolvedVehicleRef);
-        }
-        // Mandatory double-booking conflict check when confirming or renting
-        if (newStatus === 'confirmed' || newStatus === 'rented') {
-            const targetVehicleId = bData.vehicleId || (preResolvedVehicleRef ? preResolvedVehicleRef.id : null);
-            if (targetVehicleId) {
-                const activeBookingsQuery = db.collection('bookings')
-                    .where('vehicleId', '==', targetVehicleId)
-                    .where('status', 'in', ['confirmed', 'rented']);
-                const activeSnap = await transaction.get(activeBookingsQuery);
-                const currentPickup = bData.pickupDate;
-                const currentReturn = bData.returnDate;
-                const currentPickupTime = bData.pickupTime || '10:00';
-                const currentReturnTime = bData.returnTime || '10:00';
-                const curPickupMs = new Date(`${currentPickup}T${currentPickupTime}:00Z`).getTime();
-                const curReturnMs = new Date(`${currentReturn}T${currentReturnTime}:00Z`).getTime();
-                const conflictingDoc = activeSnap.docs.find((doc) => {
-                    if (doc.id === targetBookingRef.id)
-                        return false;
-                    const b = doc.data();
-                    if (b.isDeleted === true || b.status === 'cancelled' || b.status === 'rejected') {
-                        return false;
-                    }
-                    const bPickupTime = b.pickupTime || '10:00';
-                    const bReturnTime = b.returnTime || '10:00';
-                    const bPickupMs = new Date(`${b.pickupDate}T${bPickupTime}:00Z`).getTime();
-                    const bReturnMs = new Date(`${b.returnDate}T${bReturnTime}:00Z`).getTime();
-                    if (isNaN(curPickupMs) || isNaN(curReturnMs) || isNaN(bPickupMs) || isNaN(bReturnMs)) {
-                        return (currentPickup <= b.returnDate && currentReturn >= b.pickupDate);
-                    }
-                    // Interval intersection condition: A_start < B_end && A_end > B_start
-                    return (curPickupMs < bReturnMs && curReturnMs > bPickupMs);
-                });
-                if (conflictingDoc) {
-                    throw new functions.https.HttpsError('already-exists', 'تعذر تأكيد هذا الحجز لوجود حجز آخر مؤكد بالفعل على نفس السيارة بفترة متداخلة. يرجى رفض هذا الطلب أو التواصل مع العميل لتغيير التواريخ.');
-                }
-            }
-        }
-        // 2. ALL WRITES AFTER READS
-        // When status changes to rented: update vehicle status to rented
-        if (newStatus === 'rented' && preResolvedVehicleRef && vehicleDoc && vehicleDoc.exists) {
-            transaction.update(preResolvedVehicleRef, {
-                status: 'rented',
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-        }
-        // When status changes to completed, cancelled, or rejected: return vehicle status to available if rented
-        if ((newStatus === 'completed' || newStatus === 'cancelled' || newStatus === 'rejected') && preResolvedVehicleRef && vehicleDoc && vehicleDoc.exists) {
-            if (vehicleDoc.data()?.status === 'rented') {
-                transaction.update(preResolvedVehicleRef, {
-                    status: 'available',
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-            }
-        }
-        // Update ONLY status and updatedAt - totalAmount, pricing and ownership remain IMMUTABLE
-        transaction.update(targetBookingRef, {
-            status: newStatus,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        // Audit log
-        const auditRef = db.collection('auditLogs').doc();
-        transaction.set(auditRef, {
-            id: auditRef.id,
-            user: context.auth?.token?.email || callerUid,
-            userId: callerUid,
-            action: 'BOOKING_STATUS_UPDATED',
-            entity: 'bookings',
-            entityId: targetBookingRef.id,
-            details: `تحديث حالة الحجز ${bData.bookingNumber || targetBookingRef.id} من ${bData.status} إلى ${newStatus}`,
-            timestamp: new Date().toISOString(),
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return {
-            success: true,
-            bookingId: targetBookingRef.id,
-            oldStatus: bData.status,
-            newStatus,
-            message: `تم تحديث حالة الحجز إلى "${newStatus}" بنجاح.`,
-        };
+    const actorLabel = context.auth?.token?.email || callerUid;
+    const result = await applyBookingStatusChange(targetBookingRef.id, newStatus, actorLabel, {
+        actorUid: callerUid,
+        actorEmail: context.auth?.token?.email || null,
+        actorType: isStaff ? 'staff' : 'customer',
     });
+    if (!result.success) {
+        if (result.message.includes('تعذر تأكيد هذا الحجز لوجود حجز آخر')) {
+            throw new functions.https.HttpsError('already-exists', result.message);
+        }
+        if (result.message.includes('غير موجود')) {
+            throw new functions.https.HttpsError('not-found', result.message);
+        }
+        throw new functions.https.HttpsError('failed-precondition', result.message);
+    }
+    return result;
 });
 /**
  * 2. Cloud Function: sendBookingNotification (region: asia-south1)
@@ -613,7 +732,10 @@ exports.updateBookingStatusSecure = functions.region(FUNCTION_REGION).https.onCa
  * 6. Sanitizes all strings before insertion into notifications or audit logs.
  * 7. Enforces rate limiting (15-second debounce + maximum 5 notifications per 10 minutes per booking).
  */
-exports.sendBookingNotification = functions.region(FUNCTION_REGION).https.onCall(async (data, context) => {
+exports.sendBookingNotification = functions
+    .region(FUNCTION_REGION)
+    .runWith({ enforceAppCheck: true })
+    .https.onCall(async (data, context) => {
     // 1. Authentication Check
     if (!context.auth || !context.auth.uid) {
         throw new functions.https.HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً لإرسال إشعار الحجز.');
@@ -778,12 +900,15 @@ exports.sendBookingNotification = functions.region(FUNCTION_REGION).https.onCall
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     await notificationRef.set(notificationData);
-    // 8. Log Immutable Security Audit Record
+    // 8. Log Immutable Security Audit Record with unified identity schema
     const auditRef = db.collection('auditLogs').doc();
     await auditRef.set({
         id: auditRef.id,
         userId: callerUid,
         user: callerEmail || callerUid,
+        actorUid: callerUid,
+        actorEmail: callerEmail || null,
+        actorType: isStaff ? 'staff' : 'customer',
         action: 'BOOKING_NOTIFICATION_SENT_SECURE',
         entity: 'bookings',
         entityId: cleanBookingId,
@@ -864,7 +989,10 @@ exports.generateRentalContractPdf = functions.region(FUNCTION_REGION).https.onCa
  * 4. Cloud Function: calculateDynamicPricing (region: asia-south1)
  * Strictly verifies authentication status dynamically rather than hardcoding true.
  */
-exports.calculateDynamicPricing = functions.region(FUNCTION_REGION).https.onCall(async (data, context) => {
+exports.calculateDynamicPricing = functions
+    .region(FUNCTION_REGION)
+    .runWith({ enforceAppCheck: true })
+    .https.onCall(async (data, context) => {
     const { days, vehicleId } = data || {};
     const cleanVehicleId = String(vehicleId || '').trim();
     let officialDailyPrice = 0;
@@ -899,7 +1027,10 @@ exports.calculateDynamicPricing = functions.region(FUNCTION_REGION).https.onCall
  *   STRICTLY restricted to staff/admins via Firebase Auth Custom Claims (isCallerStaff).
  * - Regular users cannot verify themselves or other users.
  */
-exports.verifyCustomerIdentity = functions.region(FUNCTION_REGION).https.onCall(async (data, context) => {
+exports.verifyCustomerIdentity = functions
+    .region(FUNCTION_REGION)
+    .runWith({ enforceAppCheck: true })
+    .https.onCall(async (data, context) => {
     if (!context.auth || !context.auth.uid) {
         throw new functions.https.HttpsError('unauthenticated', 'تسجيل الدخول مطلوب.');
     }
@@ -944,15 +1075,18 @@ exports.verifyCustomerIdentity = functions.region(FUNCTION_REGION).https.onCall(
         if (custSnap.exists) {
             await custDocRef.set(updatePayload, { merge: true });
         }
-        // Record administrative audit trail
+        // Record administrative audit trail with unified identity schema
         await db.collection('auditLogs').add({
             action: 'CUSTOMER_VERIFICATION_STATUS_CHANGED',
             actorUid: context.auth.uid,
+            actorEmail: context.auth.token?.email || null,
+            actorType: 'staff',
             targetUserId,
             newStatus,
             isVerified,
             timestamp: nowIso,
             ip: context.rawRequest?.ip || 'server',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         return {
             success: true,
@@ -1039,7 +1173,20 @@ exports.syncFleetMaintenance = functions.region(FUNCTION_REGION).https.onCall(as
     let alertsCount = 0;
     for (const doc of vehiclesSnapshot.docs) {
         const v = doc.data();
-        const kmSinceOil = (v.currentMileage || 0) - (v.lastOilChangeMileage || 0);
+        let currentMileage = Number(v.currentMileage || 0);
+        let lastOilChangeMileage = Number(v.lastOilChangeMileage || 0);
+        try {
+            const internalSnap = await doc.ref.collection('internal').doc('details').get();
+            if (internalSnap.exists) {
+                const iData = internalSnap.data();
+                if (iData?.currentMileage != null)
+                    currentMileage = Number(iData.currentMileage);
+                if (iData?.lastOilChangeMileage != null)
+                    lastOilChangeMileage = Number(iData.lastOilChangeMileage);
+            }
+        }
+        catch { }
+        const kmSinceOil = currentMileage - lastOilChangeMileage;
         if (kmSinceOil >= 4500) {
             alertsCount++;
         }
@@ -1060,7 +1207,20 @@ exports.checkMaintenanceAndRentals = functions.region(FUNCTION_REGION).pubsub
     const vehiclesSnapshot = await db.collection('vehicles').where('isDeleted', '==', false).get();
     for (const doc of vehiclesSnapshot.docs) {
         const v = doc.data();
-        const kmSinceOil = (v.currentMileage || 0) - (v.lastOilChangeMileage || 0);
+        let currentMileage = Number(v.currentMileage || 0);
+        let lastOilChangeMileage = Number(v.lastOilChangeMileage || 0);
+        try {
+            const internalSnap = await doc.ref.collection('internal').doc('details').get();
+            if (internalSnap.exists) {
+                const iData = internalSnap.data();
+                if (iData?.currentMileage != null)
+                    currentMileage = Number(iData.currentMileage);
+                if (iData?.lastOilChangeMileage != null)
+                    lastOilChangeMileage = Number(iData.lastOilChangeMileage);
+            }
+        }
+        catch { }
+        const kmSinceOil = currentMileage - lastOilChangeMileage;
         if (kmSinceOil >= 4500) {
             await db.collection('notifications').add({
                 type: 'oil_change_reminder',
@@ -1169,8 +1329,8 @@ exports.setUserRole = functions.region(FUNCTION_REGION).https.onCall(async (data
         });
     }
     catch (authErr) {
-        console.error('Failed to set custom user claims:', authErr);
-        throw new functions.https.HttpsError('internal', `فشل تعيين مطالبات التوثيق: ${authErr.message}`);
+        console.error('فشل تعيين مطالبات التوثيق للمستخدم:', authErr);
+        throw new functions.https.HttpsError('internal', 'حدث خطأ داخلي غير متوقع. يرجى المحاولة لاحقاً أو التواصل مع الدعم الفني.');
     }
     // 2. Synchronize display role in Firestore users/{targetUid} document (for UI display metadata ONLY - grants NO privileges)
     try {
@@ -1183,14 +1343,18 @@ exports.setUserRole = functions.region(FUNCTION_REGION).https.onCall(async (data
     catch (dbErr) {
         console.warn('Failed to update display metadata in users doc:', dbErr);
     }
-    // 3. Write immutable audit log
+    // 3. Write immutable audit log with unified identity schema
     try {
         await db.collection('auditLogs').add({
             action: 'ROLE_MODIFIED',
+            actorUid: callerUid,
+            actorEmail: callerToken?.email || null,
+            actorType: 'staff',
             performedBy: callerUid,
             targetUser: cleanTargetUid,
             newRole,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
     }
     catch (auditErr) {
@@ -1329,14 +1493,18 @@ exports.bootstrapInitialAdmin = functions
     catch (dbErr) {
         console.warn('Failed to update users doc display metadata:', dbErr);
     }
-    // 9. Write immutable audit log
+    // 9. Write immutable audit log with unified identity schema
     try {
         await db.collection('auditLogs').add({
             action: 'INITIAL_SUPER_ADMIN_BOOTSTRAPPED',
+            actorUid: callerUid,
+            actorEmail: context.auth.token?.email || null,
+            actorType: 'staff',
             performedBy: callerUid,
             targetUser: constants_1.DESIGNATED_SUPER_ADMIN_UID,
             newRole: 'super_admin',
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
             details: 'First system Super Admin initialized via atomic server-side bootstrap with Secret Manager protection.',
         });
     }
@@ -1451,8 +1619,8 @@ exports.toggleUserAccountStatus = functions.region(FUNCTION_REGION).https.onCall
         await admin.auth().updateUser(cleanTargetUid, { disabled: isDisabled });
     }
     catch (authErr) {
-        console.error('Failed to update user status in Auth:', authErr);
-        throw new functions.https.HttpsError('internal', `فشل تحديث حالة الحساب في نظام التوثيق: ${authErr.message}`);
+        console.error('فشل تحديث حالة الحساب في نظام التوثيق:', authErr);
+        throw new functions.https.HttpsError('internal', 'حدث خطأ داخلي غير متوقع. يرجى المحاولة لاحقاً أو التواصل مع الدعم الفني.');
     }
     // 2. Synchronize status in Firestore users collection
     try {
@@ -1465,13 +1633,17 @@ exports.toggleUserAccountStatus = functions.region(FUNCTION_REGION).https.onCall
     catch (dbErr) {
         console.warn('Failed to sync disabled state in firestore:', dbErr);
     }
-    // 3. Audit log
+    // 3. Audit log with unified identity schema
     try {
         await db.collection('auditLogs').add({
             action: isDisabled ? 'USER_ACCOUNT_DISABLED' : 'USER_ACCOUNT_ENABLED',
+            actorUid: callerUid,
+            actorEmail: callerToken?.email || null,
+            actorType: 'staff',
             performedBy: callerUid,
             targetUser: cleanTargetUid,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
     }
     catch (auditErr) {
@@ -1513,9 +1685,9 @@ exports.deleteUserAccount = functions.region(FUNCTION_REGION).https.onCall(async
         await admin.auth().deleteUser(cleanTargetUid);
     }
     catch (authErr) {
-        console.error('Failed to delete user in Auth:', authErr);
+        console.error('فشل حذف الحساب من نظام التوثيق:', authErr);
         if (authErr.code !== 'auth/user-not-found') {
-            throw new functions.https.HttpsError('internal', `فشل حذف الحساب من نظام التوثيق: ${authErr.message}`);
+            throw new functions.https.HttpsError('internal', 'حدث خطأ داخلي غير متوقع. يرجى المحاولة لاحقاً أو التواصل مع الدعم الفني.');
         }
     }
     // 2. Delete user document from Firestore users collection
@@ -1525,13 +1697,17 @@ exports.deleteUserAccount = functions.region(FUNCTION_REGION).https.onCall(async
     catch (dbErr) {
         console.warn('Failed to delete user doc in firestore:', dbErr);
     }
-    // 3. Write immutable audit log
+    // 3. Write immutable audit log with unified identity schema
     try {
         await db.collection('auditLogs').add({
             action: 'USER_ACCOUNT_DELETED',
+            actorUid: callerUid,
+            actorEmail: callerToken?.email || null,
+            actorType: 'staff',
             performedBy: callerUid,
             targetUser: cleanTargetUid,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
     }
     catch (auditErr) {
@@ -1548,6 +1724,10 @@ exports.deleteUserAccount = functions.region(FUNCTION_REGION).https.onCall(async
 function getEmailRateLimitKey(email) {
     const clean = (email || '').toLowerCase().trim();
     return Buffer.from(clean).toString('hex') || 'unknown';
+}
+function getIpRateLimitKey(ip) {
+    const clean = (ip || 'unknown-ip').trim().replace(/[\.:]/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return clean || 'unknown-ip';
 }
 /**
  * 13. Function: checkLoginAllowed
@@ -1599,9 +1779,44 @@ exports.recordFailedLogin = functions
     if (!email) {
         return { success: false, message: 'Invalid email' };
     }
+    const callerIp = String(context.rawRequest?.ip || 'unknown-ip');
+    const ipKey = getIpRateLimitKey(callerIp);
+    const ipDocRef = db.collection('rateLimits_ip').doc(ipKey);
+    const IP_WINDOW_MS = 15 * 60 * 1000;
+    const now = Date.now();
+    await db.runTransaction(async (transaction) => {
+        const ipSnap = await transaction.get(ipDocRef);
+        let ipAttempts = 1;
+        let firstAttemptAt = now;
+        if (ipSnap.exists) {
+            const ipData = ipSnap.data();
+            const prevFirst = Number(ipData?.firstAttemptAt || now);
+            if (now - prevFirst < IP_WINDOW_MS) {
+                ipAttempts = Number(ipData?.attempts || 0) + 1;
+                firstAttemptAt = prevFirst;
+            }
+            else {
+                ipAttempts = 1;
+                firstAttemptAt = now;
+            }
+        }
+        else {
+            ipAttempts = 1;
+            firstAttemptAt = now;
+        }
+        if (ipAttempts > 20) {
+            throw new functions.https.HttpsError('resource-exhausted', 'تم رصد نشاط غير اعتيادي، يرجى المحاولة لاحقاً.');
+        }
+        transaction.set(ipDocRef, {
+            ip: callerIp,
+            attempts: ipAttempts,
+            firstAttemptAt,
+            lastAttemptAt: now,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+    });
     const emailKey = getEmailRateLimitKey(email);
     const docRef = db.collection('rateLimits').doc(emailKey);
-    const now = Date.now();
     const WINDOW_MS = 15 * 60 * 1000; // 15 minutes window
     let attempts = 1;
     let lockedUntil = 0;
@@ -1710,4 +1925,8 @@ exports.enforceLoginLockout = (0, identity_1.beforeUserSignedIn)({ region: FUNCT
 });
 var validateUploadedFileSignature_1 = require("./validateUploadedFileSignature");
 Object.defineProperty(exports, "validateUploadedFileSignature", { enumerable: true, get: function () { return validateUploadedFileSignature_1.validateUploadedFileSignature; } });
+var sendTelegramBookingAlert_1 = require("./sendTelegramBookingAlert");
+Object.defineProperty(exports, "sendTelegramBookingAlert", { enumerable: true, get: function () { return sendTelegramBookingAlert_1.sendTelegramBookingAlert; } });
+var telegramWebhook_1 = require("./telegramWebhook");
+Object.defineProperty(exports, "telegramWebhook", { enumerable: true, get: function () { return telegramWebhook_1.telegramWebhook; } });
 //# sourceMappingURL=index.js.map

@@ -271,6 +271,10 @@ export interface AuditLog {
   entityId: string;
   timestamp: string;
   details?: string;
+  actorUid?: string | null;
+  actorEmail?: string | null;
+  actorType?: 'customer' | 'staff' | 'guest' | 'system';
+  customerProvidedName?: string | null;
 }
 
 export interface AppNotification {

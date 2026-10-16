@@ -26,6 +26,10 @@ interface AuditLogItem {
   userId?: string;
   targetUser?: string;
   targetUserEmail?: string;
+  actorUid?: string | null;
+  actorEmail?: string | null;
+  actorType?: string;
+  customerProvidedName?: string | null;
   entity?: string;
   entityId?: string;
   details?: string | any;
@@ -165,6 +169,10 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
           userId: data.userId,
           targetUser: data.targetUser,
           targetUserEmail: data.targetUserEmail,
+          actorUid: data.actorUid,
+          actorEmail: data.actorEmail,
+          actorType: data.actorType,
+          customerProvidedName: data.customerProvidedName,
           entity: data.entity,
           entityId: data.entityId,
           details: data.details,

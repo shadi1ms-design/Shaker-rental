@@ -24,9 +24,7 @@ interface AdminBookingsProps {
   bookings: Booking[];
   vehicles: Vehicle[];
   onRefreshData: () => void;
-  onOpenContract: (booking: Booking) => void;
   onOpenInspection: (vehicle: Vehicle, bookingId: string) => void;
-  onOpenPayment?: (booking: Booking) => void;
   onDeleteBooking?: (bookingId: string) => Promise<void> | void;
   isSyncing: boolean;
   onSyncWithFirestore: () => Promise<void>;
@@ -37,9 +35,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
   bookings,
   vehicles,
   onRefreshData,
-  onOpenContract,
   onOpenInspection,
-  onOpenPayment,
   onDeleteBooking,
   isSyncing,
   onSyncWithFirestore,
@@ -472,15 +468,6 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
 
                       <td className="p-3.5">
                         <div className="flex items-center justify-center gap-2 flex-wrap">
-                          {/* Print Official Contract */}
-                          <button
-                            onClick={() => onOpenContract(b)}
-                            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 transition-colors"
-                            title="طباعة عقد الإيجار الرسمي A4"
-                          >
-                            <FileText className="w-[18px] h-[18px]" />
-                          </button>
-
                           {/* Inspection Sheet */}
                           <button
                             onClick={() => {
@@ -497,15 +484,15 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                           {/* Workflow Status Actions with Clear Separation & Safety Confirmation */}
                           {(b.status === 'new' || b.status === 'reviewing') && (
                             <div className="flex items-center gap-2">
-                              {/* Unified Confirm & Deliver Button */}
+                              {/* Confirm Booking Button */}
                               <button
                                 disabled={updatingBookingId === b.id}
-                                onClick={() => setStatusActionConfirm({ booking: b, newStatus: 'rented' })}
+                                onClick={() => setStatusActionConfirm({ booking: b, newStatus: 'confirmed' })}
                                 className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm active:scale-95 whitespace-nowrap"
-                                title="تأكيد الحجز وتسليم السيارة فوراً وتغيير حالتها إلى مؤجرة"
+                                title="تأكيد طلب الحجز والانتقال لمرحلة التجهيز والتسليم"
                               >
-                                <Key className="w-3.5 h-3.5" />
-                                <span>{updatingBookingId === b.id ? '...' : 'تأكيد وتسليم'}</span>
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>{updatingBookingId === b.id ? '...' : 'تأكيد الحجز'}</span>
                               </button>
 
                               {/* Clear Visual Vertical Separator */}

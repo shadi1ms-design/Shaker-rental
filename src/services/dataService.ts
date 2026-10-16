@@ -595,6 +595,62 @@ export const dataService = {
     };
   },
 
+  /**
+   * Fetches sensitive vehicle internal details (plateNumber, mileage, maintenance)
+   * stored in vehicles/{id}/internal/details subcollection. Restricted by security rules to staff/admin.
+   */
+  async fetchVehicleInternalDetails(vehicleId: string): Promise<{ plateNumber?: string; currentMileage?: number; lastOilChangeMileage?: number } | null> {
+    if (!isFirebaseConfigured || !db || !isStaffOrAdmin()) return null;
+    try {
+      const cleanId = (vehicleId || '').trim();
+      if (!cleanId) return null;
+      const internalDocRef = doc(db, 'vehicles', cleanId, 'internal', 'details');
+      const snap = await safeFirestore(getDoc(internalDocRef), 2000);
+      if (snap.exists()) {
+        return snap.data() as any;
+      }
+    } catch {
+      // Gracefully silent if not authorized (customers/visitors)
+    }
+    return null;
+  },
+
+  /**
+   * Enriches vehicles with sensitive internal details if caller is staff/admin.
+   * Strips sensitive fields (plateNumber, mileage) for public visitors and regular customers.
+   */
+  async enrichVehiclesWithInternalDetails(vehicles: Vehicle[]): Promise<Vehicle[]> {
+    if (!isStaffOrAdmin()) {
+      return vehicles.map((v) => ({
+        ...v,
+        plateNumber: '',
+        currentMileage: 0,
+        lastOilChangeMileage: 0,
+      }));
+    }
+
+    try {
+      const enriched = await Promise.all(
+        vehicles.map(async (v) => {
+          const internal = await this.fetchVehicleInternalDetails(v.id);
+          if (internal) {
+            return {
+              ...v,
+              plateNumber: internal.plateNumber ?? v.plateNumber ?? '',
+              currentMileage: internal.currentMileage ?? v.currentMileage ?? 0,
+              lastOilChangeMileage: internal.lastOilChangeMileage ?? v.lastOilChangeMileage ?? 0,
+            };
+          }
+          return v;
+        })
+      );
+      return enriched;
+    } catch (err) {
+      console.warn('Error enriching vehicles with internal details:', err);
+      return vehicles;
+    }
+  },
+
   async getVehicles(forceRefresh = false): Promise<Vehicle[]> {
     if (!forceRefresh && memoryCache.vehicles && Date.now() - memoryCache.vehicles.timestamp < CACHE_TTL_MS) {
       return memoryCache.vehicles.data;
@@ -636,9 +692,10 @@ export const dataService = {
           return v;
         });
 
-        setLocalItem(STORAGE_KEYS.VEHICLES, processed);
-        memoryCache.vehicles = { data: processed, timestamp: Date.now() };
-        return processed;
+        const finalVehicles = await this.enrichVehiclesWithInternalDetails(processed);
+        setLocalItem(STORAGE_KEYS.VEHICLES, finalVehicles);
+        memoryCache.vehicles = { data: finalVehicles, timestamp: Date.now() };
+        return finalVehicles;
       } catch (err: any) {
         if (err?.code !== 'unavailable') {
           console.warn('Firestore vehicles query note, using local cache:', err);
@@ -721,9 +778,11 @@ export const dataService = {
               return v;
             });
 
-            setLocalItem(STORAGE_KEYS.VEHICLES, processed);
-            memoryCache.vehicles = { data: processed, timestamp: Date.now() };
-            callback(processed);
+            this.enrichVehiclesWithInternalDetails(processed).then((finalVehicles) => {
+              setLocalItem(STORAGE_KEYS.VEHICLES, finalVehicles);
+              memoryCache.vehicles = { data: finalVehicles, timestamp: Date.now() };
+              callback(finalVehicles);
+            });
           } catch (procErr) {
             console.warn('Error processing vehicles snapshot:', procErr);
           }
@@ -770,7 +829,26 @@ export const dataService = {
         const docRef = doc(db, 'vehicles', cleanId);
         const snap = await safeFirestore(getDoc(docRef), 2000);
         if (snap.exists()) {
-          return snap.data() as Vehicle;
+          const v = { ...snap.data(), id: snap.id } as Vehicle;
+          if (isStaffOrAdmin()) {
+            const internal = await this.fetchVehicleInternalDetails(v.id || cleanId);
+            if (internal) {
+              return {
+                ...v,
+                plateNumber: internal.plateNumber ?? v.plateNumber ?? '',
+                currentMileage: internal.currentMileage ?? v.currentMileage ?? 0,
+                lastOilChangeMileage: internal.lastOilChangeMileage ?? v.lastOilChangeMileage ?? 0,
+              };
+            }
+            return v;
+          } else {
+            return {
+              ...v,
+              plateNumber: '',
+              currentMileage: 0,
+              lastOilChangeMileage: 0,
+            };
+          }
         }
       } catch (err) {
         console.warn('getVehicleById note:', err);
@@ -786,8 +864,12 @@ export const dataService = {
 
   async addVehicle(vehicleData: Omit<Vehicle, 'id'>): Promise<Vehicle> {
     const id = `veh-${Date.now()}`;
+    const { plateNumber, currentMileage, lastOilChangeMileage, ...publicVehicleFields } = vehicleData;
     const newVehicle: Vehicle = {
-      ...vehicleData,
+      ...publicVehicleFields,
+      plateNumber: plateNumber || '',
+      currentMileage: currentMileage || 0,
+      lastOilChangeMileage: lastOilChangeMileage || 0,
       id,
       isDeleted: false,
       createdAt: new Date().toISOString(),
@@ -796,7 +878,30 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        await safeFirestore(setDoc(doc(db, 'vehicles', id), newVehicle, { merge: true }), 2500);
+        // Save general public fields to parent doc (plateNumber & mileage excluded)
+        const publicDoc = {
+          ...publicVehicleFields,
+          id,
+          isDeleted: false,
+          createdAt: newVehicle.createdAt,
+          updatedAt: newVehicle.updatedAt,
+        };
+        await safeFirestore(setDoc(doc(db, 'vehicles', id), publicDoc, { merge: true }), 2500);
+
+        // Save sensitive plate and mileage fields to vehicles/{id}/internal/details subcollection
+        await safeFirestore(
+          setDoc(
+            doc(db, 'vehicles', id, 'internal', 'details'),
+            {
+              plateNumber: plateNumber || '',
+              currentMileage: currentMileage || 0,
+              lastOilChangeMileage: lastOilChangeMileage || 0,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          ),
+          2500
+        );
       } catch (err) {
         console.warn('Firestore addVehicle error:', err);
       }
@@ -853,10 +958,31 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        await safeFirestore(
-          setDoc(doc(db, 'vehicles', updated.id), updated, { merge: true }),
-          3000
-        );
+        const { plateNumber, currentMileage, lastOilChangeMileage, ...publicUpdates } = updates;
+
+        // Update public vehicle document
+        if (Object.keys(publicUpdates).length > 0) {
+          await safeFirestore(
+            setDoc(doc(db, 'vehicles', updated.id), { ...publicUpdates, updatedAt: updated.updatedAt }, { merge: true }),
+            3000
+          );
+        }
+
+        // Update sensitive fields in vehicles/{id}/internal/details subcollection
+        const hasInternalUpdates =
+          plateNumber !== undefined || currentMileage !== undefined || lastOilChangeMileage !== undefined;
+
+        if (hasInternalUpdates) {
+          const internalUpdates: Record<string, any> = { updatedAt: updated.updatedAt };
+          if (plateNumber !== undefined) internalUpdates.plateNumber = plateNumber;
+          if (currentMileage !== undefined) internalUpdates.currentMileage = currentMileage;
+          if (lastOilChangeMileage !== undefined) internalUpdates.lastOilChangeMileage = lastOilChangeMileage;
+
+          await safeFirestore(
+            setDoc(doc(db, 'vehicles', updated.id, 'internal', 'details'), internalUpdates, { merge: true }),
+            3000
+          );
+        }
       } catch (err) {
         console.warn('Firestore updateVehicle error:', err);
       }
@@ -2083,9 +2209,22 @@ export const dataService = {
   // -------------------------------------------------------------
   logAudit(action: string, entity: string, entityId: string, details?: string) {
     const current = memoryCache.auditLogs?.data || [];
+    const isStaff = isStaffOrAdmin();
+    const currentUser = auth?.currentUser;
+    const actorUid = currentUser?.uid || null;
+    const actorEmail = currentUser?.email || null;
+    const actorType: 'customer' | 'staff' | 'guest' | 'system' = isStaff
+      ? 'staff'
+      : actorUid
+      ? 'customer'
+      : 'guest';
+
     const newLog: AuditLog = {
       id: `audit-${Date.now()}`,
-      user: 'مدير النظام (admin)',
+      user: actorEmail || (actorType === 'staff' ? 'مدير النظام (admin)' : 'زائر'),
+      actorUid,
+      actorEmail,
+      actorType,
       action,
       entity,
       entityId,

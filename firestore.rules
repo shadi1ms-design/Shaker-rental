@@ -68,20 +68,12 @@ service cloud.firestore {
         (!('active' in request.resource.data) || request.resource.data.active == true)
       );
       allow update: if (
-        isSignedIn() && 
-        request.auth.uid == userId && 
-        (!('role' in request.resource.data) || request.resource.data.role == resource.data.get('role', 'customer')) &&
-        (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == resource.data.get('isAdmin', false)) &&
-        (!('isStaff' in request.resource.data) || request.resource.data.isStaff == resource.data.get('isStaff', false)) &&
-        (!('active' in request.resource.data) || request.resource.data.active == resource.data.get('active', true)) &&
-        (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted == resource.data.get('isDeleted', false)) &&
-        (!('verificationStatus' in request.resource.data) || 
-          request.resource.data.verificationStatus == resource.data.get('verificationStatus', 'pending') ||
-          (request.resource.data.verificationStatus in ['pending', 'manual_review'] && resource.data.get('verificationStatus', 'pending') != 'verified')) &&
-        (!('verified' in request.resource.data) || request.resource.data.verified == resource.data.get('verified', false)) &&
-        (!('identityVerified' in request.resource.data) || request.resource.data.identityVerified == resource.data.get('identityVerified', false)) &&
-        (!('verifiedAt' in request.resource.data) || request.resource.data.verifiedAt == resource.data.get('verifiedAt', '')) &&
-        (!('verifiedBy' in request.resource.data) || request.resource.data.verifiedBy == resource.data.get('verifiedBy', '')) &&
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'displayName', 'phone', 'photoURL', 'updatedAt', 'email',
+          'fcmTokens', 'fcmLastUpdated'
+        ]) &&
         (!('phone' in request.resource.data) || !isEmployee() || isSuperAdmin() || request.resource.data.phone == resource.data.get('phone', ''))
       ) || (
         isAdmin() &&
@@ -149,6 +141,11 @@ service cloud.firestore {
       // Internal lock subcollection for atomic concurrency management
       match /_internal/{docId} {
         allow read, write: if isAdmin();
+      }
+
+      // Internal details subcollection for sensitive vehicle data (plateNumber, mileage, maintenance)
+      match /internal/{docId} {
+        allow read, write: if isAdmin() || isEmployee();
       }
     }
 
@@ -233,6 +230,10 @@ service cloud.firestore {
 
     // Rate limits internal state (Restricted exclusively to Cloud Functions via Admin SDK)
     match /rateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /rateLimits_ip/{rateLimitId} {
       allow read, write: if false;
     }
 
