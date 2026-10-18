@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { sanitizeInput, isValidEmail, isValidPhone, loginRateLimiter } from '../utils/security';
+import { isValidEmail, isValidPhone } from '../utils/security';
 import {
   Mail,
   Lock,
@@ -93,19 +93,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const cleanEmail = sanitizeInput(email).toLowerCase();
-
-    // Defensive Rate Limiting Check
-    if (mode === 'login') {
-      const checkResult = loginRateLimiter.check(cleanEmail);
-      if (!checkResult.allowed) {
-        setErrorMessage(
-          `تم تجميد محاولات الدخول مؤقتاً لحماية أمان الحساب. يرجى الانتظار ${checkResult.waitSeconds} ثانية قبل المحاولة مجدداً.`
-        );
-        return;
-      }
-    }
-
+    const cleanEmail = email.toLowerCase().trim();
     setIsLoading(true);
 
     try {
@@ -117,26 +105,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           throw new Error('صيغة البريد الإلكتروني غير صحيحة');
         }
 
-        try {
-          await loginWithEmail(cleanEmail, password);
-          loginRateLimiter.reset(cleanEmail);
-          setSuccessMessage('تم تسجيل الدخول بنجاح! مرحباً بك.');
-          setTimeout(() => {
-            onSuccess?.();
-            onClose();
-          }, 600);
-        } catch (authErr: any) {
-          const limit = loginRateLimiter.recordFailedAttempt(cleanEmail);
-          if (limit.locked) {
-            throw new Error(
-              `فشلت محاولة الدخول. تم تجميد الحساب لمدة ${limit.waitSeconds} ثانية بسبب تكرار المحاولات الخاطئة لحماية أمانك.`
-            );
-          }
-          throw authErr;
-        }
+        await loginWithEmail!(cleanEmail, password);
+        setSuccessMessage('تم تسجيل الدخول بنجاح! مرحباً بك.');
+        setTimeout(() => {
+          onSuccess?.();
+          onClose();
+        }, 600);
       } else if (mode === 'register') {
-        const cleanName = sanitizeInput(displayName);
-        const cleanPhone = sanitizeInput(phone);
+        const cleanName = displayName.trim();
+        const cleanPhone = phone.trim();
 
         if (!cleanName.trim()) {
           throw new Error('يرجى إدخال الاسم الكامل');

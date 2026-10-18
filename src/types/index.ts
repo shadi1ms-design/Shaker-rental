@@ -226,6 +226,7 @@ export interface AppSettings {
   monthlyRateMedium: number;
   monthlyRateJeep: number;
   oilChangeIntervalKm: number;
+  driverDailyRate?: number;
   rentalTerms: string;
   updatedAt?: string;
 }

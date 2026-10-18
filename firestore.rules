@@ -2,9 +2,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Global Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
     // Helper functions
     function isSignedIn() {
       return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
     }
 
     // Check token custom claims (Zero-read Role-based Authentication via Firebase Auth Token Claims)
@@ -45,14 +54,12 @@ service cloud.firestore {
       );
     }
 
-    // Health check and connection test document - restricted to authorized staff & admin
+    // Health check and connection test document
     match /test/{docId} {
       allow read, write: if isEmployee();
     }
 
     // Users collection: users/{userId}
-    // Client SDK updates CANNOT modify 'role' or escalate 'verificationStatus' to 'verified' under any circumstances.
-    // Verification transitions to 'verified' and role assignments are strictly managed via Cloud Functions / Admin SDK.
     match /users/{userId} {
       allow read: if isEmployee() || (isSignedIn() && request.auth.uid == userId);
       allow create: if isSignedIn() && request.auth.uid == userId && (
@@ -73,19 +80,15 @@ service cloud.firestore {
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name', 'displayName', 'phone', 'photoURL', 'updatedAt', 'email',
           'fcmTokens', 'fcmLastUpdated'
-        ]) &&
-        (!('phone' in request.resource.data) || !isEmployee() || isSuperAdmin() || request.resource.data.phone == resource.data.get('phone', ''))
-      ) || (
-        isAdmin() &&
-        (!('role' in request.resource.data) || request.resource.data.role == resource.data.get('role', 'customer'))
-      );
+        ])
+      ) || isAdmin();
       allow delete: if isAdmin();
 
       // Subcollection for user files (/users/{userId}/files/{fileId})
       match /files/{fileId} {
         allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
         allow create: if isAdmin() || (
-          isSignedIn() && request.auth.uid == userId &&
+          isEmailVerified() && request.auth.uid == userId &&
           (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
           (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
         );
@@ -94,15 +97,19 @@ service cloud.firestore {
           (!('verified' in request.resource.data) || request.resource.data.verified == resource.data.get('verified', false)) &&
           (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending') || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
         );
-        allow delete: if isAdmin();
+        allow delete: if isAdmin() || (
+          isSignedIn() && request.auth.uid == userId &&
+          resource.data.get('verified', false) != true &&
+          resource.data.get('status', 'pending') in ['pending', 'uploaded', 'rejected', 'manual_review']
+        );
       }
     }
 
-    // Top-level files index: /files/{fileId} (Protected against file hijacking)
+    // Top-level files index: /files/{fileId}
     match /files/{fileId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
       allow create: if isAdmin() || (
-        isSignedIn() && request.resource.data.userId == request.auth.uid &&
+        isEmailVerified() && request.resource.data.userId == request.auth.uid &&
         (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
         (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
       );
@@ -113,50 +120,48 @@ service cloud.firestore {
         (!('verified' in request.resource.data) || request.resource.data.verified == resource.data.get('verified', false)) &&
         (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending') || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (
+        isSignedIn() && resource.data.userId == request.auth.uid &&
+        resource.data.get('verified', false) != true &&
+        resource.data.get('status', 'pending') in ['pending', 'uploaded', 'rejected', 'manual_review']
+      );
     }
 
-    // Booking Counter internal setting - protected from public disclosure
-    match /settings/bookingCounter {
-      allow read, write: if isEmployee();
-    }
-
-    // Sensitive / Financial settings
-    match /settings/financial {
-      allow read, write: if isAdmin();
-    }
-
-    // Settings collection: settings/company & settings/global & settings/rates
-    // Public general company settings are readable, modifications strictly restricted to Admin
+    // Settings collection
     match /settings/{settingsId} {
       allow read: if settingsId in ['company', 'global', 'rates'];
       allow write: if isAdmin();
     }
 
-    // Fleet Vehicles collection - public read for all visitors, modifications strictly restricted to staff
+    // Fleet Vehicles collection
+    // Public vehicles document CANNOT include plateNumber, currentMileage, lastOilChangeMileage (which belong strictly to internal/details)
     match /vehicles/{vehicleId} {
       allow read: if true;
-      allow create, update, delete: if isAdmin();
+      allow create, update: if isAdmin() &&
+        !request.resource.data.keys().hasAny(['plateNumber', 'currentMileage', 'lastOilChangeMileage']);
+      allow delete: if isAdmin();
 
-      // Internal lock subcollection for atomic concurrency management
       match /_internal/{docId} {
         allow read, write: if isAdmin();
       }
 
-      // Internal details subcollection for sensitive vehicle data (plateNumber, mileage, maintenance)
       match /internal/{docId} {
-        allow read, write: if isAdmin() || isEmployee();
+        allow read, write: if isEmployee();
       }
     }
 
     // Bookings collection:
-    // Staff can manage all bookings directly. Client-side booking creation is handled exclusively via the
-    // server-authoritative createBookingSecure Cloud Function (Admin SDK) to enforce price integrity.
-    // Authenticated customers can read their own bookings and can cancel their pending bookings.
+    // Employee updates restricted to operational fields (status, notes, pickup/return dates, deliveryLocation, updatedAt).
+    // Prices, totals, paidAmount, paymentStatus, and deletions are strictly managed via Cloud Functions / Admin SDK.
     match /bookings/{bookingId} {
       allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
       allow create: if isEmployee();
-      allow update: if isEmployee() || (
+      allow update: if (
+        isEmployee() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'notes', 'pickupDate', 'returnDate', 'pickupTime', 'returnTime', 'deliveryLocation', 'updatedAt'
+        ])
+      ) || (
         isSignedIn() && 
         resource.data.customerId == request.auth.uid && 
         resource.data.status in ['new', 'pending', 'reviewing'] &&
@@ -168,11 +173,10 @@ service cloud.firestore {
         resource.data.status in ['cancelled', 'rejected', 'completed'] &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenFromCustomer', 'updatedAt'])
       );
-      allow delete: if isEmployee();
+      allow delete: if false; // Hard delete forbidden on bookings
     }
 
-    // Customers CRM collection - CRM notes, stats, verification, and records are strictly managed by staff
-    // Regular customer can only create their initial self-record without tampering with financials/roles/verification
+    // Customers CRM collection
     match /customers/{customerId} {
       allow read: if isEmployee() || (isSignedIn() && request.auth.uid == customerId);
       allow create: if isEmployee() || (
@@ -193,42 +197,37 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Legal Rental Contracts collection - restricted to staff and contract party
+    // Legal Rental Contracts collection
     match /contracts/{contractId} {
       allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow write: if isEmployee();
+      allow write: if isAdmin();
     }
 
-    // Payments and financial receipts collection
+    // Payments collection - creation & updates strictly managed via recordPaymentSecure Cloud Function
     match /payments/{paymentId} {
       allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow write: if isEmployee();
+      allow write: if isAdmin();
     }
 
-    // Maintenance records and oil change logs
     match /maintenanceRecords/{recordId} {
       allow read, write: if isAdmin();
     }
 
-    // Vehicle inspections
     match /vehicleInspections/{inspectionId} {
       allow read, write: if isAdmin();
     }
 
-    // Administrative notifications - creation and management restricted to staff & Cloud Functions (prevents spam)
     match /notifications/{notificationId} {
       allow read, update, delete: if isAdmin();
       allow create: if isAdmin();
     }
 
-    // Audit logs (Immutable - write operations strictly restricted to Cloud Functions via Admin SDK)
     match /auditLogs/{logId} {
       allow read: if isSuperAdmin();
       allow create: if false;
       allow update, delete: if false;
     }
 
-    // Rate limits internal state (Restricted exclusively to Cloud Functions via Admin SDK)
     match /rateLimits/{rateLimitId} {
       allow read, write: if false;
     }
@@ -237,7 +236,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // System security bootstrap & internal configuration (Restricted exclusively to Cloud Functions via Admin SDK)
+    match /telegram_callbacks/{callbackId} {
+      allow read, write: if false;
+    }
+
     match /system_config/{configId} {
       allow read, write: if false;
     }

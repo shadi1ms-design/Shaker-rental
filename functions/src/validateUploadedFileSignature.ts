@@ -5,29 +5,28 @@
  * 
  * SCOPE & COVERAGE:
  * - Public media paths: 'vehicles/' and 'public/' (JPEG, PNG, WEBP).
- * - Document & user upload paths: 'users/', 'uploads/', and 'contracts/' (PDF, JPEG, PNG, WEBP).
- * - Verifies Magic Bytes + extension + reasonable file size (< 15MB).
+ * - Document & user upload paths: 'users/', 'uploads/', and 'contracts/' (PDF, JPEG, PNG, WEBP, <= 25MB).
+ * - Video inspection paths: 'contracts/{contractId}/videos/' (MP4/ftyp, WebM/1A45DFA3, MOV, <= 100MB).
+ * - Exports validation functions for direct unit testing (Requirement 4).
  */
 
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onObjectFinalized } from 'firebase-functions/v2/storage';
+import { DATABASE_ID, DEFAULT_STORAGE_BUCKET, STORAGE_TRIGGER_REGION } from './constants';
 
-const FUNCTION_REGION = 'us-east1';
-const DATABASE_ID = 'ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1';
-const MAX_DOCUMENT_SIZE_BYTES = 15 * 1024 * 1024; // 15MB limit
-
-// Ensure Firebase Admin is initialized
 if (!admin.apps.length) {
   admin.initializeApp();
 }
-
 const db = getFirestore(admin.app(), DATABASE_ID);
+
+export const MAX_DOCUMENT_SIZE_BYTES = 25 * 1024 * 1024; // 25MB for docs/images
+export const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;   // 100MB for inspection videos
 
 /**
  * Validates whether the given buffer matches known image signatures (JPEG, PNG, WEBP)
  */
-function isValidImageSignature(buffer: Buffer): boolean {
+export function isValidImageSignature(buffer: Buffer): boolean {
   if (!buffer || buffer.length < 12) {
     return false;
   }
@@ -73,7 +72,7 @@ function isValidImageSignature(buffer: Buffer): boolean {
 /**
  * Validates whether the given buffer matches standard PDF signature (%PDF -> 25 50 44 46)
  */
-function isValidPdfSignature(buffer: Buffer): boolean {
+export function isValidPdfSignature(buffer: Buffer): boolean {
   if (!buffer || buffer.length < 4) {
     return false;
   }
@@ -85,9 +84,45 @@ function isValidPdfSignature(buffer: Buffer): boolean {
   );
 }
 
+/**
+ * Validates whether the given buffer matches video signatures:
+ * - MP4 / QuickTime: bytes 4-7 are 'ftyp' (0x66 0x74 0x79 0x70)
+ * - WebM / Matroska: bytes 0-3 are 0x1A 0x45 0xDF 0xA3
+ */
+export function isValidVideoSignature(buffer: Buffer): boolean {
+  if (!buffer || buffer.length < 8) {
+    return false;
+  }
+
+  // 1. WebM / Matroska: 1A 45 DF A3
+  if (
+    buffer[0] === 0x1a &&
+    buffer[1] === 0x45 &&
+    buffer[2] === 0xdf &&
+    buffer[3] === 0xa3
+  ) {
+    return true;
+  }
+
+  // 2. MP4 / MOV / QuickTime: bytes 4-7 == 'ftyp' (0x66 0x74 0x79 0x70)
+  if (
+    buffer[4] === 0x66 &&
+    buffer[5] === 0x74 &&
+    buffer[6] === 0x79 &&
+    buffer[7] === 0x70
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+// Storage trigger MUST match the exact region of the storage bucket ('us-east1' for shaker-rentalcars.firebasestorage.app)
 export const validateUploadedFileSignature = onObjectFinalized(
   {
-    region: FUNCTION_REGION,
+    cpu: 1,
+    bucket: DEFAULT_STORAGE_BUCKET,
+    region: STORAGE_TRIGGER_REGION, // us-east1 (bucket location)
     memory: '256MiB',
     timeoutSeconds: 60,
   },
@@ -99,16 +134,15 @@ export const validateUploadedFileSignature = onObjectFinalized(
 
     const filePath = object.name;
     const bucketName = object.bucket;
-    const contentType = object.contentType || 'unknown';
-
-    // 1. Path Filtering: Check if target path belongs to monitored folders
     const isTargetPublicPath = filePath.startsWith('vehicles/') || filePath.startsWith('public/');
+    const isInspectionVideoPath = filePath.startsWith('contracts/') && filePath.includes('/videos/');
     const isDocumentPath =
-      filePath.startsWith('users/') ||
-      filePath.startsWith('uploads/') ||
-      filePath.startsWith('contracts/');
+      (filePath.startsWith('users/') ||
+       filePath.startsWith('uploads/') ||
+       filePath.startsWith('contracts/')) &&
+      !isInspectionVideoPath;
 
-    if (!isTargetPublicPath && !isDocumentPath) {
+    if (!isTargetPublicPath && !isDocumentPath && !isInspectionVideoPath) {
       return;
     }
 
@@ -116,30 +150,64 @@ export const validateUploadedFileSignature = onObjectFinalized(
       const bucket = admin.storage().bucket(bucketName);
       const file = bucket.file(filePath);
 
-      // Check if file still exists
       const [exists] = await file.exists();
-      if (!exists) {
-        return;
-      }
+      if (!exists) return;
 
-      // 2. Size and extension validation for document paths
-      if (isDocumentPath) {
-        const fileSize = Number(object.size || 0);
-        if (fileSize <= 0 || fileSize > MAX_DOCUMENT_SIZE_BYTES) {
-          console.warn(`[Security Alert] Deleting document exceeding size limit: ${filePath} (${fileSize} bytes)`);
+      const fileSize = Number(object.size || 0);
+
+      // 1. Inspection Video Validation (<= 100MB, mp4/webm/quicktime)
+      if (isInspectionVideoPath) {
+        if (fileSize <= 0 || fileSize > MAX_VIDEO_SIZE_BYTES) {
+          console.warn(`[Security Alert] Deleting inspection video exceeding 100MB: ${filePath} (${fileSize} bytes)`);
           await file.delete({ ignoreNotFound: true });
           await db.collection('auditLogs').add({
-            action: 'SUSPICIOUS_FILE_SIZE_VIOLATION',
+            action: 'SUSPICIOUS_VIDEO_SIZE_VIOLATION',
             actorUid: null,
             actorEmail: null,
             actorType: 'system',
             filePath,
-            declaredContentType: contentType,
             fileSizeBytes: fileSize,
-            bucket: bucketName,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
+          return;
+        }
+
+        const lowerPath = filePath.toLowerCase();
+        const allowedVideoExts = ['.mp4', '.webm', '.mov', '.quicktime', '.mkv'];
+        const hasValidExt = allowedVideoExts.some((ext) => lowerPath.endsWith(ext));
+        if (!hasValidExt) {
+          console.warn(`[Security Alert] Deleting inspection video with invalid extension: ${filePath}`);
+          await file.delete({ ignoreNotFound: true });
+          return;
+        }
+
+        const [buffer] = await file.download({ start: 0, end: 11 });
+        if (!isValidVideoSignature(buffer)) {
+          console.warn(`[Security Alert] Deleting file with invalid video signature: ${filePath}`);
+          await file.delete({ ignoreNotFound: true });
+          await db.collection('auditLogs').add({
+            action: 'SUSPICIOUS_VIDEO_SIGNATURE_MISMATCH',
+            actorUid: null,
+            actorEmail: null,
+            actorType: 'system',
+            filePath,
+            detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          return;
+        }
+
+        // Legitimate video - preserved
+        return;
+      }
+
+      // 2. Document & User Image Validation (<= 25MB)
+      if (isDocumentPath) {
+        if (fileSize <= 0 || fileSize > MAX_DOCUMENT_SIZE_BYTES) {
+          console.warn(`[Security Alert] Deleting document exceeding limit: ${filePath} (${fileSize} bytes)`);
+          await file.delete({ ignoreNotFound: true });
           return;
         }
 
@@ -149,60 +217,42 @@ export const validateUploadedFileSignature = onObjectFinalized(
         if (!hasValidDocExt) {
           console.warn(`[Security Alert] Deleting document with forbidden extension: ${filePath}`);
           await file.delete({ ignoreNotFound: true });
+          return;
+        }
+
+        const [buffer] = await file.download({ start: 0, end: 11 });
+        const isValid = isValidPdfSignature(buffer) || isValidImageSignature(buffer);
+
+        if (!isValid) {
+          console.warn(`[Security Alert] Deleting document with invalid signature: ${filePath}`);
+          await file.delete({ ignoreNotFound: true });
           await db.collection('auditLogs').add({
-            action: 'SUSPICIOUS_FILE_EXTENSION_MISMATCH',
+            action: 'SUSPICIOUS_FILE_SIGNATURE_MISMATCH',
             actorUid: null,
             actorEmail: null,
             actorType: 'system',
             filePath,
-            declaredContentType: contentType,
-            bucket: bucketName,
+            detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
           return;
         }
-      }
 
-      // 3. Read the first 12 bytes to verify magic signature efficiently
-      const [buffer] = await file.download({ start: 0, end: 11 });
-
-      let isValid = false;
-      if (isTargetPublicPath) {
-        // Public images must be strictly valid image signatures (JPEG, PNG, WEBP)
-        isValid = isValidImageSignature(buffer);
-      } else if (isDocumentPath) {
-        // Document paths accept valid PDF or valid images (ID cards, driver licenses, receipts)
-        isValid = isValidPdfSignature(buffer) || isValidImageSignature(buffer);
-      }
-
-      // 4. If signature is valid, exit cleanly
-      if (isValid) {
         return;
       }
 
-      // 5. Invalid signature: Delete file and record unified security audit log
-      const detectedHex = buffer ? buffer.toString('hex') : 'empty';
-      console.warn(
-        `[Security Alert] Deleting file with invalid signature: ${filePath} (Hex: ${detectedHex}, Type: ${contentType})`
-      );
-
-      await file.delete({ ignoreNotFound: true });
-
-      await db.collection('auditLogs').add({
-        action: 'SUSPICIOUS_FILE_SIGNATURE_MISMATCH',
-        actorUid: null,
-        actorEmail: null,
-        actorType: 'system',
-        filePath,
-        declaredContentType: contentType,
-        detectedSignatureHex: detectedHex,
-        bucket: bucketName,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    } catch (error) {
-      console.error(`[Security Trigger Error] Failed while validating signature for ${filePath}:`, error);
+      // 3. Public Vehicle Images (<= 30MB)
+      if (isTargetPublicPath) {
+        const [buffer] = await file.download({ start: 0, end: 11 });
+        if (!isValidImageSignature(buffer)) {
+          console.warn(`[Security Alert] Deleting public asset with invalid signature: ${filePath}`);
+          await file.delete({ ignoreNotFound: true });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error(`[validateUploadedFileSignature] Error validating ${filePath}:`, err);
     }
   }
 );

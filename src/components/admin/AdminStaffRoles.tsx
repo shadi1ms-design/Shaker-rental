@@ -263,7 +263,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
     setSaveSuccessMsg(null);
 
     try {
-      const res = await functionsService.toggleUserAccountStatus(targetUid, newDisabledState);
+      const res = await functionsService.toggleUserAccountStatus({ targetUid, disabled: newDisabledState });
       if (!res.success) {
         throw new Error(res.error || 'فشل تحديث حالة الحساب.');
       }
@@ -302,7 +302,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
     setSaveSuccessMsg(null);
 
     try {
-      const res = await functionsService.deleteUserAccount(targetUid);
+      const res = await functionsService.deleteUserAccount({ targetUid });
       if (!res.success) {
         throw new Error(res.error || 'فشل حذف الحساب.');
       }

@@ -13,14 +13,14 @@ import {
   Clock,
   DollarSign,
   FileText,
-  ChevronDown,
-  ChevronUp,
-  Eye,
-  EyeOff,
   BarChart2
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import { AdminTabType } from '../AdminDashboard';
+import { todayLocalISO, isTodayLocal, formatArabicDate } from '../../utils/dateUtils';
+import { calculateBookingFinancials } from '../../utils/bookingCalculations';
+import { BOOKING_STATUS_META } from '../../constants/statusMeta';
+import { StatCard } from '../common/StatCard';
+import { StatusBadge } from '../common/StatusBadge';
 
 interface AdminOverviewProps {
   vehicles: Vehicle[];
@@ -30,54 +30,55 @@ interface AdminOverviewProps {
   onOpenAddVehicle: () => void;
   onSyncAll: () => Promise<void>;
   isSyncing: boolean;
-  isCollapsed?: boolean;
-  onToggleCollapse?: () => void;
 }
 
 export const AdminOverview: React.FC<AdminOverviewProps> = ({
   vehicles,
   bookings,
+  vehiclesNeedingOil = [],
   onNavigateTab,
   onOpenAddVehicle,
   onSyncAll,
   isSyncing,
-  isCollapsed = false,
-  onToggleCollapse,
 }) => {
-  // KPIs calculation
+  const [period, setPeriod] = React.useState<'today' | '7days' | 'month' | 'all'>('month');
+
+  // Filter bookings according to period and Damascus local timezone
+  const periodFilteredBookings = React.useMemo(() => {
+    const today = todayLocalISO();
+    return bookings.filter((b) => {
+      if (!b.createdAt) return period === 'all';
+      if (period === 'today') {
+        return isTodayLocal(b.createdAt);
+      }
+      if (period === '7days') {
+        const d = new Date(b.createdAt);
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        return d >= sevenDaysAgo;
+      }
+      if (period === 'month') {
+        const d = new Date(b.createdAt);
+        const now = new Date();
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      }
+      return true;
+    });
+  }, [bookings, period]);
+
+  // Financial KPIs - strictly excluding cancelled and rejected bookings
+  const financials = React.useMemo(() => {
+    return calculateBookingFinancials(periodFilteredBookings);
+  }, [periodFilteredBookings]);
+
+  // Overall counts
   const totalVehicles = vehicles.length;
   const availableVehicles = vehicles.filter((v) => v.status === 'available').length;
   const rentedVehicles = vehicles.filter((v) => v.status === 'rented').length;
   const inMaintenance = vehicles.filter((v) => v.status === 'maintenance').length;
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayBookings = bookings.filter((b) => b.createdAt && b.createdAt.startsWith(todayStr)).length;
+  const todayBookingsCount = bookings.filter((b) => isTodayLocal(b.createdAt)).length;
   const activeRentals = bookings.filter((b) => b.status === 'rented').length;
 
-  const monthlyRevenue = bookings.reduce((acc, b) => acc + (b.paidAmount || 0), 0);
-  const outstandingBalance = bookings.reduce(
-    (acc, b) => acc + (b.remainingAmount ?? (b.totalPrice - (b.paidAmount || 0))),
-    0
-  );
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'new':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">طلب جديد</span>;
-      case 'reviewing':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">قيد المراجعة</span>;
-      case 'confirmed':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">مؤكد</span>;
-      case 'rented':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">جاري التأجير</span>;
-      case 'completed':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300">مكتمل</span>;
-      case 'cancelled':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300">ملغي</span>;
-      default:
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400">{status}</span>;
-    }
-  };
 
   const availablePct = totalVehicles > 0 ? Math.round((availableVehicles / totalVehicles) * 100) : 0;
   const rentedPct = totalVehicles > 0 ? Math.round((rentedVehicles / totalVehicles) * 100) : 0;
@@ -85,13 +86,13 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
 
   return (
     <div className="space-y-8">
-      {/* Top Welcome Banner with Quick Actions */}
+      {/* Top Welcome Banner with Quick Actions & Period Selector */}
       <div className="bg-gradient-to-r from-amber-500/15 via-slate-900 to-slate-900 border border-amber-500/30 rounded-3xl p-6 sm:p-8 relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
           <div className="space-y-2 max-w-2xl">
             <div className="flex items-center gap-2 text-xs font-semibold text-amber-400">
               <Clock className="w-3.5 h-3.5" />
-              <span>{new Date().toLocaleDateString('ar-SY', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+              <span>{formatArabicDate()}</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-white">
               لوحة المؤشرات والعمليات المركزية
@@ -101,146 +102,164 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
             </p>
           </div>
 
-          {/* Quick Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            {onToggleCollapse && (
+          {/* Quick Action Buttons & Period Pills */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            {/* Period Selector */}
+            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+              {[
+                { id: 'today', label: 'اليوم' },
+                { id: '7days', label: '7 أيام' },
+                { id: 'month', label: 'الشهر الحالي' },
+                { id: 'all', label: 'كافة الفترات' },
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setPeriod(p.id as any)}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    period === p.id
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2.5">
               <button
-                type="button"
-                onClick={onToggleCollapse}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border cursor-pointer ${
-                  isCollapsed
-                    ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40 shadow-sm'
-                    : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'
-                }`}
-                title={isCollapsed ? 'عرض المؤشرات العامة للأسطول والحجوزات' : 'طي وإخفاء المؤشرات العامة لتوفير المساحة'}
+                onClick={onOpenAddVehicle}
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/20 cursor-pointer"
               >
-                {isCollapsed ? (
-                  <>
-                    <Eye className="w-3.5 h-3.5 text-amber-400" />
-                    <span>عرض المؤشرات</span>
-                    <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
-                  </>
-                ) : (
-                  <>
-                    <EyeOff className="w-3.5 h-3.5 text-slate-400" />
-                    <span>إخفاء المؤشرات</span>
-                    <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
-                  </>
-                )}
+                <Plus className="w-3.5 h-3.5" />
+                <span>إضافة سيارة</span>
               </button>
-            )}
 
-            <button
-              onClick={onOpenAddVehicle}
-              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/20 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>إضافة سيارة</span>
-            </button>
-
-            <button
-              onClick={onSyncAll}
-              disabled={isSyncing}
-              className="px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-xs font-bold text-slate-300 flex items-center gap-1.5 border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
-              title="مزامنة فورية مع Cloud Firestore"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'جاري المزامنة...' : 'مزامنة السحابة'}</span>
-            </button>
+              <button
+                onClick={onSyncAll}
+                disabled={isSyncing}
+                className="px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-xs font-bold text-slate-300 flex items-center gap-1.5 border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
+                title="مزامنة فورية مع Cloud Firestore"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'جاري المزامنة...' : 'مزامنة السحابة'}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Collapsible Overview Metrics Container with Smooth Height & Opacity Transition */}
-      <AnimatePresence initial={false}>
-        {!isCollapsed && (
-          <motion.div
-            key="kpi-metrics-section"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-            className="overflow-hidden space-y-8"
-          >
-            {/* 6 Metric KPI Cards */}
+      {/* Main KPI & Metrics Content */}
+      <div className="space-y-8">
+        {/* Vehicles Needing Oil Change Notice Card (If any exist) */}
+        {vehiclesNeedingOil.length > 0 && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-3xl p-5 sm:p-6 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 text-amber-400">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                <h3 className="text-sm font-black text-white">
+                  سيارات تتطلب غيار زيت دوري ({vehiclesNeedingOil.length} مركبة)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigateTab('vehicles')}
+                className="text-xs text-amber-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <span>متابعة جدول الصيانة بالأسطول</span>
+                <span>←</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {vehiclesNeedingOil.map(({ vehicle: v, kmSinceOil, isUrgent }) => (
+                <div
+                  key={v.id}
+                  className="bg-slate-950/80 border border-amber-500/20 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs"
+                >
+                  <div className="space-y-1">
+                    <span className="font-bold text-white block">
+                      {v.brand} {v.model} ({v.year})
+                    </span>
+                    <span className="text-[11px] text-slate-400 block font-mono">
+                      لوحة: {v.plateNumber} • قاطع: {kmSinceOil.toLocaleString()} كم
+                    </span>
+                  </div>
+                  {isUrgent ? (
+                    <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse shrink-0">
+                      عاجل تجاوز الفاصل
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
+                      قارب 5000 كم
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+            {/* 6 Metric KPI Cards using shared StatCard component */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-              {/* Card 1: Total Fleet */}
-              <div
+              <StatCard
+                label="إجمالي الأسطول"
+                value={totalVehicles}
+                subtext={`متاح: ${availableVehicles} سيارة`}
+                icon={Car}
+                iconColor="text-amber-400"
                 onClick={() => onNavigateTab('vehicles')}
-                className="bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 space-y-1 transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-[11px]">إجمالي الأسطول</span>
-                  <Car className="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition-colors" />
-                </div>
-                <span className="text-2xl font-black text-white font-mono">{totalVehicles}</span>
-                <span className="text-[10px] text-emerald-400 block font-semibold">متاح: {availableVehicles} سيارة</span>
-              </div>
+              />
 
-              {/* Card 2: Today's Bookings */}
-              <div
+              <StatCard
+                label="حجوزات اليوم (دمشق)"
+                value={todayBookingsCount}
+                valueColor="text-amber-400"
+                subtext={`إجمالي المسجل: ${bookings.length}`}
+                icon={Calendar}
+                iconColor="text-amber-400"
                 onClick={() => onNavigateTab('bookings')}
-                className="bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 space-y-1 transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-[11px]">حجوزات اليوم</span>
-                  <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition-colors" />
-                </div>
-                <span className="text-2xl font-black text-amber-400 font-mono">{todayBookings}</span>
-                <span className="text-[10px] text-slate-400 block">إجمالي المسجل: {bookings.length}</span>
-              </div>
+              />
 
-              {/* Card 3: Active Rentals */}
-              <div
+              <StatCard
+                label="تأجيرات نشطة"
+                value={activeRentals}
+                valueColor="text-blue-400"
+                subtext="في حوزة المستأجرين"
+                icon={ArrowUpRight}
+                iconColor="text-blue-400"
                 onClick={() => onNavigateTab('bookings')}
-                className="bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 space-y-1 transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-[11px]">تأجيرات نشطة</span>
-                  <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors" />
-                </div>
-                <span className="text-2xl font-black text-blue-400 font-mono">{activeRentals}</span>
-                <span className="text-[10px] text-slate-400 block">في حوزة المستأجرين</span>
-              </div>
+              />
 
-              {/* Card 4: Collected Revenue */}
-              <div
+              <StatCard
+                label={`المقبوضات المحصلة${period === 'today' ? ' (اليوم)' : period === '7days' ? ' (7 أيام)' : period === 'month' ? ' (الشهر)' : ''}`}
+                value={`$${financials.collectedRevenue.toLocaleString()}`}
+                valueColor="text-emerald-400"
+                subtext={`من ${financials.totalValidBookings} حجز فعال`}
+                icon={DollarSign}
+                iconColor="text-emerald-400"
                 onClick={() => onNavigateTab('bookings')}
-                className="bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 space-y-1 transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-[11px]">المقبوضات المحصلة</span>
-                  <DollarSign className="w-3.5 h-3.5 text-slate-500 group-hover:text-emerald-400 transition-colors" />
-                </div>
-                <span className="text-2xl font-black text-emerald-400 font-mono">${monthlyRevenue}</span>
-                <span className="text-[10px] text-slate-400 block">إجمالي المسدد بالحجوزات</span>
-              </div>
+              />
 
-              {/* Card 5: Outstanding Balance */}
-              <div
+              <StatCard
+                label={`المتبقي بذمة العملاء${period === 'today' ? ' (اليوم)' : period === '7days' ? ' (7 أيام)' : period === 'month' ? ' (الشهر)' : ''}`}
+                value={`$${financials.outstandingBalance.toLocaleString()}`}
+                valueColor="text-rose-400"
+                subtext="مستحقات غير ملغاة"
+                icon={FileText}
+                iconColor="text-rose-400"
                 onClick={() => onNavigateTab('bookings')}
-                className="bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 space-y-1 transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-[11px]">المتبقي بذمة العملاء</span>
-                  <FileText className="w-3.5 h-3.5 text-slate-500 group-hover:text-rose-400 transition-colors" />
-                </div>
-                <span className="text-2xl font-black text-rose-400 font-mono">${outstandingBalance}</span>
-                <span className="text-[10px] text-rose-400 block">مستحقات عند التسليم</span>
-              </div>
+              />
 
-              {/* Card 6: Available Fleet Readiness */}
-              <div
+              <StatCard
+                label="السيارات المتاحة فوراً"
+                value={availableVehicles}
+                valueColor="text-emerald-400"
+                subtext="جاهزة للتأجير والتسليم"
+                icon={Car}
+                iconColor="text-emerald-400"
                 onClick={() => onNavigateTab('vehicles')}
-                className="bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 space-y-1 transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-[11px]">السيارات المتاحة فوراً</span>
-                  <Car className="w-3.5 h-3.5 text-slate-500 group-hover:text-emerald-400 transition-colors" />
-                </div>
-                <span className="text-2xl font-black text-emerald-400 font-mono">{availableVehicles}</span>
-                <span className="text-[10px] text-slate-400 block">جاهزة للتأجير والتسليم</span>
-              </div>
+              />
             </div>
 
             {/* Fleet Utilization Visual Strip */}
@@ -336,7 +355,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
 
                         <div className="text-left flex flex-col items-end gap-1.5 shrink-0">
                           <span className="font-mono font-bold text-white">${b.totalPrice}</span>
-                          {getStatusBadge(b.status)}
+                          <StatusBadge status={b.status} />
                         </div>
                       </div>
                     ))}
@@ -399,9 +418,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
                 )}
               </div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </div>
     </div>
   );
 };

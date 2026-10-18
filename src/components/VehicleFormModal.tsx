@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Vehicle, VehicleCategory, TransmissionType, FuelType, VehicleStatus } from '../types';
+import { VEHICLE_CATEGORY_LABELS } from '../constants/vehicleCategories';
 import { dataService } from '../services/dataService';
 import { vehicleFormSchema } from '../services/validation';
 import { storageService } from '../services/storageService';
@@ -319,9 +320,9 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
                 onChange={(e) => setCategory(e.target.value as any)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
               >
-                <option value="light">سيدان اقتصادي (Light)</option>
-                <option value="medium">سيدان متوسط (Medium)</option>
-                <option value="jeep_7seats">جيب عائلي 7 مقاعد (Jeep)</option>
+                <option value="light">{VEHICLE_CATEGORY_LABELS.light}</option>
+                <option value="medium">{VEHICLE_CATEGORY_LABELS.medium}</option>
+                <option value="jeep_7seats">{VEHICLE_CATEGORY_LABELS.jeep_7seats}</option>
               </select>
             </div>
             <div>

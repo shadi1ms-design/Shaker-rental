@@ -9,6 +9,7 @@ import {
   SortField
 } from '../types';
 import { calculateRentalPrice, DEFAULT_SETTINGS } from '../services/pricing';
+import { VEHICLE_CATEGORY_LABELS, getVehicleCategoryLabel } from '../constants/vehicleCategories';
 import {
   Users,
   Fuel,
@@ -169,11 +170,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
   ]);
 
   const getCategoryLabel = (cat: VehicleCategory) => {
-    switch (cat) {
-      case 'light': return 'سيدان اقتصادي';
-      case 'medium': return 'سيدان متوسط';
-      case 'jeep_7seats': return 'جيب عائلي 7 مقاعد';
-    }
+    return getVehicleCategoryLabel(cat);
   };
 
   const resetFilters = () => {
@@ -278,9 +275,9 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               <div className="space-y-1.5">
                 {[
                   { id: 'all', label: 'جميع الفئات' },
-                  { id: 'light', label: 'سيدان اقتصادي (Light)' },
-                  { id: 'medium', label: 'سيدان متوسط (Medium)' },
-                  { id: 'jeep_7seats', label: 'جيب 7 مقاعد (Jeep/SUV)' },
+                  { id: 'light', label: VEHICLE_CATEGORY_LABELS.light },
+                  { id: 'medium', label: VEHICLE_CATEGORY_LABELS.medium },
+                  { id: 'jeep_7seats', label: VEHICLE_CATEGORY_LABELS.jeep_7seats },
                 ].map((item) => (
                   <button
                     key={item.id}

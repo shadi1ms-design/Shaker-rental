@@ -62,7 +62,7 @@ if (isFirebaseConfigured) {
 
     // Firebase App Check with reCAPTCHA Enterprise
     try {
-      const recaptchaSiteKey = '6Le-GMItAAAAAJQeoGFLzB7crB0JgnkL_eLkNYY5';
+      const recaptchaSiteKey = env.VITE_RECAPTCHA_SITE_KEY || '6Le-GMItAAAAAJQeoGFLzB7crB0JgnkL_eLkNYY5';
 
       // تفعيل Debug Token في بيئة التطوير/معاينة AI Studio فقط
       if (import.meta.env.DEV && typeof window !== 'undefined') {
@@ -75,7 +75,7 @@ if (isFirebaseConfigured) {
       });
       console.log('[Firebase App Check] تم التفعيل بنجاح.');
     } catch (appCheckErr) {
-      console.warn('[Firebase App Check] فشل التفعيل، سيتابع التطبيق العمل بدونه مؤقتاً:', appCheckErr);
+      console.error('[Firebase App Check Failure] فشل تهيئة App Check:', appCheckErr);
     }
 
     // Suppress Firestore verbose connection failure and retry warnings in console

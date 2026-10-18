@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { todayLocalISO } from '../utils/dateUtils';
 
 export const bookingFormSchema = z.object({
   vehicleId: z.string().min(1, 'يرجى اختيار السيارة المطلوبة'),
@@ -15,7 +16,7 @@ export const bookingFormSchema = z.object({
   notes: z.string().max(1000, 'الملاحظات يجب ألا تتجاوز 1000 حرف').optional().or(z.literal('')),
 }).refine((data) => {
   if (!data.pickupDate) return true;
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayLocalISO();
   return data.pickupDate >= today;
 }, {
   message: 'تاريخ الاستلام لا يمكن أن يكون في الماضي',

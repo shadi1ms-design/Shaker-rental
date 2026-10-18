@@ -1,42 +1,44 @@
 /**
  * FIRESTORE TRIGGER: sendTelegramBookingAlert
  * 
- * يستمع هذا المعالج لحدث إنشاء أي حجز جديد في مجموعة bookings ويرسل تنبيهاً فورياً عبر Telegram Bot API.
- * 
- * ملاحظة هامة حول الأسرار وبيئة التشغيل:
- * يتم ضبط مفتاح البوت (TELEGRAM_BOT_TOKEN) ومعرّف المحادثة (TELEGRAM_CHAT_ID) لاحقاً من خارج الكود
- * عبر أوامر إدارة الأسرار في Firebase / Google Cloud Secret Manager:
- *   firebase functions:secrets:set TELEGRAM_BOT_TOKEN
- *   firebase functions:secrets:set TELEGRAM_CHAT_ID
- * ويتم تمريرهما في وقت التشغيل بصورة آمنة وتلقائية إلى process.env.
+ * Requirement 4:
+ * - Region: asia-south1 (Unified with Firestore & Cloud Functions)
+ * - Idempotency via telegramAlertSentAt
+ * - Ignore staff-created bookings
+ * - Mask customer phone number for privacy
+ * - HTML parse mode & escaping
  */
 
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
-
-const FUNCTION_REGION = 'us-east1';
-const DATABASE_ID = 'ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1';
-
-// تأكيد تهيئة Firebase Admin
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
+import { FUNCTION_REGION, DATABASE_ID } from './constants';
+import { isCallerStaff } from './authz';
 
 const db = getFirestore(admin.app(), DATABASE_ID);
 
-/**
- * دالة مساعدة لتنظيف نصوص الماركداون لتفادي كسر تنسيق تيليجرام
- */
-function cleanMarkdown(text: unknown): string {
+function escapeHtml(text: unknown): string {
   if (text === null || text === undefined) return '';
-  return String(text).replace(/[*_`\[\]]/g, '');
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /**
- * Cloud Function: sendTelegramBookingAlert
- * Triggered on: bookings/{bookingId} (Firestore v2 onDocumentCreated)
+ * Masks phone numbers to protect customer privacy in shared Telegram channels.
+ * e.g., "0944331774" -> "0944***774"
  */
+export function maskPhoneNumber(phone?: string | null): string {
+  if (!phone) return 'غير متوفر';
+  const clean = String(phone).trim();
+  if (clean.length <= 6) return clean;
+  const start = clean.slice(0, 4);
+  const end = clean.slice(-3);
+  return `${start}***${end}`;
+}
+
 export const sendTelegramBookingAlert = onDocumentCreated(
   {
     document: 'bookings/{bookingId}',
@@ -48,148 +50,124 @@ export const sendTelegramBookingAlert = onDocumentCreated(
   },
   async (event) => {
     try {
-      // 1. قراءة بيانات الحجز الموثوقة من event.data مباشرة
-      if (!event.data) {
-        return;
-      }
-
+      if (!event.data) return;
       const bookingData = event.data.data();
+      if (!bookingData || bookingData.isDeleted === true) return;
 
-      // 2. تجاهل الحدث فوراً إذا لم توجد بيانات أو إذا كان الحجز محذوفاً منطقياً
-      if (!bookingData || bookingData.isDeleted === true) {
+      const bookingRef = event.data.ref;
+
+      // 1. Idempotency Check: telegramAlertSentAt (Requirement 4)
+      if (bookingData.telegramAlertSentAt) {
         return;
       }
 
-      const bookingId = event.params.bookingId || event.data.id || bookingData.id || 'غير متوفر';
+      // 2. Ignore staff-created / internal bookings (Requirement 4)
+      if (bookingData.isStaffBooking === true) {
+        return;
+      }
+
+      const customerId = bookingData.customerId;
+      if (customerId) {
+        try {
+          const userRecord = await admin.auth().getUser(customerId).catch(() => null);
+          if (userRecord && isCallerStaff(userRecord.customClaims)) {
+            // Skip alerting for staff internal tests/bookings
+            return;
+          }
+        } catch {}
+      }
+
+      const bookingId = event.params.bookingId || event.data.id || bookingData.id || '';
       const bookingNumber = bookingData.bookingNumber || bookingId;
 
-      // 3. جلب اسم السيارة الحقيقي من مجموعة vehicles مع رجوع آمن (fallback)
-      let vehicleName = (bookingData.vehicleName || 'غير محدد') as string;
+      // Authoritative vehicle name
+      let vehicleName = (bookingData.vehicleName || 'مركبة') as string;
       const vehicleId = bookingData.vehicleId;
-      if (vehicleId && typeof vehicleId === 'string') {
+      if (vehicleId) {
         try {
-          const vehicleSnap = await db.collection('vehicles').doc(vehicleId).get();
-          if (vehicleSnap.exists) {
-            const vData = vehicleSnap.data();
+          const vSnap = await db.collection('vehicles').doc(vehicleId).get();
+          if (vSnap.exists) {
+            const vData = vSnap.data();
             if (vData) {
               const brand = vData.brand ? String(vData.brand).trim() : '';
               const model = vData.model ? String(vData.model).trim() : '';
               const year = vData.year ? `(${vData.year})` : '';
               const fullName = [brand, model, year].filter(Boolean).join(' ');
-              if (fullName) {
-                vehicleName = fullName;
-              } else if (vData.name) {
-                vehicleName = String(vData.name);
-              }
+              if (fullName) vehicleName = fullName;
             }
           }
-        } catch (vehErr) {
-          console.warn('[sendTelegramBookingAlert] تعذر جلب بيانات السيارة، الاعتماد على اسم الحجز:', vehErr);
-        }
+        } catch {}
       }
 
-      // 4 & 5. جلب اسم ورقم هاتف العميل الحقيقيين من مجموعة users مع رجوع آمن
-      let customerName = (bookingData.customerName || 'غير محدد') as string;
-      let customerPhone = (bookingData.customerPhone || bookingData.customerWhatsApp || 'غير متوفر') as string;
-      const customerId = bookingData.customerId;
+      const customerName = (bookingData.customerName || 'مستأجر') as string;
+      const rawPhone = bookingData.customerPhone || bookingData.customerWhatsApp || '';
+      const maskedPhone = maskPhoneNumber(rawPhone);
 
-      if (customerId && typeof customerId === 'string') {
-        try {
-          const userSnap = await db.collection('users').doc(customerId).get();
-          if (userSnap.exists) {
-            const uData = userSnap.data();
-            if (uData) {
-              const uName = uData.displayName || uData.name || uData.fullName;
-              if (uName && typeof uName === 'string' && uName.trim()) {
-                customerName = uName.trim();
-              }
-              const uPhone = uData.phoneNumber || uData.phone || uData.mobile;
-              if (uPhone && typeof uPhone === 'string' && uPhone.trim()) {
-                customerPhone = uPhone.trim();
-              }
-            }
-          }
-        } catch (userErr) {
-          console.warn('[sendTelegramBookingAlert] تعذر جلب بيانات المستخدم، الاعتماد على بيانات الحجز:', userErr);
-        }
-      }
-
-      // تواريخ الحجز
       const pickupDate = bookingData.pickupDate || bookingData.startDate || '';
       const returnDate = bookingData.returnDate || bookingData.endDate || '';
       const totalPrice = bookingData.totalPrice !== undefined ? `${bookingData.totalPrice}` : '0';
       const status = bookingData.status || 'new';
 
-      // 6. بناء نص رسالة الماركداون الخاصة بتيليجرام
-      const messageLines: string[] = [
-        '🚗 *حجز جديد في النظام*',
-        '━━━━━━━━━━━━━━━━━━━━',
-        `📋 *رقم الحجز:* \`${cleanMarkdown(bookingNumber)}\``,
-        `👤 *العميل:* ${cleanMarkdown(customerName)}`,
-        `📞 *الهاتف:* ${cleanMarkdown(customerPhone)}`,
-        `🚘 *السيارة:* ${cleanMarkdown(vehicleName)}`,
-      ];
+      // 3. Mark alert as sent immediately for strict idempotency
+      await bookingRef.update({
+        telegramAlertSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
 
-      if (pickupDate) {
-        messageLines.push(`📅 *تاريخ الاستلام:* ${cleanMarkdown(pickupDate)}`);
-      }
-      if (returnDate) {
-        messageLines.push(`📅 *تاريخ التسليم:* ${cleanMarkdown(returnDate)}`);
-      }
-
-      messageLines.push(`💰 *المبلغ الإجمالي:* ${cleanMarkdown(totalPrice)}$`);
-      messageLines.push(`📊 *الحالة:* ${cleanMarkdown(status)}`);
-
-      const messageText = messageLines.join('\n');
-
-      // 7. التحقق من توفر التوكن والـ Chat ID من Secret Manager / process.env
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
       const chatId = process.env.TELEGRAM_CHAT_ID;
 
       if (!botToken || !chatId) {
-        console.error(
-          '[sendTelegramBookingAlert] المتغيرات السرية TELEGRAM_BOT_TOKEN أو TELEGRAM_CHAT_ID غير معرفة في بيئة التشغيل / Cloud Secret Manager. تم إيقاف إرسال الرسالة.'
-        );
+        console.warn('[sendTelegramBookingAlert] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not configured.');
         return;
       }
 
-      // 8. إرسال الطلب عبر Telegram Bot API باستخدام fetch المدمجة
+      // HTML message content
+      const messageLines: string[] = [
+        '🚗 <b>طلب حجز جديد</b>',
+        '━━━━━━━━━━━━━━━━━━━━',
+        `📋 <b>رقم الحجز:</b> <code>${escapeHtml(bookingNumber)}</code>`,
+        `👤 <b>العميل:</b> ${escapeHtml(customerName)}`,
+        `📞 <b>الهاتف:</b> <code>${escapeHtml(maskedPhone)}</code>`,
+        `🚘 <b>السيارة:</b> ${escapeHtml(vehicleName)}`,
+      ];
+
+      if (pickupDate) {
+        messageLines.push(`📅 <b>تاريخ الاستلام:</b> ${escapeHtml(pickupDate)}`);
+      }
+      if (returnDate) {
+        messageLines.push(`📅 <b>تاريخ التسليم:</b> ${escapeHtml(returnDate)}`);
+      }
+
+      messageLines.push(`💰 <b>المبلغ الإجمالي:</b> ${escapeHtml(totalPrice)}$`);
+      messageLines.push(`📊 <b>الحالة:</b> ${escapeHtml(status)}`);
+
+      const messageText = messageLines.join('\n');
       const telegramEndpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
       const response = await fetch(telegramEndpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
           text: messageText,
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           reply_markup: {
-            inline_keyboard: [[
-              { text: '✅ تأكيد', callback_data: `bk_confirm_${bookingId}` },
-              { text: '❌ رفض', callback_data: `bk_reject_${bookingId}` },
-            ]],
+            inline_keyboard: [
+              [
+                { text: '✅ تأكيد', callback_data: `bk_confirm_${bookingId}` },
+                { text: '❌ رفض', callback_data: `bk_reject_${bookingId}` },
+              ],
+            ],
           },
         }),
       });
 
       if (!response.ok) {
-        const errorBody = await response.text().catch(() => 'تعذر قراءة نص الاستجابة');
-        console.error('[sendTelegramBookingAlert] استجابت Telegram Bot API بخطأ أثناء إرسال الإشعار:', {
-          status: response.status,
-          statusText: response.statusText,
-          responseBody: errorBody,
-          bookingId,
-        });
-      } else {
-        console.log('[sendTelegramBookingAlert] تم إرسال إشعار تيليجرام بنجاح للحجز رقم:', bookingNumber);
+        const errorBody = await response.text().catch(() => '');
+        console.error('[sendTelegramBookingAlert] Telegram API error:', response.status, errorBody);
       }
     } catch (err: any) {
-      // تسجيل أي استثناء غير متوقع دون رميه لتفادي تعطيل Trigger الحجز الأساسي
-      console.error('[sendTelegramBookingAlert] حدث خطأ أثناء تنفيذ معالج إشعارات تيليجرام:', {
-        message: err?.message,
-        stack: err?.stack,
-      });
+      console.error('[sendTelegramBookingAlert] Error sending Telegram alert:', err);
     }
   }
 );

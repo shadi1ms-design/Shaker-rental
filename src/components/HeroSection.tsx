@@ -13,6 +13,7 @@ import {
   Tag
 } from 'lucide-react';
 import { Vehicle, VehicleCategory, SearchFilters } from '../types';
+import { VEHICLE_CATEGORY_LABELS } from '../constants/vehicleCategories';
 
 interface HeroSectionProps {
   vehicles?: Vehicle[];
@@ -126,9 +127,9 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-amber-500 transition-colors"
                 >
                   <option value="all">جميع فئات الأسطول</option>
-                  <option value="light">سيدان اقتصادي</option>
-                  <option value="medium">سيدان متوسط فاخر</option>
-                  <option value="jeep_7seats">جيب عائلي 7 مقاعد</option>
+                  <option value="light">{VEHICLE_CATEGORY_LABELS.light}</option>
+                  <option value="medium">{VEHICLE_CATEGORY_LABELS.medium}</option>
+                  <option value="jeep_7seats">{VEHICLE_CATEGORY_LABELS.jeep_7seats}</option>
                 </select>
               </div>
 

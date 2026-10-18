@@ -39,6 +39,7 @@ import {
 } from 'firebase/firestore';
 import { storageService } from './storageService';
 import { handleFirestoreError } from '../utils/firebaseErrorHandler';
+import { todayLocalISO } from '../utils/dateUtils';
 
 // Storage keys for local persistence (STRICTLY NON-SENSITIVE / PUBLIC DATA ONLY)
 export const STORAGE_KEYS = {
@@ -672,7 +673,7 @@ export const dataService = {
           })
           .filter((v) => !v.isDeleted);
 
-        const today = new Date().toISOString().split('T')[0];
+        const today = todayLocalISO();
         const bookings = memoryCache.bookings?.data || [];
         const activeRentedIds = new Set(
           bookings
@@ -703,7 +704,7 @@ export const dataService = {
       }
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayLocalISO();
     const bookings = memoryCache.bookings?.data || [];
     const activeRentedIds = new Set(
       bookings
@@ -758,7 +759,7 @@ export const dataService = {
               })
               .filter((v) => !v.isDeleted);
 
-            const today = new Date().toISOString().split('T')[0];
+            const today = todayLocalISO();
             const bookings = memoryCache.bookings?.data || [];
             const activeRentedIds = new Set(
               bookings
@@ -1722,7 +1723,7 @@ export const dataService = {
       customerId: paymentData.customerId || (booking ? (booking.customerId || booking.customerPhone) : undefined),
       amount: paymentData.amount,
       method: paymentData.method,
-      paymentDate: paymentData.paymentDate || new Date().toISOString().split('T')[0],
+      paymentDate: paymentData.paymentDate || todayLocalISO(),
       receiptNumber,
       notes: paymentData.notes || '',
       createdAt: new Date().toISOString(),
@@ -2132,6 +2133,30 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       try {
         updateDoc(doc(db, 'notifications', id), { read: true }).catch(() => {});
+      } catch {}
+    }
+  },
+
+  markAllNotificationsAsRead() {
+    const current = this.getNotifications();
+    const updated = current.map(n => ({ ...n, read: true }));
+    setLocalItem(STORAGE_KEYS.NOTIFICATIONS, updated);
+    if (isFirebaseConfigured && db) {
+      current.filter(n => !n.read).forEach(n => {
+        try {
+          updateDoc(doc(db, 'notifications', n.id), { read: true }).catch(() => {});
+        } catch {}
+      });
+    }
+  },
+
+  deleteNotification(id: string) {
+    const current = this.getNotifications();
+    const updated = current.filter(n => n.id !== id);
+    setLocalItem(STORAGE_KEYS.NOTIFICATIONS, updated);
+    if (isFirebaseConfigured && db) {
+      try {
+        deleteDoc(doc(db, 'notifications', id)).catch(() => {});
       } catch {}
     }
   },

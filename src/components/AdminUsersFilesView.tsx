@@ -348,7 +348,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
 
           <div className="flex items-center gap-2 self-start md:self-center">
             <button
-              onClick={loadUsers}
+              onClick={() => loadUsers(true)}
               disabled={isLoading}
               className="px-4 py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-2 border border-slate-700 transition-colors shadow-sm disabled:opacity-50"
               id="refresh-firestore-users-btn"

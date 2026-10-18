@@ -36,7 +36,7 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
 }) => {
   if (!vehicle) return null;
 
-  const [inspectionType, setInspectionType] = useState<'handover' | 'return'>('handover');
+  const [inspectionType, setInspectionType] = useState<'pickup' | 'return'>('pickup');
   const [fuelLevel, setFuelLevel] = useState<'full' | 'three_quarters' | 'half' | 'quarter'>('full');
   const [mileage, setMileage] = useState<number>(vehicle?.currentMileage || 0);
   const [cleanliness, setCleanliness] = useState<'excellent' | 'good' | 'fair' | 'dirty'>('excellent');
@@ -229,9 +229,9 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setInspectionType('handover')}
+                    onClick={() => setInspectionType('pickup')}
                     className={`flex-1 py-2 text-xs font-bold rounded-xl border ${
-                      inspectionType === 'handover'
+                      inspectionType === 'pickup'
                         ? 'bg-amber-500 text-slate-950 border-amber-500'
                         : 'border-slate-800 text-slate-400 hover:bg-slate-800'
                     }`}

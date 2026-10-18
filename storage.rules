@@ -6,7 +6,6 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    // Role check strictly via Firebase Authentication Custom Claims (sole server-side source of truth)
     function hasRole(r) {
       return isSignedIn() &&
         (('role' in request.auth.token && request.auth.token.role == r) ||
@@ -26,68 +25,71 @@ service firebase.storage {
       return isAdmin() || hasRole('employee') || hasRole('staff') || hasRole('manager');
     }
 
-    function hasContractDoc(contractId) {
-      return firestore.exists(/databases/ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1/documents/contracts/$(contractId));
-    }
-
-    function getContractData(contractId) {
-      return firestore.get(/databases/ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1/documents/contracts/$(contractId)).data;
-    }
-
     // =========================================================================
     // 1. PUBLIC FLEET VEHICLE MEDIA
-    // Public read for vehicle catalog photos; write strictly restricted to staff
     // =========================================================================
     match /vehicles/{vehicleId}/{allPaths=**} {
       allow read: if true;
       allow write: if isEmployee()
-                    && request.resource.size < 30 * 1024 * 1024
+                    && request.resource.size <= 30 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)');
     }
 
     match /public/{allPaths=**} {
       allow read: if true;
       allow write: if isEmployee()
-                    && request.resource.size < 30 * 1024 * 1024
+                    && request.resource.size <= 30 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)');
     }
 
     // =========================================================================
     // 2. PRIVATE CUSTOMER DOCUMENTS & USER UPLOADS
-    // Strictly private to the account owner and authorized staff (Zero Public Read)
     // =========================================================================
     match /users/{userId}/{allPaths=**} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
       allow create, update: if isSignedIn() && (request.auth.uid == userId || isEmployee())
-                    && request.resource.size < 25 * 1024 * 1024
+                    && request.resource.size <= 25 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
-      allow delete: if isEmployee();
+      allow delete: if isEmployee() || (isSignedIn() && request.auth.uid == userId);
     }
 
     match /uploads/{userId}/{allPaths=**} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
       allow create, update: if isSignedIn() && (request.auth.uid == userId || isEmployee())
-                    && request.resource.size < 30 * 1024 * 1024
+                    && request.resource.size <= 25 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
+      allow delete: if isEmployee() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    // =========================================================================
+    // 3. DIGITAL CONTRACTS & INSPECTION VIDEOS (<= 100MB)
+    // =========================================================================
+    match /contracts/{contractId}/videos/{videoId} {
+      allow read: if isEmployee() || (
+        isSignedIn() &&
+        resource != null &&
+        resource.metadata != null &&
+        resource.metadata.customerId == request.auth.uid
+      );
+      allow create, update: if (isEmployee() || isSignedIn())
+                    && request.resource.size <= 100 * 1024 * 1024
+                    && request.resource.contentType.matches('video/(mp4|webm|quicktime)');
       allow delete: if isEmployee();
     }
 
-    // =========================================================================
-    // 3. DIGITAL CONTRACTS & INSPECTION MEDIA
-    // Restricted to authorized staff and the verified contract customer
-    // =========================================================================
     match /contracts/{contractId}/{allPaths=**} {
       allow read: if isEmployee() || (
         isSignedIn() &&
-        hasContractDoc(contractId) &&
-        getContractData(contractId).get('customerId', '') == request.auth.uid
+        resource != null &&
+        resource.metadata != null &&
+        resource.metadata.customerId == request.auth.uid
       );
       allow write: if isEmployee()
-                    && request.resource.size < 100 * 1024 * 1024
-                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|video/(mp4|webm|quicktime|x-matroska)|application/pdf');
+                    && request.resource.size <= 30 * 1024 * 1024
+                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
     }
 
-    // Default fallback catch-all - restricted to staff / admin
+    // Default fallback catch-all
     match /{allPaths=**} {
       allow read: if isEmployee();
       allow write: if isAdmin();

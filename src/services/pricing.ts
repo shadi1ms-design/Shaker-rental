@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   insuranceShortTerm: 500,
   insuranceLongTerm: 300,
   weeklyDiscountPerDay: 5,
+  driverDailyRate: 40,
   discountConfig: {
     enabled: true,
     percentage: 10,
@@ -34,31 +35,34 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 /**
- * Calculates the number of calendar rental days between two dates.
- * Minimum is 1 day.
+ * Calculates rental days strictly using Asia/Damascus timezone (+03:00) with Math.ceil.
+ * Rejects return <= pickup (returns 0).
  */
-export function calculateRentalDays(pickupDateStr: string, returnDateStr: string): number {
+export function calculateRentalDays(
+  pickupDateStr: string,
+  returnDateStr: string,
+  pickupTimeStr = '10:00',
+  returnTimeStr = '10:00'
+): number {
   if (!pickupDateStr || !returnDateStr) return 1;
-  const start = new Date(pickupDateStr);
-  const end = new Date(returnDateStr);
-  if (end < start) {
-    return 0;
-  }
-  const diffTime = end.getTime() - start.getTime();
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return Math.max(1, diffDays);
+
+  const pTime = pickupTimeStr || '10:00';
+  const rTime = returnTimeStr || '10:00';
+
+  const pickupMs = new Date(`${pickupDateStr}T${pTime}:00+03:00`).getTime();
+  const returnMs = new Date(`${returnDateStr}T${rTime}:00+03:00`).getTime();
+
+  if (isNaN(pickupMs) || isNaN(returnMs)) return 1;
+
+  const diffMs = returnMs - pickupMs;
+  if (diffMs <= 0) return 0; // Reject return <= pickup
+
+  const hours = diffMs / (1000 * 60 * 60);
+  return Math.max(1, Math.ceil(hours / 24));
 }
 
 /**
- * Centralized Pricing Engine
- *
- * System 1 (Duration/Period-based Discount) has been CANCELLED as requested.
- * All bookings are priced based on the daily rental rate (days × dailyPrice).
- *
- * System 2 (Dynamic Member Account Discount 1% - 25%) is ACTIVE:
- *   - Configurable percentage from AppSettings (1% to 25%)
- *   - Applies to all cars or specific vehicle IDs
- *   - Strictly requires authentication (logged-in user)
+ * Centralized Pricing Engine (Frontend & Shared UI)
  */
 export function calculateRentalPrice(
   category: VehicleCategory,
@@ -68,18 +72,17 @@ export function calculateRentalPrice(
   options?: {
     isUserLoggedIn?: boolean;
     vehicleId?: string;
+    withDriver?: boolean;
   }
 ): PricingCalculation {
   const rentalDays = Math.max(1, Math.round(days));
-  const rawBase = rentalDays * dailyPrice;
+  const rawBase = rentalDays * Math.max(0, dailyPrice);
 
-  // Duration/Period discount is cancelled as requested
   const durationDiscountAmount = 0;
   const durationDiscountType: 'none' | 'weekly' | 'monthly' | 'proportional' = 'none';
   const durationDiscountDescription = '';
-  const subtotalAfterDuration = rawBase;
 
-  // --- ACTIVE DISCOUNT SYSTEM: Dynamic Member Account Discount (1% - 25%, requires login) ---
+  // Dynamic Member Discount
   const discountCfg = settings.discountConfig;
   let memberDiscountEligible = false;
   let memberDiscountApplied = false;
@@ -91,9 +94,6 @@ export function calculateRentalPrice(
     const rawPct = Number(discountCfg.percentage) || 0;
     const safePercentage = Math.min(25, Math.max(1, Math.round(rawPct)));
 
-    // Check if this vehicle is eligible:
-    // If scope === 'all', all vehicles are eligible.
-    // If scope === 'specific', check if options.vehicleId is in discountCfg.vehicleIds
     const isVehicleMatched =
       discountCfg.scope === 'all' ||
       !discountCfg.vehicleIds ||
@@ -105,7 +105,6 @@ export function calculateRentalPrice(
       memberDiscountPercentage = safePercentage;
       potentialMemberSavings = Math.round(rawBase * (safePercentage / 100));
 
-      // Strictly require authentication to apply the member discount
       if (options?.isUserLoggedIn) {
         memberDiscountApplied = true;
         memberDiscountAmount = potentialMemberSavings;
@@ -113,35 +112,38 @@ export function calculateRentalPrice(
     }
   }
 
-  // Final subtotal and total discount
   const finalSubtotal = Math.max(0, rawBase - memberDiscountAmount);
-  const totalDiscountAmount = memberDiscountAmount;
 
-  // Clear human-readable explanation
-  let explanation = `سعر يومي (${dailyPrice}$ × ${rentalDays} يوم)`;
-  if (memberDiscountApplied && memberDiscountAmount > 0) {
-    explanation += ` • خصم الأعضاء (${memberDiscountPercentage}%: -$${memberDiscountAmount})`;
-  }
-
-  if (memberDiscountApplied && memberDiscountAmount > 0) {
-    explanation += ` • خصم الأعضاء (${memberDiscountPercentage}%: -$${memberDiscountAmount})`;
-  }
-
-  // Insurance calculation rule:
-  // 1 or 2 days: $500
-  // More than 2 days: $300
+  // Insurance calculation rule
   const insuranceAmount =
     rentalDays <= 2
       ? settings.insuranceShortTerm ?? settings.insurance1to2Days ?? 500
       : settings.insuranceLongTerm ?? settings.insuranceAbove2Days ?? 300;
 
-  const totalPrice = finalSubtotal + insuranceAmount;
+  // Driver fee calculation
+  let driverFee = 0;
+  if (options?.withDriver) {
+    const rate = Number(settings.driverDailyRate ?? 40);
+    driverFee = rate * rentalDays;
+  }
+
+  const totalPrice = finalSubtotal + insuranceAmount + driverFee;
+
+  // Single clean Arabic explanation without duplication
+  let explanation = `أجرة يومية (${dailyPrice}$ × ${rentalDays} يوم)`;
+  if (memberDiscountApplied && memberDiscountAmount > 0) {
+    explanation += ` • خصم الأعضاء (${memberDiscountPercentage}%: -$${memberDiscountAmount})`;
+  }
+  if (driverFee > 0) {
+    explanation += ` • خدمة سائق خاص (${driverFee}$)`;
+  }
+  explanation += ` • تأمين مسترد (${insuranceAmount}$)`;
 
   return {
     rentalDays,
     dailyPrice,
     basePrice: rawBase,
-    discountAmount: totalDiscountAmount,
+    discountAmount: memberDiscountAmount,
     durationDiscountAmount,
     durationDiscountType,
     durationDiscountDescription,
@@ -153,14 +155,11 @@ export function calculateRentalPrice(
     insuranceAmount,
     subtotal: finalSubtotal,
     totalPrice,
-    pricingType: durationDiscountType === 'none' ? 'daily' : durationDiscountType,
+    pricingType: 'daily',
     explanation,
   };
 }
 
-/**
- * Format currency with Arabic locale and USD symbol
- */
 export function formatCurrency(amount: number, currency = '$'): string {
   return `${amount.toLocaleString('ar-SY')} ${currency}`;
 }
