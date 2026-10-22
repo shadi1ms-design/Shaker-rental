@@ -301,7 +301,9 @@ export const createBookingSecure = onCall(
           settingsData,
           isUserLoggedIn,
           canonicalVehicleId,
-          withDriver
+          withDriver,
+          vehicleRef.id,
+          vehicleData.id
         );
 
         let nextCount = 1;

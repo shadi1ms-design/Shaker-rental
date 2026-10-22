@@ -483,7 +483,7 @@ function MainAppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-cairo">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-cairo overflow-x-hidden">
       {/* Global Slide-out Navigation Drawer (Controlled via MenuContext) */}
       <GlobalMenu
         currentView={currentView === 'about' ? 'contact' : currentView === 'catalog' ? 'cars' : currentView}

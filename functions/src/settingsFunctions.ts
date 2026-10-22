@@ -30,6 +30,10 @@ export const calculateDynamicPricing = onCall(
       throw new HttpsError('not-found', 'السيارة المطلوبة لحساب السعر غير موجودة.');
     }
 
+    const canonicalVehicleId = resolved.data.id || resolved.ref.id;
+    const docId = resolved.ref.id;
+    const dataId = resolved.data.id;
+
     const officialDailyPrice = Number(resolved.data.dailyPrice) || 0;
     const settingsDoc = await db.collection('settings').doc('global').get();
     const settings = settingsDoc.exists ? settingsDoc.data() : null;
@@ -40,8 +44,10 @@ export const calculateDynamicPricing = onCall(
       Number(days) || 1,
       settings,
       isUserLoggedIn,
-      cleanVehicleId,
-      Boolean(withDriver)
+      canonicalVehicleId,
+      Boolean(withDriver),
+      docId,
+      dataId
     );
 
     return {
@@ -53,8 +59,9 @@ export const calculateDynamicPricing = onCall(
 
 /**
  * Cloud Function: updateSettingsSecure (region: asia-south1)
- * Server-authoritative settings update with rigorous bounds validation (Requirement 3).
- * Validates: insurance >= 0, discount 0-25%, driver fee >= 0, cancellationLeadHours (0-720), phone formats, and logs immutable audit.
+ * Server-authoritative settings update with rigorous bounds validation.
+ * Validates: insurance (0-5000), discount (0-25%), driver fee (0-1000), monthly rates (0-100000),
+ * cancellationLeadHours (0-720), phone formats, and logs immutable audit.
  */
 export const updateSettingsSecure = onCall(
   {
@@ -72,11 +79,11 @@ export const updateSettingsSecure = onCall(
     const incomingSettings = request.data || {};
     const updates: Record<string, any> = {};
 
-    // Validate insurance values (>= 0)
+    // Validate insurance values (0-5000)
     if (incomingSettings.insurance1to2Days !== undefined) {
       const ins1 = Number(incomingSettings.insurance1to2Days);
-      if (isNaN(ins1) || ins1 < 0) {
-        throw new HttpsError('invalid-argument', 'قيمة تأمين 1-2 يوم يجب أن تكون رقماً موجباً أو صفراً.');
+      if (isNaN(ins1) || ins1 < 0 || ins1 > 5000) {
+        throw new HttpsError('invalid-argument', 'قيمة تأمين 1-2 يوم يجب أن تكون رقماً بين 0 و 5000.');
       }
       updates.insurance1to2Days = ins1;
       updates.insuranceShortTerm = ins1;
@@ -84,28 +91,52 @@ export const updateSettingsSecure = onCall(
 
     if (incomingSettings.insuranceAbove2Days !== undefined) {
       const ins2 = Number(incomingSettings.insuranceAbove2Days);
-      if (isNaN(ins2) || ins2 < 0) {
-        throw new HttpsError('invalid-argument', 'قيمة تأمين أكثر من يومين يجب أن تكون رقماً موجباً أو صفراً.');
+      if (isNaN(ins2) || ins2 < 0 || ins2 > 5000) {
+        throw new HttpsError('invalid-argument', 'قيمة تأمين أكثر من يومين يجب أن تكون رقماً بين 0 و 5000.');
       }
       updates.insuranceAbove2Days = ins2;
       updates.insuranceLongTerm = ins2;
     }
 
-    // Validate driver rate (>= 0)
+    // Validate driver rate (0-1000)
     if (incomingSettings.driverDailyRate !== undefined) {
       const driverRate = Number(incomingSettings.driverDailyRate);
-      if (isNaN(driverRate) || driverRate < 0) {
-        throw new HttpsError('invalid-argument', 'أجرة السائق اليومية يجب أن تكون رقماً موجباً أو صفراً.');
+      if (isNaN(driverRate) || driverRate < 0 || driverRate > 1000) {
+        throw new HttpsError('invalid-argument', 'أجرة السائق اليومية يجب أن تكون رقماً بين 0 و 1000.');
       }
       updates.driverDailyRate = driverRate;
     }
 
+    // Validate monthly rates (0-100000)
+    if (incomingSettings.monthlyRateLight !== undefined) {
+      const rate = Number(incomingSettings.monthlyRateLight);
+      if (isNaN(rate) || rate < 0 || rate > 100000) {
+        throw new HttpsError('invalid-argument', 'السعر الشهري للسيدان الاقتصادي يجب أن يكون رقماً بين 0 و 100000.');
+      }
+      updates.monthlyRateLight = rate;
+    }
+
+    if (incomingSettings.monthlyRateMedium !== undefined) {
+      const rate = Number(incomingSettings.monthlyRateMedium);
+      if (isNaN(rate) || rate < 0 || rate > 100000) {
+        throw new HttpsError('invalid-argument', 'السعر الشهري للسيدان المتوسط يجب أن يكون رقماً بين 0 و 100000.');
+      }
+      updates.monthlyRateMedium = rate;
+    }
+
+    if (incomingSettings.monthlyRateJeep !== undefined) {
+      const rate = Number(incomingSettings.monthlyRateJeep);
+      if (isNaN(rate) || rate < 0 || rate > 100000) {
+        throw new HttpsError('invalid-argument', 'السعر الشهري للجيب يجب أن يكون رقماً بين 0 و 100000.');
+      }
+      updates.monthlyRateJeep = rate;
+    }
 
     // Validate discount config (0-25%)
     if (incomingSettings.discountConfig !== undefined) {
       const cfg = incomingSettings.discountConfig;
       if (typeof cfg === 'object' && cfg !== null) {
-        const pct = Number(cfg.percentage || 0);
+        const pct = Number(cfg.percentage ?? 0);
         if (isNaN(pct) || pct < 0 || pct > 25) {
           throw new HttpsError('invalid-argument', 'نسبة خصم الأعضاء يجب أن تكون بين 0% و 25%.');
         }

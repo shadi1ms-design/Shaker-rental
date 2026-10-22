@@ -83,8 +83,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         if (onSuccess) onSuccess();
         else onClose();
       }, 700);
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'تعذر تسجيل الدخول عبر Google. يرجى المحاولة ثانية.');
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'تعذر تسجيل الدخول عبر Google. يرجى المحاولة ثانية.');
     } finally {
       setIsLoading(false);
     }
@@ -161,8 +161,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         await resetPassword(cleanEmail);
         setSuccessMessage('إذا كان البريد مسجلاً، تم إرسال تعليمات إعادة تعيين كلمة المرور إليه.');
       }
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'حدث خطأ أثناء إتمام العملية. يرجى المحاولة ثانية.');
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'حدث خطأ أثناء إتمام العملية. يرجى المحاولة ثانية.');
     } finally {
       setIsLoading(false);
     }

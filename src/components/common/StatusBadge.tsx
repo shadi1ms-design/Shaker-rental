@@ -1,5 +1,5 @@
 import React from 'react';
-import { VehicleStatus } from '../../types';
+import { VehicleStatus, BookingStatus } from '../../types';
 import { BOOKING_STATUS_META, VEHICLE_STATUS_META, USER_VERIFICATION_STATUS_META } from '../../constants/statusMeta';
 
 interface StatusBadgeProps {
@@ -22,7 +22,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   let dotClass = 'bg-slate-400';
 
   if (type === 'booking') {
-    const meta = (BOOKING_STATUS_META as any)[status];
+    const meta = BOOKING_STATUS_META[status as BookingStatus];
     if (meta) {
       label = customLabel || meta.label;
       badgeClass = meta.badgeClass;

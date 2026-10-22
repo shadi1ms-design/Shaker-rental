@@ -24,7 +24,7 @@ const projectId = env.VITE_FIREBASE_PROJECT_ID || appletConfig?.projectId || '';
 const storageBucket = env.VITE_FIREBASE_STORAGE_BUCKET || appletConfig?.storageBucket || '';
 const messagingSenderId = env.VITE_FIREBASE_MESSAGING_SENDER_ID || appletConfig?.messagingSenderId || '';
 const appId = env.VITE_FIREBASE_APP_ID || appletConfig?.appId || '';
-const measurementId = env.VITE_FIREBASE_MEASUREMENT_ID || (appletConfig as any)?.measurementId || 'G-15PLS5HCF8';
+const measurementId = env.VITE_FIREBASE_MEASUREMENT_ID || (appletConfig as Record<string, unknown>)?.measurementId || 'G-15PLS5HCF8';
 export const firestoreDatabaseId = env.VITE_FIREBASE_DATABASE_ID || appletConfig?.firestoreDatabaseId || '';
 
 export const firebaseConfig = {
@@ -181,7 +181,7 @@ export const getDb = (): Firestore => {
     const existingApps = getApps();
     app = existingApps && existingApps.length > 0 && existingApps[0] ? existingApps[0] : initializeApp(firebaseConfig);
   }
-  if (!db || (db as any)._isTerminated) {
+  if (!db || (db as unknown as { _isTerminated?: boolean })._isTerminated) {
     try {
       db = customDbId ? getFirestore(app, customDbId) : getFirestore(app);
     } catch {

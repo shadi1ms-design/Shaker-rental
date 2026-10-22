@@ -23,7 +23,7 @@ export const pageTransitionVariants = {
     y: 0,
     transition: {
       duration: 0.35,
-      ease: [0.16, 1, 0.3, 1], // Smooth easeOut cubic-bezier
+      ease: [0.16, 1, 0.3, 1] as const, // Smooth easeOut cubic-bezier
     },
   },
   exit: {
@@ -31,7 +31,7 @@ export const pageTransitionVariants = {
     y: -8,
     transition: {
       duration: 0.2,
-      ease: 'easeIn',
+      ease: 'easeIn' as const,
     },
   },
 };
@@ -65,7 +65,7 @@ export const staggerItemVariants = {
     y: 0,
     transition: {
       duration: 0.35,
-      ease: [0.16, 1, 0.3, 1],
+      ease: [0.16, 1, 0.3, 1] as const,
     },
   },
 };

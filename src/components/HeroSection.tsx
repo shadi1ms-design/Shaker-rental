@@ -206,7 +206,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
               className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-rose-500/40 text-slate-200 hover:text-rose-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             >
               <Tag className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
-              <span>خصومات أسبوعية وشهرية</span>
+              <span>عروض الأعضاء</span>
             </button>
           </div>
         </div>

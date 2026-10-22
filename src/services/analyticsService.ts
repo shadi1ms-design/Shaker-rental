@@ -2,7 +2,7 @@ import { logEvent } from 'firebase/analytics';
 import { analytics } from '../firebase/config';
 
 export interface AnalyticsEventParams {
-  [key: string]: any;
+  [key: string]: string | number | boolean | null | undefined;
 }
 
 /**
@@ -10,7 +10,7 @@ export interface AnalyticsEventParams {
  * Tracks user actions, booking steps, car views, contract signing, and conversion metrics
  */
 class AnalyticsService {
-  private eventLog: Array<{ eventName: string; params?: any; timestamp: string }> = [];
+  private eventLog: Array<{ eventName: string; params?: AnalyticsEventParams; timestamp: string }> = [];
 
   /**
    * Log an event to Firebase Analytics with safety checks

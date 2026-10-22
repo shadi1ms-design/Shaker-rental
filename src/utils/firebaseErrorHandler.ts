@@ -34,16 +34,17 @@ export interface FirestoreErrorContext {
   path: string;
   operation: 'read' | 'write' | 'create' | 'update' | 'delete' | 'query' | 'transaction';
   userId?: string | null;
-  rawError?: any;
+  rawError?: unknown;
 }
 
 /**
  * Maps Firebase error codes to user-friendly Arabic messages
  */
-export function getArabicErrorMessage(error: any): string {
+export function getArabicErrorMessage(error: unknown): string {
   if (!error) return 'حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.';
 
-  const code = typeof error === 'string' ? error : (error.code || error.message || '');
+  const errObj = typeof error === 'object' && error !== null ? (error as { code?: string; message?: string }) : null;
+  const code = typeof error === 'string' ? error : (errObj?.code || errObj?.message || '');
 
   // Firebase Authentication specific errors
   if (code.includes('auth/invalid-credential') || code.includes('auth/wrong-password')) {
@@ -133,7 +134,7 @@ export function getArabicErrorMessage(error: any): string {
   }
 
   // Default fallback
-  return error.message || 'حدث خطأ أثناء تحميل البيانات.';
+  return errObj?.message || 'حدث خطأ أثناء تحميل البيانات.';
 }
 
 export const getErrorMessage = getArabicErrorMessage;
@@ -147,13 +148,14 @@ export function handleFirestoreError(
   collection: string,
   path: string,
   operation: 'read' | 'write' | 'create' | 'update' | 'delete' | 'query' | 'transaction',
-  error: any,
+  error: unknown,
   userId?: string | null
 ): string {
   const isDev = import.meta.env.DEV || window.location.hostname === 'localhost';
+  const errObj = typeof error === 'object' && error !== null ? (error as { code?: string; message?: string }) : null;
 
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : (error?.message || String(error)),
+    error: error instanceof Error ? error.message : (errObj?.message || String(error)),
     operationType: operation as OperationType,
     path: `/${collection}/${path}`,
     authInfo: {
@@ -164,8 +166,8 @@ export function handleFirestoreError(
   if (isDev) {
     console.groupCollapsed(`🔥 [Firestore Error] ${operation.toUpperCase()} on /${collection}/${path}`);
     console.warn(`Structured Error:`, JSON.stringify(errInfo, null, 2));
-    console.warn(`Error Code:       ${error?.code || 'N/A'}`);
-    console.warn(`Technical Msg:    ${error?.message || error}`);
+    console.warn(`Error Code:       ${errObj?.code || 'N/A'}`);
+    console.warn(`Technical Msg:    ${errObj?.message || error}`);
     console.groupEnd();
   }
 

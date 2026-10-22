@@ -28,9 +28,9 @@ export const EmailVerificationGate: React.FC = () => {
       await resendVerificationEmail();
       setResendSuccess(true);
       setCooldown(60);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to resend verification email:', err);
-      setErrorMessage(err.message || 'تعذر إعادة إرسال رابط التفعيل. يرجى المحاولة بعد قليل.');
+      setErrorMessage(err instanceof Error ? err.message : 'تعذر إعادة إرسال رابط التفعيل. يرجى المحاولة بعد قليل.');
     } finally {
       setIsResending(false);
     }
@@ -46,7 +46,7 @@ export const EmailVerificationGate: React.FC = () => {
       if (!verified) {
         setErrorMessage('لم يتم تأكيد البريد الإلكتروني بعد. يرجى النقر على الرابط المرسل إلى بريدك ثم المحاولة مجدداً.');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to refresh email verification status:', err);
       setErrorMessage('حدث خطأ أثناء فحص حالة التفعيل. يرجى المحاولة مجدداً.');
     } finally {

@@ -12,7 +12,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   insuranceAbove2Days: 300,
   insuranceShortTerm: 500,
   insuranceLongTerm: 300,
-  weeklyDiscountPerDay: 5,
   driverDailyRate: 40,
   discountConfig: {
     enabled: true,
@@ -71,6 +70,8 @@ export function calculateRentalPrice(
   options?: {
     isUserLoggedIn?: boolean;
     vehicleId?: string;
+    vehicleDocId?: string;
+    vehicleDataId?: string;
     withDriver?: boolean;
   }
 ): PricingCalculation {
@@ -81,7 +82,7 @@ export function calculateRentalPrice(
   const durationDiscountType: 'none' | 'weekly' | 'monthly' | 'proportional' = 'none';
   const durationDiscountDescription = '';
 
-  // Dynamic Member Discount
+  // Dynamic Member Discount (0-25%)
   const discountCfg = settings.discountConfig;
   let memberDiscountEligible = false;
   let memberDiscountApplied = false;
@@ -91,11 +92,23 @@ export function calculateRentalPrice(
 
   if (discountCfg && discountCfg.enabled) {
     const rawPct = Number(discountCfg.percentage) || 0;
-    const safePercentage = Math.min(25, Math.max(1, Math.round(rawPct)));
+    // Treats 0 as no discount, matching server logic
+    const safePercentage = Math.min(25, Math.max(0, Math.round(rawPct)));
 
+    const candidateIds = new Set<string>();
+    if (options?.vehicleId) candidateIds.add(String(options.vehicleId).trim());
+    if (options?.vehicleDocId) candidateIds.add(String(options.vehicleDocId).trim());
+    if (options?.vehicleDataId) candidateIds.add(String(options.vehicleDataId).trim());
+
+    // Matches vehicleId with both doc id and data.id
     const isVehicleMatched =
       discountCfg.scope === 'specific'
-        ? Boolean(discountCfg.vehicleIds && discountCfg.vehicleIds.length > 0 && options?.vehicleId && discountCfg.vehicleIds.includes(options.vehicleId))
+        ? Boolean(
+            discountCfg.vehicleIds &&
+            discountCfg.vehicleIds.length > 0 &&
+            candidateIds.size > 0 &&
+            discountCfg.vehicleIds.some((id) => candidateIds.has(String(id).trim()))
+          )
         : true;
 
     if (isVehicleMatched && safePercentage > 0) {

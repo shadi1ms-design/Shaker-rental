@@ -142,6 +142,8 @@ export interface Contract {
 
 
 
+export type CleanlinessStatus = 'excellent' | 'good' | 'fair' | 'dirty';
+
 export interface VehicleInspection {
   id: string;
   bookingId: string;
@@ -183,7 +185,6 @@ export interface AppSettings {
   insuranceAbove2Days: number;
   insuranceShortTerm?: number;
   insuranceLongTerm?: number;
-  weeklyDiscountPerDay?: number;
   discountConfig?: DiscountConfig;
   monthlyRateLight: number;
   monthlyRateMedium: number;
@@ -252,7 +253,7 @@ export interface AppNotification {
   createdAt: string;
 }
 
-export interface UploadedFile {
+export interface UserFileRecord {
   id: string;
   userId: string;
   userEmail?: string;
@@ -277,7 +278,7 @@ export interface FirestoreUser {
   disabled?: boolean;
   createdAt: string;
   uploadedFilesCount?: number;
-  files?: UploadedFile[];
+  files?: UserFileRecord[];
   verificationStatus?: 'pending' | 'manual_review' | 'verified' | 'rejected';
   verified?: boolean;
   identityVerified?: boolean;
@@ -314,3 +315,25 @@ export interface FilterOptions {
 }
 
 export type SortField = 'price-asc' | 'price-desc' | 'year-desc' | 'popularity';
+
+export interface SettingsPayload {
+  [key: string]: unknown;
+}
+
+export interface IdentityVerificationParams {
+  action: 'set_status';
+  targetUserId: string;
+  status: 'pending' | 'manual_review' | 'verified' | 'rejected';
+  notes?: string;
+}
+
+export interface IdentityVerificationResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export interface AuthUserData extends Partial<FirestoreUser> {
+  uid: string;
+  email: string;
+}

@@ -243,9 +243,9 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
       setTimeout(() => {
         setSaveSuccessMsg(null);
       }, 5000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error updating user role:', err);
-      setSaveErrorMsg(err?.message || 'فشل تحديث الدور. تأكد من اتصال الإنترنت وصلاحيات الحساب.');
+      setSaveErrorMsg(err instanceof Error ? err.message : 'فشل تحديث الدور. تأكد من اتصال الإنترنت وصلاحيات الحساب.');
     } finally {
       setIsSaving(false);
     }
@@ -284,9 +284,9 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
       );
       setPendingToggleStatusUser(null);
       setTimeout(() => setSaveSuccessMsg(null), 5000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error toggling user account status:', err);
-      setSaveErrorMsg(err?.message || 'فشل تغيير حالة الحساب. تأكد من الصلاحيات والاتصال.');
+      setSaveErrorMsg(err instanceof Error ? err.message : 'فشل تغيير حالة الحساب. تأكد من الصلاحيات والاتصال.');
     } finally {
       setIsTogglingStatus(false);
     }
@@ -313,9 +313,9 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
       setSaveSuccessMsg(`تم حذف المستخدم (${pendingDeleteUser.displayName || pendingDeleteUser.email}) نهائياً من قاعدة البيانات ونظام التوثيق.`);
       setPendingDeleteUser(null);
       setTimeout(() => setSaveSuccessMsg(null), 5000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error deleting user account:', err);
-      setSaveErrorMsg(err?.message || 'فشل حذف الحساب. تأكد من الصلاحيات والاتصال.');
+      setSaveErrorMsg(err instanceof Error ? err.message : 'فشل حذف الحساب. تأكد من الصلاحيات والاتصال.');
     } finally {
       setIsDeletingUser(false);
     }
@@ -446,16 +446,18 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
 
         {/* Role Filter Pills */}
         <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs w-full md:w-auto overflow-x-auto">
-          {[
-            { id: 'all', label: `الكل (${totalCount})` },
-            { id: 'staff', label: `طاقم العمل (${adminCount + employeeCount})` },
-            { id: 'admin', label: `المدراء (${adminCount})` },
-            { id: 'employee', label: `الموظفون (${employeeCount})` },
-            { id: 'customer', label: `العملاء (${customerCount})` },
-          ].map((f) => (
+          {(
+            [
+              { id: 'all', label: `الكل (${totalCount})` },
+              { id: 'staff', label: `طاقم العمل (${adminCount + employeeCount})` },
+              { id: 'admin', label: `المدراء (${adminCount})` },
+              { id: 'employee', label: `الموظفون (${employeeCount})` },
+              { id: 'customer', label: `العملاء (${customerCount})` },
+            ] as const
+          ).map((f) => (
             <button
               key={f.id}
-              onClick={() => setRoleFilter(f.id as any)}
+              onClick={() => setRoleFilter(f.id)}
               className={`px-3 py-1.5 rounded-lg font-bold transition-all shrink-0 ${
                 roleFilter === f.id
                   ? 'bg-amber-500 text-slate-950 shadow-sm'

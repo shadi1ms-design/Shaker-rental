@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FirestoreUser, UploadedFile } from '../types';
+import { FirestoreUser, UserFileRecord } from '../types';
 import { dataService } from '../services/dataService';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -48,22 +48,22 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = () => {
 
   // Selected User Drill-down state
   const [selectedUser, setSelectedUser] = useState<FirestoreUser | null>(null);
-  const [userFiles, setUserFiles] = useState<UploadedFile[]>([]);
+  const [userFiles, setUserFiles] = useState<UserFileRecord[]>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
 
   // File Preview Modal
-  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(null);
+  const [previewFile, setPreviewFile] = useState<UserFileRecord | null>(null);
 
   // Upload Modal for User
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFileName, setUploadFileName] = useState('');
-  const [uploadFileCategory, setUploadFileCategory] = useState<UploadedFile['category']>('driver_license');
+  const [uploadFileCategory, setUploadFileCategory] = useState<UserFileRecord['category']>('driver_license');
   const [adminSelectedFile, setAdminSelectedFile] = useState<File | null>(null);
   const [adminUploadProgress, setAdminUploadProgress] = useState(0);
   const [adminUploadError, setAdminUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
-  const [adminFileToDelete, setAdminFileToDelete] = useState<UploadedFile | null>(null);
+  const [adminFileToDelete, setAdminFileToDelete] = useState<UserFileRecord | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const loadUserFiles = async (userId: string) => {
@@ -126,7 +126,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = () => {
       if (res.success) {
         setVerificationFeedback({
           type: 'success',
-          message: res.data?.message || 'تم تحديث حالة توثيق العميل بنجاح في Firestore.'
+          message: (res.data as { message?: string })?.message || 'تم تحديث حالة توثيق العميل بنجاح في Firestore.'
         });
         // Update local state for immediate feedback
         setUsers(prev => prev.map(u => u.id === targetUserId ? { ...u, verificationStatus: newStatus } : u));
@@ -136,11 +136,11 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = () => {
       } else {
         throw new Error(res.error || 'فشل تحديث حالة توثيق العميل.');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error updating verification status:', err);
       setVerificationFeedback({
         type: 'error',
-        message: err?.message || 'تعذر الاتصال بالخادم لتحديث حالة التوثيق.'
+        message: err instanceof Error ? err.message : 'تعذر الاتصال بالخادم لتحديث حالة التوثيق.'
       });
     } finally {
       setIsUpdatingVerification(false);
@@ -220,15 +220,15 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = () => {
       setAdminUploadProgress(0);
       setShowUploadModal(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error uploading file for user:', err);
-      setAdminUploadError(err?.message || 'حدث خطأ أثناء رفع الملف.');
+      setAdminUploadError(err instanceof Error ? err.message : 'حدث خطأ أثناء رفع الملف.');
     } finally {
       setIsUploading(false);
     }
   };
 
-  const handleDeleteUserFile = (file: UploadedFile) => {
+  const handleDeleteUserFile = (file: UserFileRecord) => {
     if (!selectedUser) return;
     setAdminFileToDelete(file);
   };
@@ -270,7 +270,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = () => {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
-  const getCategoryLabel = (category: UploadedFile['category']) => {
+  const getCategoryLabel = (category: UserFileRecord['category']) => {
     switch (category) {
       case 'driver_license':
         return 'شهادة القيادة';
@@ -1028,7 +1028,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = () => {
                 <label className="block text-slate-300 font-bold mb-1.5">تصنيف الوثيقة *</label>
                 <select
                   value={uploadFileCategory || 'driver_license'}
-                  onChange={(e) => setUploadFileCategory(e.target.value as any)}
+                  onChange={(e) => setUploadFileCategory(e.target.value as UserFileRecord['category'])}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
                 >
                   <option value="driver_license">شهادة القيادة (Driver License)</option>

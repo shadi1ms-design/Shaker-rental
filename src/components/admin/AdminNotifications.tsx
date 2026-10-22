@@ -120,15 +120,17 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
 
           {/* Filter Pills */}
           <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-            {[
-              { id: 'all', label: 'الكل' },
-              { id: 'unread', label: `غير المقروء (${unreadCount})` },
-              { id: 'booking', label: 'الحجوزات' },
-              { id: 'alerts', label: 'التنبيهات' },
-            ].map((f) => (
+            {(
+              [
+                { id: 'all', label: 'الكل' },
+                { id: 'unread', label: `غير المقروء (${unreadCount})` },
+                { id: 'booking', label: 'الحجوزات' },
+                { id: 'alerts', label: 'التنبيهات' },
+              ] as const
+            ).map((f) => (
               <button
                 key={f.id}
-                onClick={() => setFilter(f.id as any)}
+                onClick={() => setFilter(f.id)}
                 className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
                   filter === f.id
                     ? 'bg-amber-500 text-slate-950 shadow-sm'

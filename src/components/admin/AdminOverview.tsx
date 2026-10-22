@@ -100,16 +100,18 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
             {/* Period Selector */}
             <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-              {[
-                { id: 'today', label: 'اليوم' },
-                { id: '7days', label: '7 أيام' },
-                { id: 'month', label: 'الشهر الحالي' },
-                { id: 'all', label: 'كافة الفترات' },
-              ].map((p) => (
+              {(
+                [
+                  { id: 'today', label: 'اليوم' },
+                  { id: '7days', label: '7 أيام' },
+                  { id: 'month', label: 'الشهر الحالي' },
+                  { id: 'all', label: 'كافة الفترات' },
+                ] as const
+              ).map((p) => (
                 <button
                   key={p.id}
                   type="button"
-                  onClick={() => setPeriod(p.id as any)}
+                  onClick={() => setPeriod(p.id)}
                   className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
                     period === p.id
                       ? 'bg-amber-500 text-slate-950 shadow-sm'
@@ -177,23 +179,24 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
                 onClick={() => onNavigateTab('bookings')}
               />
 
+              {/* فصل التأمين المسترد عن الإيراد: الإيراد = totalPrice - insuranceAmount، والتأمين المسترد رقم منفصل */}
               <StatCard
-                label={`المقبوضات المحصلة${period === 'today' ? ' (اليوم)' : period === '7days' ? ' (7 أيام)' : period === 'month' ? ' (الشهر)' : ''}`}
-                value={`$${financials.collectedRevenue.toLocaleString()}`}
+                label={`الإيراد التشغيلي${period === 'today' ? ' (اليوم)' : period === '7days' ? ' (7 أيام)' : period === 'month' ? ' (الشهر)' : ''}`}
+                value={`$${financials.totalRevenue.toLocaleString()}`}
                 valueColor="text-emerald-400"
-                subtext={`من ${financials.totalValidBookings} حجز فعال`}
+                subtext={`صافي الأجرة من ${financials.totalValidBookings} حجز فعال`}
                 icon={DollarSign}
                 iconColor="text-emerald-400"
                 onClick={() => onNavigateTab('bookings')}
               />
 
               <StatCard
-                label={`المتبقي بذمة العملاء${period === 'today' ? ' (اليوم)' : period === '7days' ? ' (7 أيام)' : period === 'month' ? ' (الشهر)' : ''}`}
-                value={`$${financials.outstandingBalance.toLocaleString()}`}
-                valueColor="text-rose-400"
-                subtext="مستحقات غير ملغاة"
+                label={`التأمينات المستردة${period === 'today' ? ' (اليوم)' : period === '7days' ? ' (7 أيام)' : period === 'month' ? ' (الشهر)' : ''}`}
+                value={`$${financials.totalInsurance.toLocaleString()}`}
+                valueColor="text-amber-400"
+                subtext="أمانات مستردة للعملاء عند الإرجاع"
                 icon={FileText}
-                iconColor="text-rose-400"
+                iconColor="text-amber-400"
                 onClick={() => onNavigateTab('bookings')}
               />
 

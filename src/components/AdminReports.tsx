@@ -64,16 +64,25 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
     });
   }, [safeBookings, period]);
 
-  // Aggregate financial stats (strictly active, excluding cancelled and rejected)
-  const totalRevenue = useMemo(() => {
-    return filteredBookings.reduce((acc, b) => {
-      if (!isFinanciallyActiveBooking(b)) return acc;
-      return acc + (b.totalPrice || 0);
-    }, 0);
+  // فصل التأمين المسترد عن الإيراد التشغيلي:
+  // - لا يتم المساس بقيمة totalPrice المخزنة في سجلات الحجوزات.
+  // - الإيراد = totalPrice - insuranceAmount للحجوزات المحتسبة.
+  // - مبالغ التأمين المستردة تمثل أمانات مستردة للعملاء وتُعرض كرقم منفصل.
+  const { totalRevenue, totalInsurance, totalGross } = useMemo(() => {
+    return filteredBookings.reduce(
+      (acc, b) => {
+        if (!isFinanciallyActiveBooking(b)) return acc;
+        const total = Number(b.totalPrice || 0);
+        const ins = Number(b.insuranceAmount || 0);
+        const netRev = Math.max(0, total - ins);
+        acc.totalRevenue += netRev;
+        acc.totalInsurance += ins;
+        acc.totalGross += total;
+        return acc;
+      },
+      { totalRevenue: 0, totalInsurance: 0, totalGross: 0 }
+    );
   }, [filteredBookings]);
-
-  const totalCollected = totalRevenue;
-  const totalOutstanding = 0;
 
   // Fleet utilization
   const rentedVehiclesCount = safeVehicles.filter((v) => v.status === 'rented').length;
@@ -81,25 +90,27 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
   const maintenanceVehiclesCount = safeVehicles.filter((v) => v.status === 'maintenance').length;
   const utilizationRate = safeVehicles.length > 0 ? Math.round((rentedVehiclesCount / safeVehicles.length) * 100) : 0;
 
-  // Category breakdown
+  // Category breakdown: net revenue (totalPrice - insuranceAmount)
   const categoryRevenue = useMemo(() => {
     const map: Record<string, number> = { light: 0, medium: 0, jeep_7seats: 0 };
     filteredBookings.forEach((b) => {
       if (!isFinanciallyActiveBooking(b)) return;
       const cat = b.vehicleCategory || 'medium';
-      map[cat] = (map[cat] || 0) + (b.totalPrice || 0);
+      const netRev = Math.max(0, (b.totalPrice || 0) - (b.insuranceAmount || 0));
+      map[cat] = (map[cat] || 0) + netRev;
     });
     return map;
   }, [filteredBookings]);
 
-  // 1. Timeline Chart Data (Revenue over time)
+  // 1. Timeline Chart Data (Revenue over time: totalPrice - insuranceAmount)
   const timelineData = useMemo(() => {
     const map = new Map<string, { date: string; revenue: number; bookingsCount: number }>();
     filteredBookings.forEach((b) => {
       if (!isFinanciallyActiveBooking(b)) return;
       const rawDate = b.pickupDate || (b.createdAt ? b.createdAt.split('T')[0] : 'غير محدد');
       const curr = map.get(rawDate) || { date: rawDate, revenue: 0, bookingsCount: 0 };
-      curr.revenue += b.totalPrice || 0;
+      const netRev = Math.max(0, (b.totalPrice || 0) - (b.insuranceAmount || 0));
+      curr.revenue += netRev;
       curr.bookingsCount += 1;
       map.set(rawDate, curr);
     });
@@ -128,7 +139,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
   /**
    * Sanitizes cell content for CSV export against CSV Formula Injection (CWE-1236)
    */
-  const sanitizeCSVCell = (val: any): string => {
+  const sanitizeCSVCell = (val: unknown): string => {
     if (val === null || val === undefined) return '""';
     let str = String(val).trim();
     if (/^[=+\-@\t\r]/.test(str)) {
@@ -138,17 +149,36 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
   };
 
   const handleExportCSV = () => {
-    const headers = ['رقم الحجز', 'العميل', 'السيارة', 'تاريخ الاستلام', 'تاريخ الإعادة', 'المدة', 'المبلغ الإجمالي', 'الحالة'];
-    const rows = filteredBookings.map((b) => [
-      sanitizeCSVCell(b.bookingNumber),
-      sanitizeCSVCell(b.customerName),
-      sanitizeCSVCell(b.vehicleName),
-      sanitizeCSVCell(b.pickupDate),
-      sanitizeCSVCell(b.returnDate),
-      sanitizeCSVCell(b.rentalDays),
-      sanitizeCSVCell(b.totalPrice),
-      sanitizeCSVCell(b.status),
-    ]);
+    // تصدير CSV يتضمن عمودي الإيراد والتأمين المسترد بوضوح
+    const headers = [
+      'رقم الحجز',
+      'العميل',
+      'السيارة',
+      'تاريخ الاستلام',
+      'تاريخ الإعادة',
+      'المدة',
+      'الإيراد',
+      'التأمين المسترد',
+      'المبلغ الإجمالي',
+      'الحالة',
+    ];
+    const rows = filteredBookings.map((b) => {
+      const total = Number(b.totalPrice || 0);
+      const ins = Number(b.insuranceAmount || 0);
+      const netRev = Math.max(0, total - ins);
+      return [
+        sanitizeCSVCell(b.bookingNumber),
+        sanitizeCSVCell(b.customerName),
+        sanitizeCSVCell(b.vehicleName),
+        sanitizeCSVCell(b.pickupDate),
+        sanitizeCSVCell(b.returnDate),
+        sanitizeCSVCell(b.rentalDays),
+        sanitizeCSVCell(netRev),
+        sanitizeCSVCell(ins),
+        sanitizeCSVCell(total),
+        sanitizeCSVCell(b.status),
+      ];
+    });
 
     const csvContent = '\uFEFF' + [headers.map(sanitizeCSVCell).join(','), ...rows.map(e => e.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -173,23 +203,25 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
             <span>التقارير المالية والتشغيلية للأسطول</span>
           </h3>
           <p className="text-xs text-slate-400 mt-1">
-            متابعة الإيرادات، ديون العملاء، مخططات بيانية تفاعلية، ونسبة إشغال الأسطول
+            متابعة الإيرادات، التأمينات المستردة، مخططات بيانية تفاعلية، ونسبة إشغال الأسطول
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
           {/* Period selector */}
           <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-            {[
-              { id: 'today', label: 'اليوم' },
-              { id: 'week', label: 'الأسبوع' },
-              { id: 'month', label: 'الشهر الحالي' },
-              { id: 'all', label: 'كافة الفترات' },
-            ].map((p) => (
+            {(
+              [
+                { id: 'today', label: 'اليوم' },
+                { id: 'week', label: 'الأسبوع' },
+                { id: 'month', label: 'الشهر الحالي' },
+                { id: 'all', label: 'كافة الفترات' },
+              ] as const
+            ).map((p) => (
               <button
                 key={p.id}
                 type="button"
-                onClick={() => setPeriod(p.id as any)}
+                onClick={() => setPeriod(p.id)}
                 className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
                   period === p.id ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
                 }`}
@@ -223,22 +255,23 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
 
       {/* Top 4 KPI metric cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* فصل التأمين المسترد عن الإيراد */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
           <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span>إجمالي الإيرادات التعاقدية</span>
+            <span>إجمالي الإيراد التشغيلي</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-2xl font-black text-white font-mono">${totalRevenue.toLocaleString()}</div>
-          <div className="text-[11px] text-emerald-400 font-semibold">المحصّل فعلياً: ${totalCollected.toLocaleString()}</div>
+          <div className="text-[11px] text-emerald-400 font-semibold">صافي الأجرة (إجمالي العقود: ${totalGross.toLocaleString()})</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
           <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span>المبالغ المتبقية بذمة المستأجرين</span>
-            <Clock className="w-4 h-4 text-rose-400" />
+            <span>التأمينات المستردة</span>
+            <Clock className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="text-2xl font-black text-rose-400 font-mono">${totalOutstanding.toLocaleString()}</div>
-          <div className="text-[11px] text-slate-400">تستحق عند تسليم السيارات</div>
+          <div className="text-2xl font-black text-amber-400 font-mono">${totalInsurance.toLocaleString()}</div>
+          <div className="text-[11px] text-slate-400">أمانات محتجزة للمستأجرين تُعاد عند الإرجاع</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
@@ -296,13 +329,13 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                     fontSize: '12px',
                     color: '#fff',
                   }}
-                  formatter={(value: any, name: any) => [
+                  formatter={(value: unknown, name: unknown) => [
                     `$${Number(value).toLocaleString()}`,
-                    name === 'revenue' ? 'الإيراد الإجمالي' : 'المحصل فعلياً',
+                    String(name) === 'revenue' ? 'الإيراد الإجمالي' : 'المحصل فعلياً',
                   ]}
                 />
                 <Legend
-                  formatter={(value) => (value === 'revenue' ? 'الإيراد الإجمالي' : 'المحصل فعلياً')}
+                  formatter={(value: unknown) => (String(value) === 'revenue' ? 'الإيراد الإجمالي' : 'المحصل فعلياً')}
                   wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
                 />
                 <Area type="monotone" dataKey="revenue" stroke="#f59e0b" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" name="revenue" />
@@ -346,7 +379,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                       borderRadius: '12px',
                       fontSize: '12px',
                     }}
-                    formatter={(val: any) => [`${val} سيارة`, 'العدد']}
+                    formatter={(val: unknown) => [`${String(val)} سيارة`, 'العدد']}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -396,7 +429,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                   fontSize: '12px',
                   color: '#fff',
                 }}
-                formatter={(val: any) => [`$${Number(val).toLocaleString()}`, 'الإيرادات']}
+                formatter={(val: unknown) => [`$${Number(val).toLocaleString()}`, 'الإيرادات']}
               />
               <Bar dataKey="revenue" radius={[8, 8, 0, 0]}>
                 {categoryChartData.map((entry, index) => (

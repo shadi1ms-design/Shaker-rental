@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Vehicle } from '../types';
+import { Vehicle, AppSettings } from '../types';
 import { calculateRentalPrice, DEFAULT_SETTINGS } from '../services/pricing';
 import { openWhatsAppChat } from '../services/whatsapp';
 import { useAuth } from '../contexts/AuthContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { dataService } from '../services/dataService';
 import { VehicleImagePlaceholder } from './VehicleImagePlaceholder';
 import {
   X,
@@ -36,9 +37,29 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
   onBookNow,
 }) => {
   const modalRef = useFocusTrap({ isOpen: Boolean(vehicle), onClose });
-  const { isAdmin, isSuperAdmin } = useAuth();
+  const { user, isAdmin, isSuperAdmin } = useAuth();
+  const isUserLoggedIn = Boolean(user);
+  const [liveSettings, setLiveSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    dataService
+      .getSettings()
+      .then((settings) => {
+        if (isMounted && settings) {
+          setLiveSettings(settings);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load settings in CarDetailsModal:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const imagesList =
     vehicle?.images && vehicle.images.length > 0
@@ -78,8 +99,14 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
 
   if (!vehicle) return null;
 
-  const weekly = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 7, DEFAULT_SETTINGS);
-  const monthly = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 30, DEFAULT_SETTINGS);
+  const weekly = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 7, liveSettings, {
+    isUserLoggedIn,
+    vehicleId: vehicle.id,
+  });
+  const monthly = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 30, liveSettings, {
+    isUserLoggedIn,
+    vehicleId: vehicle.id,
+  });
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex items-start justify-center p-3 sm:p-6 bg-slate-950">
@@ -327,7 +354,7 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
             <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
             <div>
               <span className="text-white font-semibold block">قواعد التأمين المسترد:</span>
-              <span>للحجوزات يوم أو يومين: التأمين 500$. لأكثر من يومين: التأمين 300$. يُسترد التأمين بالكامل فور تسليم السيارة بحالتها.</span>
+              <span>للحجوزات يوم أو يومين: التأمين {liveSettings.insuranceShortTerm ?? liveSettings.insurance1to2Days ?? 500}$. لأكثر من يومين: التأمين {liveSettings.insuranceLongTerm ?? liveSettings.insuranceAbove2Days ?? 300}$. يُسترد التأمين بالكامل فور تسليم السيارة بحالتها.</span>
             </div>
           </div>
 

@@ -65,10 +65,20 @@ export const ContractModal: React.FC<ContractModalProps> = ({ booking, onClose }
         if (!isMounted) return;
 
         if (res.success && res.data?.contract) {
-          setContract(res.data.contract);
+          setContract(res.data.contract as ContractDetails);
         } else if (res.success && res.data) {
           // Flattened response fallback
-          setContract(res.data as any);
+          const d = res.data as { contractId?: string; contractNumber?: string; bookingId?: string };
+          setContract({
+            contractId: d.contractId || booking.id,
+            contractNumber: d.contractNumber || `SHK-CTR-${booking.id.slice(-6).toUpperCase()}`,
+            bookingId: d.bookingId || booking.id,
+            bookingNumber: booking.bookingNumber,
+            verificationCode: `VER-${booking.id.slice(-8).toUpperCase()}-2026`,
+            status: 'active',
+            customerName: booking.customerName,
+            customerPhone: booking.customerPhone,
+          } as ContractDetails);
         } else {
           // Dev / Fallback mock contract data for offline/test environments
           const contractNumber = `SHK-CTR-${booking.id.slice(-6).toUpperCase()}`;
@@ -105,10 +115,10 @@ export const ContractModal: React.FC<ContractModalProps> = ({ booking, onClose }
             issuedAt: new Date().toISOString(),
           });
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!isMounted) return;
         console.error('Failed to load contract:', err);
-        setError(err?.message || 'عذراً، تعذر جلب وثيقة العقد الرقمية من الخادم.');
+        setError(err instanceof Error ? err.message : 'عذراً، تعذر جلب وثيقة العقد الرقمية من الخادم.');
       } finally {
         if (isMounted) setIsLoading(false);
       }

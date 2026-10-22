@@ -247,7 +247,7 @@ export const INITIAL_CUSTOMERS: Customer[] = [];
 export const INITIAL_BOOKINGS: Booking[] = [];
 
 
-export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').UploadedFile[] } = {
+export const INITIAL_UPLOADED_FILES: { [userId: string]: import('../types').UserFileRecord[] } = {
   'user-tariq-001': [
     {
       id: 'file-tar-01',

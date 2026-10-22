@@ -78,8 +78,10 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
 
       {/* Slide-out Menu Drawer */}
       <div
-        className={`fixed top-0 right-0 z-50 h-full w-full max-w-sm sm:max-w-md bg-slate-950 border-l border-slate-800/90 shadow-2xl transition-transform duration-300 ease-out flex flex-col justify-between overflow-y-auto ${
-          isOpen ? 'translate-x-0' : 'translate-x-full'
+        className={`fixed top-0 right-0 z-50 h-full w-full max-w-sm sm:max-w-md bg-slate-950 border-l border-slate-800/90 shadow-2xl transition-[transform,visibility,opacity] duration-300 ease-out flex flex-col justify-between overflow-y-auto ${
+          isOpen
+            ? 'translate-x-0 opacity-100 visible'
+            : 'translate-x-full opacity-0 invisible pointer-events-none'
         }`}
         style={{
           paddingTop: 'max(24px, calc(env(safe-area-inset-top, 0px) + 24px))',

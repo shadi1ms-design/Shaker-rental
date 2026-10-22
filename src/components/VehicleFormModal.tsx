@@ -121,9 +121,9 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
       if (!imageUrl || imageUrl.includes('unsplash.com/photo-1549399542')) {
         setImageUrl(uploadedUrls[0]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Image upload failed:', err);
-      setUploadError(err.message || 'فشل رفع الصورة');
+      setUploadError(err instanceof Error ? err.message : 'فشل رفع الصورة');
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -187,7 +187,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
     });
 
     if (!parsed.success) {
-      setErrorMessage((parsed.error as any).issues?.[0]?.message || 'يرجى التحقق من صحة البيانات');
+      setErrorMessage(parsed.error.issues?.[0]?.message || 'يرجى التحقق من صحة البيانات');
       return;
     }
 
@@ -235,8 +235,8 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
         onSaved(created);
       }
       onClose();
-    } catch (err: any) {
-      setErrorMessage(err.message || 'فشل حفظ بيانات السيارة');
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'فشل حفظ بيانات السيارة');
     } finally {
       setIsSaving(false);
     }
@@ -324,7 +324,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
               <label className="block text-slate-400 mb-1 font-semibold">الفئة</label>
               <select
                 value={category || 'medium'}
-                onChange={(e) => setCategory(e.target.value as any)}
+                onChange={(e) => setCategory(e.target.value as VehicleCategory)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
               >
                 <option value="light">{VEHICLE_CATEGORY_LABELS.light}</option>
@@ -380,7 +380,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
               <label className="block text-slate-400 mb-1 font-semibold">ناقل الحركة</label>
               <select
                 value={transmission || 'automatic'}
-                onChange={(e) => setTransmission(e.target.value as any)}
+                onChange={(e) => setTransmission(e.target.value as TransmissionType)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
               >
                 <option value="automatic">أوتوماتيك</option>
@@ -391,7 +391,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
               <label className="block text-slate-400 mb-1 font-semibold">نوع الوقود</label>
               <select
                 value={fuelType || 'petrol'}
-                onChange={(e) => setFuelType(e.target.value as any)}
+                onChange={(e) => setFuelType(e.target.value as FuelType)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
               >
                 <option value="petrol">بنزين</option>
@@ -418,7 +418,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
               <label className="block text-slate-400 mb-1 font-semibold">الحالة الحالية</label>
               <select
                 value={status || 'available'}
-                onChange={(e) => setStatus(e.target.value as any)}
+                onChange={(e) => setStatus(e.target.value as VehicleStatus)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
               >
                 <option value="available">متاحة (Available)</option>

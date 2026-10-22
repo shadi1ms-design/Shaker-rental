@@ -78,7 +78,9 @@ export function calculateRentalPriceServer(
   settings: PricingServerSettings | null | undefined,
   isUserLoggedIn: boolean,
   vehicleId?: string,
-  withDriver = false
+  withDriver = false,
+  vehicleDocId?: string,
+  vehicleDataId?: string
 ): PricingCalculationResult {
   const rentalDays = Math.max(1, Math.round(rentalDaysInput));
   const rawBase = rentalDays * Math.max(0, dailyPrice);
@@ -91,9 +93,20 @@ export function calculateRentalPriceServer(
     const rawPct = Number(discountCfg.percentage) || 0;
     const safePercentage = Math.min(25, Math.max(0, Math.round(rawPct)));
 
+    const candidateIds = new Set<string>();
+    if (vehicleId) candidateIds.add(String(vehicleId).trim());
+    if (vehicleDocId) candidateIds.add(String(vehicleDocId).trim());
+    if (vehicleDataId) candidateIds.add(String(vehicleDataId).trim());
+
+    // Matches vehicleId with both doc id and data.id against configured vehicleIds
     const isVehicleMatched =
       discountCfg.scope === 'specific'
-        ? Boolean(discountCfg.vehicleIds && discountCfg.vehicleIds.length > 0 && vehicleId && discountCfg.vehicleIds.includes(vehicleId))
+        ? Boolean(
+            discountCfg.vehicleIds &&
+            discountCfg.vehicleIds.length > 0 &&
+            candidateIds.size > 0 &&
+            discountCfg.vehicleIds.some((id) => candidateIds.has(String(id).trim()))
+          )
         : true;
 
     if (isVehicleMatched && safePercentage > 0 && isUserLoggedIn) {

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserRole, AuthUser, UserAccount } from '../types';
+import { UserRole, AuthUser, UserAccount, FirestoreUser } from '../types';
 import { auth, db, isFirebaseConfigured, getDb } from '../firebase/config';
 import { navigate, routes } from '../router';
 import {
@@ -215,7 +215,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (activeDb) {
               const userDocRef = doc(activeDb, 'users', fbUser.uid);
 
-              const handleUserData = async (userData: any) => {
+              const handleUserData = async (userData: Partial<FirestoreUser>) => {
                 if (!userData) return;
 
                 // Check if account is disabled in database
@@ -245,7 +245,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   if (!prev || prev.uid !== fbUser.uid) return prev;
                   return {
                     ...prev,
-                    displayName: userData.name || userData.displayName || prev.displayName,
+                    displayName: userData.displayName || prev.displayName,
                     phone: userData.phone || prev.phone,
                     createdAt: userData.createdAt || prev.createdAt,
                   };
@@ -261,7 +261,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                       const currentDocRef = doc(retryDb, 'users', fbUser.uid);
                       const snap = await getDoc(currentDocRef);
                       if (snap.exists()) {
-                        await handleUserData(snap.data());
+                        await handleUserData(snap.data() as Partial<FirestoreUser>);
                       } else if (pendingPhone) {
                         // Doc doesn't exist yet, attempt backfill
                         await setDoc(currentDocRef, {
@@ -289,7 +289,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 (userSnap) => {
                   if (userSnap.exists()) {
                     const data = userSnap.data();
-                    handleUserData(data);
+                    handleUserData(data as Partial<FirestoreUser>);
                     if (!data?.phone) {
                       triggerRetries();
                     }
@@ -338,8 +338,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
         await resolveRoleFromToken(cred.user, true);
         return true;
-      } catch (err: any) {
-        throw new Error(getArabicErrorMessage(err));
+      } catch (err: unknown) {
+        throw new Error(err instanceof Error ? getArabicErrorMessage(err) : 'حدث خطأ غير معروف');
       }
     }
 
@@ -408,8 +408,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   phone: cleanPhone || '',
                   updatedAt: new Date().toISOString(),
                 });
-              } catch (updErr: any) {
-                if (updErr?.code !== 'not-found') throw updErr;
+              } catch (updErr: unknown) {
+                if (typeof updErr === 'object' && updErr !== null && 'code' in updErr && (updErr as { code: string }).code !== 'not-found') throw updErr;
                 // Document absent (blocking function not deployed): create with rule-compliant fields.
                 await setDoc(userRef, {
                   id: cred.user.uid,
@@ -449,8 +449,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await functionsService.syncMyRole();
         } catch {}
         return true;
-      } catch (err: any) {
-        throw new Error(getArabicErrorMessage(err));
+      } catch (err: unknown) {
+        throw new Error(err instanceof Error ? getArabicErrorMessage(err) : 'حدث خطأ غير معروف');
       }
     }
 
@@ -491,15 +491,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const cred = await signInWithPopup(auth, provider);
           fbUser = cred.user;
-        } catch (popupErr: any) {
-          if (popupErr?.code === 'auth/popup-closed-by-user' || popupErr?.code === 'auth/cancelled-popup-request') {
+        } catch (popupErr: unknown) {
+          if ((popupErr as { code?: string })?.code === 'auth/popup-closed-by-user' || (popupErr as { code?: string })?.code === 'auth/cancelled-popup-request') {
             throw new Error('تم إغلاق نافذة تسجيل الدخول قبل إكمال العملية.');
           }
-          if (popupErr?.code === 'auth/popup-blocked') {
+          if ((popupErr as { code?: string })?.code === 'auth/popup-blocked') {
             await signInWithRedirect(auth, provider);
             return true;
           }
-          if (popupErr?.code === 'auth/account-exists-with-different-credential') {
+          if ((popupErr as { code?: string })?.code === 'auth/account-exists-with-different-credential') {
             throw new Error('يوجد حساب مسجل مسبقاً بنفس البريد الإلكتروني باستخدام طريقة دخول مختلفة.');
           }
           throw popupErr;
@@ -507,8 +507,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         await resolveRoleFromToken(fbUser, true);
         return true;
-      } catch (err: any) {
-        throw new Error(getArabicErrorMessage(err));
+      } catch (err: unknown) {
+        throw new Error(err instanceof Error ? getArabicErrorMessage(err) : 'حدث خطأ غير معروف');
       }
     }
 
@@ -544,9 +544,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         await sendPasswordResetEmail(auth, cleanEmail);
         return;
-      } catch (err: any) {
-        if (err?.code === 'auth/user-not-found') return;
-        throw new Error(getArabicErrorMessage(err));
+      } catch (err: unknown) {
+        if ((err as { code?: string })?.code === 'auth/user-not-found') return;
+        throw new Error(err instanceof Error ? getArabicErrorMessage(err) : 'حدث خطأ غير معروف');
       }
     }
   };
@@ -623,7 +623,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         phone: cleanPhone,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to update phone number in users doc:', err);
       throw new Error('حدث خطأ أثناء تحديث رقم الهاتف، يرجى المحاولة مرة أخرى.');
     }

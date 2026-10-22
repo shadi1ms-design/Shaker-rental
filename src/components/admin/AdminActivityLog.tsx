@@ -27,9 +27,9 @@ interface AuditLogItem {
   customerProvidedName?: string | null;
   entity?: string;
   entityId?: string;
-  details?: string | any;
-  timestamp?: any;
-  createdAt?: any;
+  details?: unknown;
+  timestamp?: string | number | Date | { toDate: () => Date } | { seconds: number; nanoseconds?: number } | null | undefined;
+  createdAt?: string | number | Date | { toDate: () => Date } | { seconds: number; nanoseconds?: number } | null | undefined;
   ip?: string;
 }
 
@@ -73,17 +73,19 @@ const ACTION_LABELS_AR: Record<string, { label: string; color: 'blue' | 'amber' 
   LOGIN_FAILED: { label: 'فشل تسجيل الدخول', color: 'rose' },
 };
 
-function formatTimestamp(rawVal: any): { display: string; rawIso: string; timeAgo: string } {
+function formatTimestamp(rawVal: string | number | Date | { toDate: () => Date } | { seconds: number; nanoseconds?: number } | null | undefined): { display: string; rawIso: string; timeAgo: string } {
   let date: Date;
 
   if (!rawVal) {
     return { display: 'غير محدد', rawIso: '', timeAgo: '' };
   }
 
-  if (typeof rawVal === 'object' && typeof rawVal.toDate === 'function') {
-    date = rawVal.toDate();
-  } else if (typeof rawVal === 'object' && rawVal.seconds) {
-    date = new Date(rawVal.seconds * 1000);
+  if (rawVal instanceof Date) {
+    date = rawVal;
+  } else if (rawVal && typeof rawVal === 'object' && 'toDate' in rawVal && typeof rawVal.toDate === 'function') {
+    date = (rawVal as { toDate: () => Date }).toDate();
+  } else if (rawVal && typeof rawVal === 'object' && 'seconds' in rawVal) {
+    date = new Date((rawVal as { seconds: number }).seconds * 1000);
   } else if (typeof rawVal === 'number') {
     date = new Date(rawVal);
   } else if (typeof rawVal === 'string') {
@@ -179,8 +181,12 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
         const getTime = (item: AuditLogItem): number => {
           const val = item.createdAt || item.timestamp;
           if (!val) return 0;
-          if (typeof val === 'object' && typeof val.toDate === 'function') return val.toDate().getTime();
-          if (typeof val === 'object' && val.seconds) return val.seconds * 1000;
+          if (typeof val === 'object' && 'toDate' in val && typeof val.toDate === 'function') {
+            return val.toDate().getTime();
+          }
+          if (typeof val === 'object' && 'seconds' in val && typeof val.seconds === 'number') {
+            return val.seconds * 1000;
+          }
           if (typeof val === 'number') return val;
           if (typeof val === 'string') {
             const parsed = new Date(val).getTime();
@@ -192,9 +198,9 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
       });
 
       setLogs(items);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error loading audit logs:', err);
-      setError(err?.message || 'عذراً، حدث خطأ أثناء تحميل سجل النشاطات من السحابة.');
+      setError(err instanceof Error ? err.message : 'عذراً، حدث خطأ أثناء تحميل سجل النشاطات من السحابة.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

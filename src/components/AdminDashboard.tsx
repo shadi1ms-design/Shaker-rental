@@ -294,9 +294,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setTimeout(() => {
         setSyncStatus(null);
       }, 7000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Sync all error:', err);
-      const errorMsg = `تعذر إتمام المزامنة مع قاعدة البيانات: ${err?.message || 'خطأ في الاتصال'}`;
+      const errorMsg = `تعذر إتمام المزامنة مع قاعدة البيانات: ${err instanceof Error ? err.message : 'خطأ في الاتصال'}`;
       setSyncStatus({
         message: errorMsg,
         success: false,
@@ -315,9 +315,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setVehicleToDelete(null);
       await onRefreshData();
       await loadAuxData();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to delete vehicle:', err);
-      setDeleteError(err?.message || 'تعذر حذف السيارة من قاعدة البيانات.');
+      setDeleteError(err instanceof Error ? err.message : 'تعذر حذف السيارة من قاعدة البيانات.');
     } finally {
       setIsDeletingVehicle(false);
     }

@@ -8,7 +8,7 @@ import {
   AuditLog,
   AppNotification,
   FirestoreUser,
-  UploadedFile
+  UserFileRecord
 } from '../types';
 import * as seedData from '../data/seedData';
 
@@ -28,7 +28,9 @@ import {
   query,
   where,
   onSnapshot,
-  serverTimestamp
+  serverTimestamp,
+  DocumentData,
+  UpdateData
 } from 'firebase/firestore';
 import { storageService } from './storageService';
 import { functionsService } from './functionsService';
@@ -161,10 +163,10 @@ export function purgeSensitiveStorage(): void {
 // Safe async Firestore runner with timeout to prevent hangs when offline/slow
 async function safeFirestore<T>(promise: Promise<T>, timeoutMs = 8000): Promise<T> {
   const effectiveTimeout = timeoutMs;
-  let timer: any;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      const err: any = new Error('Firestore connection timeout');
+      const err = new Error('Firestore connection timeout') as Error & { code?: string };
       err.code = 'unavailable';
       reject(err);
     }, effectiveTimeout);
@@ -216,7 +218,7 @@ function initStorage() {
 initStorage();
 
 // Module-level cache for resolved custom claims to keep isStaffOrAdmin() 100% synchronous
-let cachedUserClaims: Record<string, any> | null = null;
+let cachedUserClaims: Record<string, unknown> | null = null;
 
 if (auth) {
   try {
@@ -259,7 +261,7 @@ function isStaffOrAdmin(): boolean {
   }
 
   // 2. Direct synchronous check on reloadUserInfo.customAttributes from currentUser instance
-  const claims = (auth.currentUser as any)?.reloadUserInfo?.customAttributes;
+  const claims = (auth.currentUser as unknown as { reloadUserInfo?: { customAttributes?: unknown } })?.reloadUserInfo?.customAttributes;
   try {
     const parsedClaims = claims ? (typeof claims === 'string' ? JSON.parse(claims) : claims) : {};
     const role = (parsedClaims?.role || '').toString().toLowerCase().trim();
@@ -340,8 +342,9 @@ export const dataService = {
           memoryCache.settings = { data, timestamp: Date.now() };
           return data;
         }
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
+      } catch (err: unknown) {
+        const errObj = typeof err === 'object' && err !== null ? (err as { code?: string }) : null;
+        if (errObj?.code !== 'unavailable') {
           handleFirestoreError('settings', 'global', 'read', err, auth?.currentUser?.uid);
         }
       }
@@ -512,7 +515,7 @@ export const dataService = {
       const internalDocRef = doc(getDb(), 'vehicles', cleanId, 'internal', 'details');
       const snap = await safeFirestore(getDoc(internalDocRef), 2000);
       if (snap.exists()) {
-        return snap.data() as any;
+        return snap.data() as { plateNumber?: string; currentMileage?: number };
       }
     } catch {
       // Gracefully silent if not authorized (customers/visitors)
@@ -599,8 +602,9 @@ export const dataService = {
         setLocalItem(STORAGE_KEYS.VEHICLES, finalVehicles);
         memoryCache.vehicles = { data: finalVehicles, timestamp: Date.now() };
         return finalVehicles;
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
+      } catch (err: unknown) {
+        const errObj = typeof err === 'object' && err !== null ? (err as { code?: string }) : null;
+        if (errObj?.code !== 'unavailable') {
           console.warn('Firestore vehicles query note, using local cache:', err);
         }
       }
@@ -872,7 +876,7 @@ export const dataService = {
           plateNumber !== undefined || currentMileage !== undefined;
 
         if (hasInternalUpdates) {
-          const internalUpdates: Record<string, any> = { updatedAt: updated.updatedAt };
+          const internalUpdates: Record<string, unknown> = { updatedAt: updated.updatedAt };
           if (plateNumber !== undefined) internalUpdates.plateNumber = plateNumber;
           if (currentMileage !== undefined) internalUpdates.currentMileage = currentMileage;
 
@@ -961,8 +965,9 @@ export const dataService = {
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         memoryCache.bookings = { data: sorted, timestamp: Date.now() };
         return sorted;
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
+      } catch (err: unknown) {
+        const errObj = typeof err === 'object' && err !== null ? (err as { code?: string }) : null;
+        if (errObj?.code !== 'unavailable') {
           console.warn('Firestore bookings query note:', err);
         }
       }
@@ -1083,8 +1088,9 @@ export const dataService = {
           });
 
         return remoteDocs;
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
+      } catch (err: unknown) {
+        const errObj = typeof err === 'object' && err !== null ? (err as { code?: string }) : null;
+        if (errObj?.code !== 'unavailable') {
           console.warn('Firestore customer bookings query note:', err);
         }
       }
@@ -1321,7 +1327,7 @@ export const dataService = {
     // 1. PRODUCTION PATH: Primary execution via createBookingSecure Cloud Function
     if (isFirebaseConfigured && functions) {
       try {
-        const callable = httpsCallable<any, { success: boolean; booking: Booking; error?: string }>(
+        const callable = httpsCallable<Record<string, unknown>, { success: boolean; booking: Booking; error?: string }>(
           functions,
           'createBookingSecure'
         );
@@ -1352,8 +1358,9 @@ export const dataService = {
           return serverBooking;
         }
         throw new Error(res.data?.error || 'تعذر إنشاء الحجز.');
-      } catch (err: any) {
-        const errMsg = err?.details || err?.message || 'عذراً، تعذر إتمام الحجز عبر الخادم الآمن.';
+      } catch (err: unknown) {
+        const errObj = typeof err === 'object' && err !== null ? (err as { message?: string; details?: string }) : null;
+        const errMsg = errObj?.details || errObj?.message || 'عذراً، تعذر إتمام الحجز عبر الخادم الآمن.';
         throw new Error(errMsg);
       }
     }
@@ -1568,8 +1575,9 @@ export const dataService = {
 
         memoryCache.customers = { data: remoteDocs, timestamp: Date.now() };
         return remoteDocs;
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
+      } catch (err: unknown) {
+        const errObj = typeof err === 'object' && err !== null ? (err as { code?: string }) : null;
+        if (errObj?.code !== 'unavailable') {
           console.warn('Firestore customers query note:', err);
         }
       }
@@ -1645,8 +1653,9 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       try {
         await safeFirestore(setDoc(doc(getDb(), 'customers', id), updated, { merge: true }), 2500);
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
+      } catch (err: unknown) {
+        const errObj = typeof err === 'object' && err !== null ? (err as { code?: string }) : null;
+        if (errObj?.code !== 'unavailable') {
           handleFirestoreError('customers', id, 'write', err, auth?.currentUser?.uid);
           throw new Error('فشل تحديث بيانات العميل في السحابة.');
         }
@@ -2029,12 +2038,13 @@ export const dataService = {
         usersCount,
         filesCount,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       const latencyMs = Date.now() - startTime;
+      const errObj = typeof err === 'object' && err !== null ? (err as { message?: string }) : null;
       return {
         success: false,
         latencyMs,
-        message: `تعذر الوصول السحابي المباشر (${err?.message || 'غير متاح'}). النظام يعمل بذاكرة التخزين المحلية.`,
+        message: `تعذر الوصول السحابي المباشر (${errObj?.message || 'غير متاح'}). النظام يعمل بذاكرة التخزين المحلية.`,
         databaseId,
         usersCount: 0,
         filesCount: 0,
@@ -2098,7 +2108,7 @@ export const dataService = {
         const filesCountByUser: Record<string, number> = {};
         if (filesSnap && filesSnap.docs) {
           filesSnap.docs.forEach((fDoc) => {
-            const fData = fDoc.data() as UploadedFile;
+            const fData = fDoc.data() as UserFileRecord;
             if (fData.userId) {
               filesCountByUser[fData.userId] = (filesCountByUser[fData.userId] || 0) + 1;
             }
@@ -2140,8 +2150,9 @@ export const dataService = {
           memoryCache.users = { data: users, timestamp: Date.now() };
           return users;
         }
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
+      } catch (err: unknown) {
+        const errObj = typeof err === 'object' && err !== null ? (err as { code?: string }) : null;
+        if (errObj?.code !== 'unavailable') {
           console.warn('Firestore getAllUsers error:', err);
         }
       }
@@ -2205,11 +2216,12 @@ export const dataService = {
     // 1. Update Custom Claims server-side via Firebase Cloud Function (sole authority)
     if (isFirebaseConfigured && functions) {
       try {
-        const setRoleFn = httpsCallable<{ targetUid: string; newRole: string }, any>(functions, 'setUserRole');
+        const setRoleFn = httpsCallable<{ targetUid: string; newRole: string }, { success: boolean }>(functions, 'setUserRole');
         await setRoleFn({ targetUid: cleanUid, newRole });
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Failed to update user role via Cloud Function:', err);
-        throw new Error(err?.message || 'تعذر تعديل الصلاحيات. تأكد من امتلاك صلاحية Admin.');
+        const errObj = typeof err === 'object' && err !== null ? (err as { message?: string }) : null;
+        throw new Error(errObj?.message || 'تعذر تعديل الصلاحيات. تأكد من امتلاك صلاحية Admin.');
       }
     }
 
@@ -2244,13 +2256,13 @@ export const dataService = {
    * تبحث في كل من المجلد الفرعي /users/{userId}/files وفي مجموعة /files الرئيسية
    * يتم الاحتفاظ بالملفات في الذاكرة الحية فقط حفاظاً على سرية وخصوصية الوثائق
    */
-  async getFilesForUser(userId: string): Promise<UploadedFile[]> {
+  async getFilesForUser(userId: string): Promise<UserFileRecord[]> {
     if (!userId || !userId.trim()) {
       return [];
     }
 
     const cleanUserId = userId.trim();
-    const collectedFilesMap = new Map<string, UploadedFile>();
+    const collectedFilesMap = new Map<string, UserFileRecord>();
 
     if (isFirebaseConfigured && db) {
       try {
@@ -2259,7 +2271,7 @@ export const dataService = {
           const filesSubCol = collection(getDb(), 'users', cleanUserId, 'files');
           const subSnap = await safeFirestore(getDocs(filesSubCol), 3500);
           subSnap.docs.forEach((d) => {
-            const fileData = d.data() as UploadedFile;
+            const fileData = d.data() as UserFileRecord;
             collectedFilesMap.set(d.id, {
               ...fileData,
               id: d.id,
@@ -2276,7 +2288,7 @@ export const dataService = {
           const q = query(rootFilesCol, where('userId', '==', cleanUserId));
           const rootSnap = await safeFirestore(getDocs(q), 3500);
           rootSnap.docs.forEach((d) => {
-            const fileData = d.data() as UploadedFile;
+            const fileData = d.data() as UserFileRecord;
             if (!collectedFilesMap.has(d.id)) {
               collectedFilesMap.set(d.id, {
                 ...fileData,
@@ -2290,8 +2302,8 @@ export const dataService = {
           try {
             const allFilesSnap = await safeFirestore(getDocs(collection(getDb(), 'files')), 3500);
             allFilesSnap.docs.forEach((d) => {
-              const fileData = d.data() as UploadedFile;
-              if (fileData.userId === cleanUserId || (fileData as any).uid === cleanUserId) {
+              const fileData = d.data() as UserFileRecord;
+              if (fileData.userId === cleanUserId || (fileData as UserFileRecord & { uid?: string }).uid === cleanUserId) {
                 if (!collectedFilesMap.has(d.id)) {
                   collectedFilesMap.set(d.id, {
                     ...fileData,
@@ -2326,13 +2338,13 @@ export const dataService = {
   /**
    * الاسم البديل المتوافق لدالة جلب ملفات المستخدم
    */
-  async getUserFiles(userId: string): Promise<UploadedFile[]> {
+  async getUserFiles(userId: string): Promise<UserFileRecord[]> {
     return this.getFilesForUser(userId);
   },
 
-  async uploadUserFile(fileData: Omit<UploadedFile, 'id' | 'uploadedAt'>): Promise<UploadedFile> {
+  async uploadUserFile(fileData: Omit<UserFileRecord, 'id' | 'uploadedAt'>): Promise<UserFileRecord> {
     const fileId = `file-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const newFile: UploadedFile = {
+    const newFile: UserFileRecord = {
       ...fileData,
       id: fileId,
       uploadedAt: new Date().toISOString(),
@@ -2353,7 +2365,7 @@ export const dataService = {
           if (userSnap.exists()) {
             const userData = userSnap.data();
             const currentCount = (userData.uploadedFilesCount || 0) + 1;
-            const updatePayload: Record<string, any> = { uploadedFilesCount: currentCount };
+            const updatePayload: UpdateData<DocumentData> = { uploadedFilesCount: currentCount };
             if (userData.verificationStatus !== 'verified') {
               updatePayload.verificationStatus = 'manual_review';
               updatePayload.verified = false;
@@ -2363,7 +2375,7 @@ export const dataService = {
         } catch (cntErr) {
           console.warn('Non-fatal error updating user uploadedFilesCount:', cntErr);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Error in uploadUserFile:', err);
         const friendlyMsg = handleFirestoreError('users', `${fileData.userId}/files/${fileId}`, 'write', err, auth?.currentUser?.uid);
         throw new Error(friendlyMsg || 'فشل حفظ بيانات الوثيقة في قاعدة البيانات.');
@@ -2443,7 +2455,7 @@ export const dataService = {
       email: authUser.email,
       displayName: authUser.displayName,
       phone: authUser.phone || '',
-      role: authUser.role as any,
+      role: authUser.role as FirestoreUser['role'],
       createdAt: authUser.createdAt || new Date().toISOString(),
       uploadedFilesCount: 0,
     };

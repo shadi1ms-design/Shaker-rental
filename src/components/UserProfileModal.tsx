@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Booking, UploadedFile } from '../types';
+import { Booking, UserFileRecord, FirestoreUser } from '../types';
 import { dataService } from '../services/dataService';
 import { functionsService } from '../services/functionsService';
 import {
@@ -48,12 +48,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const modalRef = useFocusTrap({ isOpen, onClose });
   const { user, logout, isSuperAdmin, isAdmin, isEmployee, changePassword, changePhoneNumber } = useAuth();
   const [activeTab, setActiveTab] = useState<'profile' | 'bookings' | 'files'>('bookings');
-  const [userFiles, setUserFiles] = useState<UploadedFile[]>([]);
-  const [liveProfile, setLiveProfile] = useState<any | null>(null);
+  const [userFiles, setUserFiles] = useState<UserFileRecord[]>([]);
+  const [liveProfile, setLiveProfile] = useState<FirestoreUser | null>(null);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [newFileName, setNewFileName] = useState('');
-  const [newFileCategory, setNewFileCategory] = useState<UploadedFile['category']>('driver_license');
+  const [newFileCategory, setNewFileCategory] = useState<UserFileRecord['category']>('driver_license');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -121,15 +121,18 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Password change error:', err);
       let msg = 'تعذر تغيير كلمة المرور.';
-      if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
-        msg = 'كلمة المرور الحالية غير صحيحة.';
-      } else if (err?.code === 'auth/weak-password') {
-        msg = 'كلمة المرور الجديدة ضعيفة جداً.';
-      } else if (err?.message) {
-        msg = err.message;
+      if (err instanceof Error) {
+          const authErr = err as { code?: string };
+          if (authErr.code === 'auth/wrong-password' || authErr.code === 'auth/invalid-credential') {
+            msg = 'كلمة المرور الحالية غير صحيحة.';
+          } else if (authErr.code === 'auth/weak-password') {
+            msg = 'كلمة المرور الجديدة ضعيفة جداً.';
+          } else {
+            msg = err.message;
+          }
       }
       setPasswordFeedback({ type: 'error', message: msg });
     } finally {
@@ -151,9 +154,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       setIsSavingPhone(true);
       await changePhoneNumber(clean);
       setPhoneFeedback({ type: 'success', message: 'تم تحديث وتثبيت رقم الهاتف بنجاح.' });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Phone update error:', err);
-      setPhoneFeedback({ type: 'error', message: err?.message || 'عذراً، فشل تحديث رقم الهاتف.' });
+      setPhoneFeedback({ type: 'error', message: err instanceof Error ? err.message : 'عذراً، فشل تحديث رقم الهاتف.' });
     } finally {
       setIsSavingPhone(false);
     }
@@ -184,9 +187,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       }
       // Refresh local view if possible
       window.location.reload();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error cancelling booking:', err);
-      setBookingCancelError(err?.message || 'عذراً، تعذر إلغاء الحجز.');
+      setBookingCancelError(err instanceof Error ? err.message : 'عذراً، تعذر إلغاء الحجز.');
     } finally {
       setCancellingBookingId(null);
     }
@@ -291,9 +294,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       setShowUploadForm(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
       await loadFiles();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error uploading document:', err);
-      setUploadError(err?.message || 'حدث خطأ أثناء رفع الوثيقة.');
+      setUploadError(err instanceof Error ? err.message : 'حدث خطأ أثناء رفع الوثيقة.');
     } finally {
       setIsUploading(false);
     }
@@ -679,7 +682,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       <label className="text-[11px] text-slate-400 block mb-1">نوع الوثيقة *</label>
                       <select
                         value={newFileCategory}
-                        onChange={(e) => setNewFileCategory(e.target.value as any)}
+                        onChange={(e) => setNewFileCategory(e.target.value as UserFileRecord['category'])}
                         className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-amber-500 outline-none"
                       >
                         <option value="driver_license">رخصة قيادة (Driver License)</option>

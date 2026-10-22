@@ -168,10 +168,11 @@ export const storageService = {
           }
         );
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Firebase Storage upload error:', err);
+      const errMsg = err instanceof Error ? err.message : (typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message) : String(err));
       throw new Error(
-        err?.message || 'فشل رفع الملف إلى الخادم السحابي. يرجى المحاولة مجدداً أو التواصل مع الدعم الفني إن استمرت المشكلة.'
+        errMsg || 'فشل رفع الملف إلى الخادم السحابي. يرجى المحاولة مجدداً أو التواصل مع الدعم الفني إن استمرت المشكلة.'
       );
     }
   },

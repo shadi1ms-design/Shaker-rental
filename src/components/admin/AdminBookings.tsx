@@ -133,7 +133,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
   const vehicleActiveBookingsMap = React.useMemo(() => {
     const map = new Map<string, Array<{ id: string; pickupMs: number; returnMs: number; pickupDate: string; returnDate: string }>>();
     for (const b of bookings) {
-      if ((b as any).isDeleted) continue;
+      if (b.isDeleted) continue;
       if (b.status !== 'new' && b.status !== 'reviewing' && b.status !== 'confirmed' && b.status !== 'rented') {
         continue;
       }
@@ -215,9 +215,9 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
         // Booking confirmed: open the printable rental contract
         navigate(`/admin/contracts/${encodeURIComponent(bookingId)}`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Update booking status error:', err);
-      setActionError(err?.message || 'عذراً، حدث خطأ أثناء تحديث حالة الحجز.');
+      setActionError(err instanceof Error ? err.message : 'عذراً، حدث خطأ أثناء تحديث حالة الحجز.');
     } finally {
       setUpdatingBookingId(null);
       setIsExecutingStatusAction(false);
@@ -324,7 +324,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
         } else if (sortField === 'total') {
           diff = (a.totalPrice || 0) - (b.totalPrice || 0);
         } else if (sortField === 'remaining') {
-          diff = getRemaining(a) - getRemaining(b);
+          diff = getRemaining() - getRemaining();
         }
         return sortDirection === 'asc' ? diff : -diff;
       });
@@ -379,8 +379,8 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
       onRefreshData();
       setActionSuccess(`تم ${targetStatus === 'confirmed' ? 'تأكيد' : 'رفض'} الحجوزات المحددة بنجاح.`);
       setTimeout(() => setActionSuccess(null), 4000);
-    } catch (err: any) {
-      setActionError(err?.message || 'حدث خطأ أثناء تنفيذ الإجراء الجماعي');
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'حدث خطأ أثناء تنفيذ الإجراء الجماعي');
     } finally {
       setIsBatchActionRunning(false);
     }
@@ -780,7 +780,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 <tbody className="divide-y divide-slate-800/80">
                   {paginatedBookings.map((b) => {
                     const targetVehicle = vehicles.find((v) => v.id === b.vehicleId) || null;
-                    const remaining = getRemaining(b);
+                    const remaining = getRemaining();
                     const isSelected = selectedBookingIds.includes(b.id);
 
                     return (
@@ -984,7 +984,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
             <div className="md:hidden divide-y divide-slate-800/80 p-3 space-y-3">
               {paginatedBookings.map((b) => {
                 const targetVehicle = vehicles.find((v) => v.id === b.vehicleId) || null;
-                const remaining = getRemaining(b);
+                const remaining = getRemaining();
                 const isSelected = selectedBookingIds.includes(b.id);
 
                 return (
@@ -1308,9 +1308,9 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                     setBookingToDelete(null);
                     setActionSuccess('تم حذف الحجز نهائياً من قاعدة البيانات بنجاح.');
                     setTimeout(() => setActionSuccess(null), 4000);
-                  } catch (err: any) {
+                  } catch (err: unknown) {
                     console.error('Delete booking error:', err);
-                    setDeleteBookingError(err?.message || 'عذراً، تعذر حذف الحجز.');
+                    setDeleteBookingError(err instanceof Error ? err.message : 'عذراً، تعذر حذف الحجز.');
                   } finally {
                     setIsDeletingBooking(false);
                   }

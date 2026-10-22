@@ -68,9 +68,9 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
       const label = newStatus === 'rented' ? 'مؤجرة' : newStatus === 'available' ? 'متوفرة' : 'قيد الصيانة';
       setStatusFeedback(`تم تغيير حالة السيارة بنجاح إلى (${label}) وتحديث السحابة.`);
       setTimeout(() => setStatusFeedback(null), 4000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Quick vehicle status error:', err);
-      setStatusFeedback(`فشل تعديل حالة السيارة: ${err?.message || 'خطأ غير متوقع'}`);
+      setStatusFeedback(`فشل تعديل حالة السيارة: ${err instanceof Error ? err.message : 'خطأ غير متوقع'}`);
     } finally {
       setUpdatingVehicleId(null);
     }

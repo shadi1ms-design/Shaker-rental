@@ -238,7 +238,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     });
 
     if (!validationResult.success) {
-      const firstError = (validationResult.error as any).issues?.[0]?.message || 'يرجى مراجعة البيانات المدخلة';
+      const firstError = validationResult.error.issues?.[0]?.message || 'يرجى مراجعة البيانات المدخلة';
       setErrorMessage(firstError);
       return;
     }
@@ -273,20 +273,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         throw new Error(result.error || 'عذراً، حدث خطأ أثناء إتمام الحجز. يرجى المحاولة مرة أخرى.');
       }
 
-      const newBooking: Booking = result.data.booking || {
-        id: result.data.bookingId,
-        bookingNumber: result.data.bookingNumber,
+      const data = result.data as { booking?: Booking; bookingId?: string; bookingNumber?: string };
+      const newBooking: Booking = data.booking || ({
+        id: data.bookingId || '',
+        bookingNumber: data.bookingNumber || '',
         vehicleId,
         vehicleName: `${currentVehicle.brand} ${currentVehicle.model} (${currentVehicle.year})`,
         vehicleCategory: currentVehicle.category,
         customerName,
         customerPhone,
         customerWhatsApp: customerWhatsApp || customerPhone,
-        customerNationalId,
-        customerAddress,
-        customerLicenseNumber,
-        customerId: result.data.booking?.customerId || user?.uid,
-        customerEmail: result.data.booking?.customerEmail || user?.email,
+        customerNationalId: customerNationalId || '',
+        customerAddress: customerAddress || '',
+        customerLicenseNumber: customerLicenseNumber || '',
+        customerId: (data.booking as Booking | undefined)?.customerId || user?.uid || '',
+        customerEmail: (data.booking as Booking | undefined)?.customerEmail || user?.email || '',
         pickupDate,
         pickupTime,
         returnDate,
@@ -300,15 +301,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         notes,
         status: 'new',
         createdAt: new Date().toISOString(),
-      };
+      } as Booking);
 
       setCreatedBooking(newBooking);
       if (onBookingCreated) onBookingCreated(newBooking);
       if (onBookingComplete) onBookingComplete(newBooking);
       setStep(3); // Success Screen
-    } catch (err: any) {
+    } catch (err: unknown) {
       setErrorMessage(
-        err.message || 'عذراً، حدث خطأ أثناء إتمام الحجز. يرجى المحاولة مرة أخرى.'
+        err instanceof Error ? err.message : 'عذراً، حدث خطأ أثناء إتمام الحجز. يرجى المحاولة مرة أخرى.'
       );
     } finally {
       setIsSubmitting(false);

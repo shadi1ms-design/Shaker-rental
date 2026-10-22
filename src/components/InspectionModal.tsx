@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Vehicle, VehicleInspection } from '../types';
+import { Vehicle, VehicleInspection, CleanlinessStatus } from '../types';
 import { dataService } from '../services/dataService';
 import { storageService } from '../services/storageService';
 import { validateUploadedFile } from '../utils/security';
@@ -34,9 +34,9 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
 }) => {
   const modalRef = useFocusTrap({ isOpen: Boolean(vehicle), onClose });
   const [inspectionType, setInspectionType] = useState<'pickup' | 'return'>('pickup');
-  const [fuelLevel, setFuelLevel] = useState<'full' | 'three_quarters' | 'half' | 'quarter'>('full');
+  const [fuelLevel, setFuelLevel] = useState<VehicleInspection['fuelLevel']>('full');
   const [mileage, setMileage] = useState<number>(vehicle?.currentMileage || 0);
-  const [cleanliness, setCleanliness] = useState<'excellent' | 'good' | 'fair' | 'dirty'>('excellent');
+  const [cleanliness, setCleanliness] = useState<CleanlinessStatus>('excellent');
 
   // Body Parts Condition: OK vs Damaged/Scratched
   const [bodyChecks, setBodyChecks] = useState<Record<string, 'ok' | 'scratched' | 'dented'>>({
@@ -122,9 +122,9 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
           ]);
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Inspection media upload error:', err);
-      setMediaUploadError(err.message || 'فشل رفع ملف المعاينة');
+      setMediaUploadError(err instanceof Error ? err.message : 'فشل رفع ملف المعاينة');
     } finally {
       setIsUploadingMedia(false);
       setMediaUploadProgress(0);
@@ -278,16 +278,18 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
                   مستوى خزان الوقود
                 </label>
                 <div className="grid grid-cols-4 gap-1.5">
-                  {[
-                    { val: 'full', label: 'ممتلئ 1/1' },
-                    { val: 'three_quarters', label: '3/4' },
-                    { val: 'half', label: '1/2' },
-                    { val: 'quarter', label: '1/4' },
-                  ].map((f) => (
+                  {(
+                    [
+                      { val: 'full', label: 'ممتلئ 1/1' },
+                      { val: 'three_quarters', label: '3/4' },
+                      { val: 'half', label: '1/2' },
+                      { val: 'quarter', label: '1/4' },
+                    ] as const
+                  ).map((f) => (
                     <button
                       key={f.val}
                       type="button"
-                      onClick={() => setFuelLevel(f.val as any)}
+                      onClick={() => setFuelLevel(f.val)}
                       className={`py-1.5 text-[11px] font-bold rounded-lg border text-center transition-all ${
                         fuelLevel === f.val
                           ? 'bg-amber-500 text-slate-950 border-amber-500'
@@ -359,16 +361,18 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
                 حالة نظافة السيارة
               </label>
               <div className="grid grid-cols-4 gap-2">
-                {[
-                  { val: 'excellent', label: 'ممتازة ومعقمة' },
-                  { val: 'good', label: 'جيدة جداً' },
-                  { val: 'fair', label: 'مقبولة' },
-                  { val: 'dirty', label: 'تحتاج غسيل' },
-                ].map((c) => (
+                {(
+                  [
+                    { val: 'excellent', label: 'ممتازة ومعقمة' },
+                    { val: 'good', label: 'جيدة جداً' },
+                    { val: 'fair', label: 'مقبولة' },
+                    { val: 'dirty', label: 'تحتاج غسيل' },
+                  ] as const
+                ).map((c) => (
                   <button
                     key={c.val}
                     type="button"
-                    onClick={() => setCleanliness(c.val as any)}
+                    onClick={() => setCleanliness(c.val)}
                     className={`py-1.5 text-xs font-semibold rounded-xl border ${
                       cleanliness === c.val
                         ? 'bg-amber-500/20 border-amber-500 text-amber-400'
