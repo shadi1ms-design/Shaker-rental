@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { MenuProvider } from './contexts/MenuContext';
 import { Vehicle, Booking, AppSettings, SearchFilters } from './types';
 import { dataService } from './services/dataService';
 import { useLocation, navigate, matchPath, goBack, routes } from './router';
@@ -483,7 +484,7 @@ function MainAppContent() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-cairo">
-      {/* Global Fixed ☰ Menu Button on Physical Right (w-12 h-12 matching logo) */}
+      {/* Global Slide-out Navigation Drawer (Controlled via MenuContext) */}
       <GlobalMenu
         currentView={currentView === 'about' ? 'contact' : currentView === 'catalog' ? 'cars' : currentView}
         onNavigate={(view) => {
@@ -1028,7 +1029,9 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <MainAppContent />
+        <MenuProvider>
+          <MainAppContent />
+        </MenuProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

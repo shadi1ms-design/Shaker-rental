@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Car,
   Phone,
   MessageCircle,
   LayoutDashboard,
@@ -13,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { openWhatsAppChat } from '../services/whatsapp';
+import { MenuButton } from './MenuButton';
 
 interface NavbarProps {
   currentView: string;
@@ -25,9 +25,9 @@ interface NavbarProps {
 /**
  * Full Header for the Home Page only.
  * - Non-sticky (scrolls naturally with content).
- * - Leaves lateral right margin (pr-16 sm:pr-20) to prevent any overlap
- *   with the globally fixed ☰ menu button at top-right.
- * - Resolved previous collision between menu button and auth links.
+ * - MenuButton (☰) placed at the exact position and size of former car logo square.
+ * - Removed lateral pr-16/pr-20 padding.
+ * - Mobile responsive without overlapping on 390px screens.
  */
 export const Navbar: React.FC<NavbarProps> = ({
   currentView,
@@ -54,41 +54,41 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="relative z-20 bg-slate-950 border-b border-slate-800 text-slate-100">
       {/* Top micro-bar with contact info and auth */}
       <div className="bg-slate-900/90 border-b border-slate-800/80 px-4 py-2 text-xs text-slate-400">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 pr-16 sm:pr-20">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
           {/* Phone Contact */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <a
               href="tel:00963944331774"
-              className="flex items-center gap-1.5 text-slate-300 hover:text-amber-400 transition-colors"
+              className="flex items-center gap-1.5 text-slate-300 hover:text-amber-400 transition-colors text-[11px] sm:text-xs shrink-0"
               title="اتصال مباشر بالفرع"
             >
-              <Phone className="w-3.5 h-3.5 text-amber-500" />
+              <Phone className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               <span dir="ltr">00963 944 331 774</span>
             </a>
             <span className="hidden sm:inline text-slate-600">•</span>
-            <span className="hidden sm:inline text-slate-400">دمشق – جرمana</span>
+            <span className="hidden sm:inline text-slate-400 text-xs">دمشق – جرمانا</span>
           </div>
 
           {/* User Auth Info */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             {isLoadingAuth ? (
               <div className="flex items-center gap-2 py-0.5 px-2 animate-pulse text-slate-500">
                 <div className="w-4 h-4 rounded-full bg-slate-800" />
                 <div className="w-16 h-3 rounded bg-slate-800" />
               </div>
             ) : isAuthenticated ? (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3">
                 <button
                   type="button"
                   onClick={handleProfileClick}
-                  className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors py-0.5 px-2 rounded-lg hover:bg-amber-500/10 cursor-pointer"
+                  className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors py-0.5 px-2 rounded-lg hover:bg-amber-500/10 cursor-pointer text-xs"
                   title={isAdmin ? 'لوحة تحكم الإدارة (Admin View)' : 'عرض بيانات الحساب والحجوزات'}
                   id="navbar-profile-btn"
                 >
                   <div className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 font-bold text-[10px] flex items-center justify-center border border-amber-500/30">
                     {user?.displayName?.charAt(0) || <User className="w-3 h-3" />}
                   </div>
-                  <span className="font-semibold max-w-[130px] truncate">{user?.displayName}</span>
+                  <span className="font-semibold max-w-[100px] sm:max-w-[130px] truncate">{user?.displayName}</span>
                   {isSuperAdmin ? (
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-black flex items-center gap-1 shadow-sm">
                       <Shield className="w-2.5 h-2.5" />
@@ -122,11 +122,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs">
                 <button
                   type="button"
                   onClick={() => onOpenAuth('login')}
-                  className="text-slate-300 hover:text-amber-400 flex items-center gap-1 transition-colors font-medium text-xs cursor-pointer"
+                  className="text-slate-300 hover:text-amber-400 flex items-center gap-1 transition-colors font-medium cursor-pointer"
                   id="navbar-login-btn"
                 >
                   <LogIn className="w-3.5 h-3.5 text-amber-500" />
@@ -136,7 +136,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenAuth('register')}
-                  className="text-amber-400 hover:text-amber-300 transition-colors font-bold text-xs flex items-center gap-1 cursor-pointer"
+                  className="text-amber-400 hover:text-amber-300 transition-colors font-bold flex items-center gap-1 cursor-pointer"
                   id="navbar-register-btn"
                 >
                   <UserPlus className="w-3.5 h-3.5" />
@@ -149,21 +149,19 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Main Navigation Bar */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between pr-16 sm:pr-20">
-        {/* Brand Logo & Name */}
-        <div
-          onClick={() => handleNav('home')}
-          className="flex items-center gap-3 cursor-pointer group"
-          id="navbar-brand"
-        >
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/20 text-slate-950 font-black transition-transform group-hover:scale-105 shrink-0">
-            <Car className="w-7 h-7 text-slate-950 stroke-[2.2]" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+        {/* Menu Button & Brand Name */}
+        <div className="flex items-center gap-3">
+          <MenuButton />
+          <div
+            onClick={() => handleNav('home')}
+            className="flex flex-col cursor-pointer group"
+            id="navbar-brand"
+          >
+            <span className="text-base sm:text-2xl font-black tracking-tight text-white flex items-center gap-1.5 sm:gap-2">
               شاكر <span className="text-amber-400">لتأجير السيارات</span>
             </span>
-            <span className="text-[11px] sm:text-xs text-slate-400 font-medium tracking-wide">
+            <span className="text-[10px] sm:text-xs text-slate-400 font-medium tracking-wide">
               Shaker Car Rental • دمشق – جرمانا
             </span>
           </div>

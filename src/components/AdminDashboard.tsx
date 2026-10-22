@@ -18,6 +18,7 @@ const AdminStaffRoles = React.lazy(() => import('./admin/AdminStaffRoles').then(
 const AdminActivityLog = React.lazy(() => import('./admin/AdminActivityLog').then((m) => ({ default: m.AdminActivityLog })));
 import { SkeletonLoader } from './common/SkeletonLoader';
 import { StatusBadge } from './common/StatusBadge';
+import { MenuButton } from './MenuButton';
 
 // Modular Sub-components for Admin
 import { AdminOverview } from './admin/AdminOverview';
@@ -417,27 +418,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         onOpenProfile={() => setShowMyProfile(true)}
       />
 
-      {/* Non-sticky Top Header Bar with right margin for fixed menu button */}
-      <header className="relative z-20 bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-md pr-16 sm:pr-20">
+      {/* Top Header Bar */}
+      <header className="relative z-20 bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
         <div className="flex items-center gap-2.5 sm:gap-3">
+          <MenuButton />
+
           <button
             type="button"
             onClick={onBackToSite}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all shadow-sm cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all shadow-sm cursor-pointer"
             title="الرجوع إلى الموقع الرئيسي"
           >
             <ArrowRight className="w-4 h-4 text-amber-400" />
             <span className="hidden sm:inline">الموقع</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowAccountDetails(true)}
-            className="w-8 h-8 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center font-black shadow-sm shrink-0 transition-all hover:scale-105 active:scale-95 cursor-pointer"
-            title="عرض تفاصيل الحساب والمعرف (UID)"
-            aria-label="عرض تفاصيل الحساب"
-          >
-            <LayoutDashboard className="w-4 h-4" />
           </button>
           <div>
             <div className="flex items-center gap-2">

@@ -1,7 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import {
-  Menu,
-  X,
   Car,
   Phone,
   Calendar,
@@ -15,6 +13,7 @@ import {
   Home
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useMenu } from '../contexts/MenuContext';
 import { openWhatsAppChat } from '../services/whatsapp';
 
 interface GlobalMenuProps {
@@ -26,10 +25,9 @@ interface GlobalMenuProps {
 }
 
 /**
- * Fixed ☰ Menu button and drawer present across all pages.
- * - Positioned at physical screen RIGHT (top 12-16px, right 12-16px).
- * - Exact same dimensions and rounded corners as the yellow car logo square (w-12 h-12 rounded-xl).
- * - Uses env(safe-area-inset-top) and high z-index (z-50).
+ * Slide-out navigation drawer controlled via MenuContext.
+ * Note: The fixed ☰ button has been removed from here and unified into MenuButton,
+ * embedded directly in the Navbar and PageTopBar.
  */
 export const GlobalMenu: React.FC<GlobalMenuProps> = ({
   currentView,
@@ -38,17 +36,17 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
   onOpenAuth,
   onOpenProfile,
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const { isOpen, closeMenu } = useMenu();
   const { user, isAuthenticated, isLoadingAuth, logout, isAdmin, isSuperAdmin, isEmployee } = useAuth();
 
   // Close menu on ESC key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsOpen(false);
+      if (e.key === 'Escape') closeMenu();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [closeMenu]);
 
   // Prevent background scrolling when drawer is open
   useEffect(() => {
@@ -64,48 +62,27 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
 
   const handleNav = (view: string) => {
     onNavigate(view);
-    setIsOpen(false);
+    closeMenu();
   };
 
   return (
     <>
-      {/* Fixed ☰ Menu Button on Physical Right */}
-      <button
-        type="button"
-        onClick={() => setIsOpen((prev) => !prev)}
-        style={{
-          top: 'max(12px, env(safe-area-inset-top, 12px))',
-          right: 'max(12px, env(safe-area-inset-right, 12px))',
-        }}
-        className="fixed z-50 w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 flex items-center justify-center shadow-xl shadow-amber-500/25 active:scale-95 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
-        aria-label={isOpen ? 'إغلاق القائمة' : 'فتح القائمة الرئيسية'}
-        aria-expanded={isOpen}
-        id="global-fixed-menu-button"
-        title="القائمة الرئيسية"
-      >
-        {isOpen ? (
-          <X className="w-6 h-6 stroke-[2.6]" />
-        ) : (
-          <Menu className="w-6 h-6 stroke-[2.6]" />
-        )}
-      </button>
-
       {/* Drawer Overlay Backdrop */}
       {isOpen && (
         <div
           className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm transition-opacity"
-          onClick={() => setIsOpen(false)}
+          onClick={closeMenu}
           aria-hidden="true"
         />
       )}
 
       {/* Slide-out Menu Drawer */}
       <div
-        className={`fixed top-0 right-0 z-40 h-full w-full max-w-sm sm:max-w-md bg-slate-950 border-l border-slate-800/90 shadow-2xl transition-transform duration-300 ease-out flex flex-col justify-between overflow-y-auto ${
+        className={`fixed top-0 right-0 z-50 h-full w-full max-w-sm sm:max-w-md bg-slate-950 border-l border-slate-800/90 shadow-2xl transition-transform duration-300 ease-out flex flex-col justify-between overflow-y-auto ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
         style={{
-          paddingTop: 'max(68px, calc(env(safe-area-inset-top, 0px) + 68px))',
+          paddingTop: 'max(24px, calc(env(safe-area-inset-top, 0px) + 24px))',
           paddingBottom: 'max(24px, env(safe-area-inset-bottom, 24px))',
         }}
         dir="rtl"
@@ -173,7 +150,7 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setIsOpen(false);
+                    closeMenu();
                     if (isAdmin) handleNav('admin');
                     else onOpenProfile();
                   }}
@@ -186,7 +163,7 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
                   type="button"
                   onClick={() => {
                     logout();
-                    setIsOpen(false);
+                    closeMenu();
                   }}
                   className="py-2 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
                   title="تسجيل الخروج"
@@ -201,7 +178,7 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setIsOpen(false);
+                  closeMenu();
                   onOpenAuth('login');
                 }}
                 className="py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-white font-bold flex items-center justify-center gap-2 text-xs transition-colors"
@@ -212,7 +189,7 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setIsOpen(false);
+                  closeMenu();
                   onOpenAuth('register');
                 }}
                 className="py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black flex items-center justify-center gap-2 text-xs transition-colors shadow-md shadow-amber-500/20"
@@ -268,7 +245,7 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setIsOpen(false);
+                  closeMenu();
                   onOpenProfile();
                 }}
                 className={`w-full text-right px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-3 transition-colors ${
@@ -307,7 +284,7 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
           <button
             type="button"
             onClick={() => {
-              setIsOpen(false);
+              closeMenu();
               onOpenBooking();
             }}
             className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black flex items-center justify-center gap-2 text-sm shadow-lg shadow-amber-500/20 active:scale-98 transition-all"
@@ -319,7 +296,7 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
           <button
             type="button"
             onClick={() => {
-              setIsOpen(false);
+              closeMenu();
               openWhatsAppChat();
             }}
             className="w-full py-2.5 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 font-bold flex items-center justify-center gap-2 text-xs transition-colors"

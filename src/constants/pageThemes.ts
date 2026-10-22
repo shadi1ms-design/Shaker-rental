@@ -8,7 +8,6 @@ import {
   LogIn,
   UserPlus,
   LucideIcon,
-  Shield,
   FileText
 } from 'lucide-react';
 
