@@ -15,11 +15,9 @@ import {
   ClipboardCheck,
   X,
   Gauge,
-  Droplet,
   Image as ImageIcon,
   LayoutGrid,
-  List,
-  AlertCircle
+  List
 } from 'lucide-react';
 
 interface AdminVehiclesProps {
@@ -104,31 +102,11 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
     await handleQuickStatusChange(vId, 'maintenance');
   };
 
-  const getOilBadge = (v: Vehicle) => {
-    const kmSinceOil = (v.currentMileage || 0) - (v.lastOilChangeMileage || 0);
-    const interval = 5000;
-    const remaining = interval - kmSinceOil;
 
-    if (remaining <= 0) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
-          <Droplet className="w-3 h-3 text-rose-400" />
-          <span>تجاوز الزيت ({Math.abs(remaining).toLocaleString()} كم)</span>
-        </span>
-      );
-    }
-    if (remaining <= 500) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-          <Droplet className="w-3 h-3 text-amber-400" />
-          <span>متبقي للزيت ({remaining.toLocaleString()} كم)</span>
-        </span>
-      );
-    }
+  const getOilBadge = (v: Vehicle) => {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-slate-300 border border-slate-700">
-        <Droplet className="w-3 h-3 text-emerald-400" />
-        <span>متبقي للزيت: {remaining.toLocaleString()} كم</span>
+      <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 text-[11px] font-bold">
+        منتظم ({v.currentMileage?.toLocaleString()} كم)
       </span>
     );
   };
@@ -292,8 +270,10 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
             <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5 pointer-events-none" />
             {searchQuery && (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-2.5 text-slate-500 hover:text-white cursor-pointer"
+                aria-label="مسح نص البحث"
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-white cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -305,7 +285,8 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
             <button
               type="button"
               onClick={() => setViewMode('grid')}
-              className={`p-2 rounded-lg transition-colors cursor-pointer ${
+              aria-label="عرض كروت شبكية"
+              className={`p-2 rounded-lg transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                 viewMode === 'grid'
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-white'
@@ -317,7 +298,8 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
             <button
               type="button"
               onClick={() => setViewMode('table')}
-              className={`p-2 rounded-lg transition-colors cursor-pointer ${
+              aria-label="عرض جدول تفصيلي"
+              className={`p-2 rounded-lg transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                 viewMode === 'table'
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-white'
@@ -350,8 +332,6 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
         /* GRID VIEW */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredVehicles.map((v) => {
-            const kmSinceOil = (v.currentMileage || 0) - (v.lastOilChangeMileage || 0);
-            const isOilOverdue = kmSinceOil >= 5000;
             const isUpdating = updatingVehicleId === v.id;
 
             return (
@@ -364,15 +344,19 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
                     <img
                       src={v.imageUrl || (v.images && v.images[0]) || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&w=1000&q=80'}
                       alt={v.model}
+                      width={400}
+                      height={176}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md text-[11px] font-bold text-amber-400 border border-amber-500/30">
+                    <div className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md text-xs font-bold text-amber-400 border border-amber-500/30">
                       {getVehicleCategoryLabel(v.category)}
                     </div>
 
                     {v.images && v.images.length > 1 && (
-                      <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded-lg bg-slate-950/80 backdrop-blur-md text-[10px] text-slate-300 border border-slate-700/60 flex items-center gap-1 shadow-md">
-                        <ImageIcon className="w-3 h-3 text-amber-400" />
+                      <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded-lg bg-slate-950/80 backdrop-blur-md text-xs text-slate-300 border border-slate-700/60 flex items-center gap-1 shadow-md">
+                        <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
                         <span>{v.images.length} صور</span>
                       </div>
                     )}
@@ -383,7 +367,7 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
                         value={v.status}
                         disabled={isUpdating || isSyncing}
                         onChange={(e) => handleStatusChangeRequest(v, e.target.value as VehicleStatus)}
-                        className={`px-3 py-1 rounded-full text-[11px] font-black cursor-pointer appearance-none outline-none border transition-all shadow-md ${
+                        className={`px-3 py-1 rounded-full text-xs font-black cursor-pointer appearance-none outline-none border transition-all shadow-md focus-visible:ring-2 focus-visible:ring-amber-400 ${
                           v.status === 'available'
                             ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/50 hover:bg-emerald-900'
                             : v.status === 'rented'
@@ -408,34 +392,17 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
                       </div>
                       <div className="text-left">
                         <span className="text-xl font-black text-amber-400 font-mono">${v.dailyPrice}</span>
-                        <span className="text-[10px] text-slate-400 block">/ يوم</span>
+                        <span className="text-xs text-slate-400 block">/ يوم</span>
                       </div>
-                    </div>
-
-                    {/* Oil Badge */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-400">حالة الصيانة:</span>
-                      {getOilBadge(v)}
                     </div>
 
                     {/* Mileage Stats */}
-                    <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-xs space-y-1.5">
-                      <div className="flex justify-between items-center text-slate-400">
-                        <span className="flex items-center gap-1">
-                          <Gauge className="w-3.5 h-3.5 text-slate-500" />
-                          <span>العداد الحالي:</span>
-                        </span>
-                        <span className="text-white font-mono font-bold">{v.currentMileage.toLocaleString()} كم</span>
-                      </div>
-                      <div className="flex justify-between items-center text-slate-400">
-                        <span className="flex items-center gap-1">
-                          <Droplet className={`w-3.5 h-3.5 ${isOilOverdue ? 'text-rose-400' : 'text-slate-500'}`} />
-                          <span>المقطوع من آخر زيت:</span>
-                        </span>
-                        <span className={`font-mono font-bold ${isOilOverdue ? 'text-rose-400' : 'text-emerald-400'}`}>
-                          {kmSinceOil.toLocaleString()} كم
-                        </span>
-                      </div>
+                    <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-xs flex justify-between items-center text-slate-400">
+                      <span className="flex items-center gap-1">
+                        <Gauge className="w-3.5 h-3.5 text-slate-400" />
+                        <span>العداد الحالي:</span>
+                      </span>
+                      <span className="text-white font-mono font-bold">{v.currentMileage.toLocaleString()} كم</span>
                     </div>
                   </div>
                 </div>
@@ -444,8 +411,9 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
                 <div className="p-4 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-1.5">
                     <button
+                      type="button"
                       onClick={() => onOpenInspection(v)}
-                      className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-400 text-xs font-bold transition-colors cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-400 text-xs font-bold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                       title="فحص الهيكل والتسليم"
                     >
                       فحص الهيكل
@@ -453,27 +421,30 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
 
                     {v.status === 'available' ? (
                       <button
+                        type="button"
                         onClick={() => handleStatusChangeRequest(v, 'rented')}
                         disabled={isUpdating || isSyncing}
-                        className="px-2.5 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 border border-blue-500/40 text-blue-300 hover:text-white text-xs font-bold transition-all cursor-pointer"
+                        className="px-2.5 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 border border-blue-500/40 text-blue-300 hover:text-white text-xs font-bold transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                         title="تغيير الحالة إلى مؤجرة وحفظها في قاعدة البيانات"
                       >
                         تأجير
                       </button>
                     ) : v.status === 'rented' ? (
                       <button
+                        type="button"
                         onClick={() => handleStatusChangeRequest(v, 'available')}
                         disabled={isUpdating || isSyncing}
-                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/40 text-emerald-300 hover:text-white text-xs font-bold transition-all cursor-pointer"
+                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/40 text-emerald-300 hover:text-white text-xs font-bold transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                         title="استلام السيارة وإعادتها إلى متوفرة"
                       >
                         استلام (متاحة)
                       </button>
                     ) : (
                       <button
+                        type="button"
                         onClick={() => handleStatusChangeRequest(v, 'available')}
                         disabled={isUpdating || isSyncing}
-                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/40 text-emerald-300 hover:text-white text-xs font-bold transition-all cursor-pointer"
+                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/40 text-emerald-300 hover:text-white text-xs font-bold transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                         title="إنهاء الصيانة وإعادتها إلى متوفرة"
                       >
                         إنهاء الصيانة
@@ -483,8 +454,10 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
 
                   <div className="flex items-center gap-1.5">
                     <button
+                      type="button"
                       onClick={() => onOpenEditVehicle(v)}
-                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors cursor-pointer"
+                      aria-label={`تعديل بيانات ${v.brand} ${v.model}`}
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                       title="تعديل بيانات السيارة"
                     >
                       <Edit3 className="w-4 h-4 text-amber-400" />
@@ -492,8 +465,10 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
 
                     {isAdmin && (
                       <button
+                        type="button"
                         onClick={() => onDeleteVehicle(v)}
-                        className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                        aria-label={`حذف سيارة ${v.brand} ${v.model}`}
+                        className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                         title="حذف السيارة من الأسطول"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -532,11 +507,15 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
                           <img
                             src={v.imageUrl || (v.images && v.images[0]) || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&w=200&q=80'}
                             alt={v.model}
+                            width={40}
+                            height={40}
+                            loading="lazy"
+                            decoding="async"
                             className="w-10 h-10 rounded-xl object-cover border border-slate-800 shrink-0"
                           />
                           <div>
                             <div>{v.brand} {v.model}</div>
-                            <span className="text-[11px] text-slate-400 font-mono">موديل {v.year}</span>
+                            <span className="text-xs text-slate-400 font-mono">موديل {v.year}</span>
                           </div>
                         </div>
                       </td>
@@ -547,7 +526,7 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
                         {v.plateNumber}
                       </td>
                       <td className="p-3.5 font-mono font-bold text-white">
-                        ${v.dailyPrice} <span className="text-[10px] text-slate-500 font-normal">/يوم</span>
+                        ${v.dailyPrice} <span className="text-xs text-slate-400 font-normal">/يوم</span>
                       </td>
                       <td className="p-3.5 font-mono text-slate-300">
                         {v.currentMileage.toLocaleString()} كم
@@ -560,7 +539,7 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
                           value={v.status}
                           disabled={isUpdating || isSyncing}
                           onChange={(e) => handleStatusChangeRequest(v, e.target.value as VehicleStatus)}
-                          className={`px-2.5 py-1 rounded-xl text-[11px] font-black cursor-pointer appearance-none outline-none border transition-all ${
+                          className={`px-2.5 py-1 rounded-xl text-xs font-black cursor-pointer appearance-none outline-none border transition-all focus-visible:ring-2 focus-visible:ring-amber-400 ${
                             v.status === 'available'
                               ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
                               : v.status === 'rented'
@@ -576,23 +555,29 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
                       <td className="p-3.5 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <button
+                            type="button"
                             onClick={() => onOpenInspection(v)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 cursor-pointer"
+                            aria-label={`فحص هيكل ${v.brand} ${v.model}`}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                             title="فحص الهيكل"
                           >
                             <ClipboardCheck className="w-3.5 h-3.5" />
                           </button>
                           <button
+                            type="button"
                             onClick={() => onOpenEditVehicle(v)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 cursor-pointer"
+                            aria-label={`تعديل بيانات ${v.brand} ${v.model}`}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                             title="تعديل بيانات السيارة"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           {isAdmin && (
                             <button
+                              type="button"
                               onClick={() => onDeleteVehicle(v)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 cursor-pointer"
+                              aria-label={`حذف سيارة ${v.brand} ${v.model}`}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                               title="حذف السيارة"
                             >
                               <Trash2 className="w-3.5 h-3.5" />

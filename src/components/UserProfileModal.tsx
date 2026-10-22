@@ -1,22 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Booking, UploadedFile } from '../types';
 import { dataService } from '../services/dataService';
 import { functionsService } from '../services/functionsService';
 import {
   User,
-  Mail,
   Phone,
   Calendar,
   Clock,
   Car,
-  ShieldCheck,
   CheckCircle2,
   X,
   LogOut,
   MessageCircle,
-  ExternalLink,
-  ChevronLeft,
   FolderOpen,
   Upload,
   FileText,
@@ -32,6 +28,7 @@ import {
 import { openWhatsAppChat } from '../services/whatsapp';
 import { storageService } from '../services/storageService';
 import { validateUploadedFile } from '../utils/security';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -48,6 +45,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   onOpenBooking,
   onOpenAdminView,
 }) => {
+  const modalRef = useFocusTrap({ isOpen, onClose });
   const { user, logout, isSuperAdmin, isAdmin, isEmployee, changePassword, changePhoneNumber } = useAuth();
   const [activeTab, setActiveTab] = useState<'profile' | 'bookings' | 'files'>('bookings');
   const [userFiles, setUserFiles] = useState<UploadedFile[]>([]);
@@ -62,7 +60,22 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [cancellingBookingId, setCancellingBookingId] = useState<string | null>(null);
   const [bookingCancelError, setBookingCancelError] = useState<string | null>(null);
+  // Inline confirmation (replaces native window.confirm popups)
+  const [pendingAction, setPendingAction] = useState<{ id: string; kind: 'cancel' | 'hide' } | null>(null);
+  const [directCustomerBookings, setDirectCustomerBookings] = useState<Booking[] | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Direct real-time Firestore query for user's bookings by customerId
+  useEffect(() => {
+    if (!isOpen || !user?.uid) {
+      setDirectCustomerBookings(null);
+      return;
+    }
+    const unsubscribe = dataService.subscribeToCustomerBookings(user.uid, (customerBookings) => {
+      setDirectCustomerBookings(customerBookings);
+    });
+    return () => unsubscribe();
+  }, [isOpen, user?.uid]);
 
   // Security & Credentials Form State
   const [currentPassword, setCurrentPassword] = useState('');
@@ -146,8 +159,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }
   };
 
+  const handleHideBooking = async (bookingId: string) => {
+    setPendingAction(null);
+    try {
+      setBookingCancelError(null);
+      await dataService.hideBookingForCustomer(bookingId);
+      window.location.reload();
+    } catch (err: unknown) {
+      setBookingCancelError((err instanceof Error && err.message) || 'تعذر إتمام العملية.');
+    }
+  };
+
   const handleCancelBooking = async (bookingId: string) => {
-    if (!window.confirm('هل أنت متأكد من رغبتك في إلغاء هذا الحجز؟')) return;
+    setPendingAction(null);
     try {
       setCancellingBookingId(bookingId);
       setBookingCancelError(null);
@@ -167,13 +191,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       setCancellingBookingId(null);
     }
   };
-
-  useEffect(() => {
-    if (isOpen && user?.uid) {
-      loadFiles();
-      loadProfile();
-    }
-  }, [isOpen, user?.uid]);
 
   const loadProfile = async () => {
     if (!user?.uid) return;
@@ -197,6 +214,13 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       setIsLoadingFiles(false);
     }
   };
+
+  useEffect(() => {
+    if (isOpen && user?.uid) {
+      loadFiles();
+      loadProfile();
+    }
+  }, [isOpen, user?.uid]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -254,7 +278,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         userId: user.uid,
         userEmail: user.email,
         fileName: cleanDocName,
-        fileUrl: uploadResult.downloadUrl,
         storagePath: uploadResult.storagePath,
         fileType: uploadResult.fileType,
         fileSize: uploadResult.fileSize,
@@ -276,16 +299,20 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }
   };
 
-  if (!isOpen || !user) return null;
+  // Filter bookings for this user primarily by customerId == user.uid, with email/phone as fallback
+  const userBookings = useMemo(() => {
+    if (!user) return [];
+    const sourceBookings = directCustomerBookings ?? bookings;
+    return sourceBookings.filter((b) => {
+      if (user.uid && b.customerId === user.uid) return true;
+      if (user.email && b.customerEmail && b.customerEmail.toLowerCase() === user.email.toLowerCase()) return true;
+      if (user.phone && b.customerPhone && user.phone.replace(/\D/g, '') && b.customerPhone.replace(/\D/g, '').includes(user.phone.replace(/\D/g, ''))) return true;
+      if (b.customerName && user.displayName && b.customerName.trim().toLowerCase() === user.displayName.trim().toLowerCase()) return true;
+      return false;
+    });
+  }, [directCustomerBookings, bookings, user]);
 
-  // Filter bookings for this user based on customerId, email, phone or name
-  const userBookings = bookings.filter((b) => {
-    if (user.uid && b.customerId === user.uid) return true;
-    if (user.email && b.customerEmail && b.customerEmail.toLowerCase() === user.email.toLowerCase()) return true;
-    if (user.phone && b.customerPhone && b.customerPhone.includes(user.phone.replace(/[^0-9]/g, ''))) return true;
-    if (b.customerName && user.displayName && b.customerName.trim().toLowerCase() === user.displayName.trim().toLowerCase()) return true;
-    return false;
-  });
+  if (!isOpen || !user) return null;
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -305,14 +332,13 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <div className="min-h-[calc(100vh-4rem)] flex items-start justify-center p-3 sm:p-6 bg-slate-950">
       <div
-        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-5 sm:p-8 shadow-2xl relative overflow-hidden text-slate-100 max-h-[90vh] max-h-[90dvh] flex flex-col my-auto"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="user-profile-modal-title"
+        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-5 sm:p-8 shadow-2xl relative overflow-clip text-slate-100"
         style={{ WebkitOverflowScrolling: 'touch' }}
         onClick={(e) => e.stopPropagation()}
         id="user-profile-modal"
@@ -328,7 +354,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-lg sm:text-xl font-black text-white">{user.displayName}</h2>
+                <h2 id="user-profile-modal-title" className="text-lg sm:text-xl font-black text-white">{user.displayName}</h2>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-semibold border border-slate-700">
                   {isSuperAdmin ? 'المدير العام' : isAdmin ? 'مسؤول النظام' : 'عميل شاكر'}
                 </span>
@@ -361,8 +387,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors text-xs font-bold shadow-sm"
-            aria-label="إغلاق النافذة"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors text-xs font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            aria-label="إغلاق الملف الشخصي"
             title="إغلاق النافذة"
           >
             <X className="w-4 h-4" />
@@ -425,7 +451,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
         {/* Tab Content Body */}
         <div 
-          className="flex-1 overflow-y-auto py-4 space-y-4 pr-1 overscroll-contain"
+          className="py-4 space-y-4"
           style={{ WebkitOverflowScrolling: 'touch' }}
         >
           {activeTab === 'bookings' && (
@@ -462,8 +488,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-2 border-b border-slate-800/60">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                            #{booking.bookingNumber}
+                          <span className="font-mono font-black text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/30 text-xs tracking-wider" dir="ltr">
+                            #{booking.bookingNumber || booking.id.slice(0, 8)}
                           </span>
                           <span className="font-bold text-white text-sm">{booking.vehicleName}</span>
                         </div>
@@ -489,17 +515,40 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         <div>
                           <span className="text-slate-400">الإجمالي: </span>
                           <span className="font-bold text-white">${booking.totalPrice}</span>
-                          {booking.remainingAmount > 0 && (
-                            <span className="text-rose-400 mr-2">
-                              (المتبقي: ${booking.remainingAmount})
-                            </span>
-                          )}
                         </div>
 
                         <div className="flex items-center gap-2">
-                          {(booking.status === 'new' || booking.status === 'reviewing') && (
+                          {pendingAction?.id === booking.id && (
+                            <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-slate-950 border border-slate-700 text-xs">
+                              <span className="text-slate-300">
+                                {pendingAction.kind === 'cancel'
+                                  ? 'هل أنت متأكد من رغبتك في إلغاء هذا الحجز؟'
+                                  : 'سيتم إخفاء هذا الحجز من قائمتك فقط، مع بقاء سجله محفوظاً لدى الشركة. متابعة؟'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  pendingAction.kind === 'cancel'
+                                    ? handleCancelBooking(booking.id)
+                                    : handleHideBooking(booking.id)
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-400 text-white font-bold"
+                              >
+                                تأكيد
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingAction(null)}
+                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold"
+                              >
+                                تراجع
+                              </button>
+                            </div>
+                          )}
+
+                          {(booking.status === 'new' || booking.status === 'reviewing') && pendingAction?.id !== booking.id && (
                             <button
-                              onClick={() => handleCancelBooking(booking.id)}
+                              onClick={() => setPendingAction({ id: booking.id, kind: 'cancel' })}
                               disabled={cancellingBookingId === booking.id}
                               className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 hover:text-rose-300 transition-all text-xs font-semibold disabled:opacity-50"
                             >
@@ -507,17 +556,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                             </button>
                           )}
 
-                          {['cancelled', 'rejected', 'completed'].includes(booking.status) && (
+                          {['cancelled', 'rejected', 'completed'].includes(booking.status) && pendingAction?.id !== booking.id && (
                             <button
-                              onClick={async () => {
-                                if (!window.confirm('سيتم إخفاء هذا الحجز من قائمتك فقط، مع بقاء سجله محفوظاً لدى الشركة للأغراض المحاسبية. هل تريد المتابعة؟')) return;
-                                try {
-                                  await dataService.hideBookingForCustomer(booking.id);
-                                  window.location.reload();
-                                } catch (err: any) {
-                                  alert(err?.message || 'تعذر إتمام العملية.');
-                                }
-                              }}
+                              onClick={() => setPendingAction({ id: booking.id, kind: 'hide' })}
                               className="px-2.5 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 text-slate-300 hover:text-white transition-all text-xs font-semibold"
                             >
                               حذف من القائمة
@@ -755,16 +796,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {file.fileUrl && (
-                          <a
-                            href={file.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 transition-colors"
+                        {file.storagePath && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const url = await storageService.getFileDownloadUrl(file.storagePath);
+                              if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                            }}
+                            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                             title="عرض الوثيقة"
+                            aria-label="عرض وتحميل الوثيقة"
                           >
                             <Eye className="w-4 h-4" />
-                          </a>
+                          </button>
                         )}
                       </div>
                     </div>

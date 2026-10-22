@@ -10,15 +10,16 @@
  * - Exports validation functions for direct unit testing (Requirement 4).
  */
 
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { initializeApp, getApps, getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import { onObjectFinalized } from 'firebase-functions/v2/storage';
 import { DATABASE_ID, DEFAULT_STORAGE_BUCKET, STORAGE_TRIGGER_REGION } from './constants';
 
-if (!admin.apps.length) {
-  admin.initializeApp();
+if (!getApps().length) {
+  initializeApp();
 }
-const db = getFirestore(admin.app(), DATABASE_ID);
+const db = getFirestore(getApp(), DATABASE_ID);
 
 export const MAX_DOCUMENT_SIZE_BYTES = 25 * 1024 * 1024; // 25MB for docs/images
 export const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;   // 100MB for inspection videos
@@ -147,7 +148,7 @@ export const validateUploadedFileSignature = onObjectFinalized(
     }
 
     try {
-      const bucket = admin.storage().bucket(bucketName);
+      const bucket = getStorage().bucket(bucketName);
       const file = bucket.file(filePath);
 
       const [exists] = await file.exists();
@@ -167,8 +168,8 @@ export const validateUploadedFileSignature = onObjectFinalized(
             actorType: 'system',
             filePath,
             fileSizeBytes: fileSize,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: FieldValue.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
           });
           return;
         }
@@ -193,8 +194,8 @@ export const validateUploadedFileSignature = onObjectFinalized(
             actorType: 'system',
             filePath,
             detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: FieldValue.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
           });
           return;
         }
@@ -233,8 +234,8 @@ export const validateUploadedFileSignature = onObjectFinalized(
             actorType: 'system',
             filePath,
             detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: FieldValue.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
           });
           return;
         }

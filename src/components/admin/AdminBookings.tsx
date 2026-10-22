@@ -1,21 +1,20 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Booking, Vehicle, BookingStatus } from '../../types';
 import { getRemaining } from '../../utils/bookingCalculations';
 import { dataService } from '../../services/dataService';
 import { functionsService } from '../../services/functionsService';
 import { openWhatsAppChatWithCustomer } from '../../services/whatsapp';
+import { Toast, ToastMessage } from '../common/Toast';
+import { StatusBadge } from '../common/StatusBadge';
 import {
   Calendar,
   Search,
   CheckCircle2,
   AlertTriangle,
-  FileText,
   ClipboardCheck,
-  DollarSign,
   RefreshCw,
   X,
   MessageSquare,
-  Filter,
   Trash2,
   Ban,
   Key,
@@ -28,10 +27,11 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckSquare,
-  Square
+  Square,
+  FileText
 } from 'lucide-react';
-import { BOOKING_STATUS_META } from '../../constants/statusMeta';
 import { todayLocalISO } from '../../utils/dateUtils';
+import { navigate } from '../../router';
 
 interface AdminBookingsProps {
   bookings: Booking[];
@@ -54,6 +54,13 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
   onSyncWithFirestore,
   syncStatus,
 }) => {
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const handleWhatsAppToCustomer = (booking: Booking) => {
+    if (!openWhatsAppChatWithCustomer(booking)) {
+      setToast({ id: String(Date.now()), type: 'warning', message: 'رقم هاتف العميل غير متوفر بهذا الحجز.' });
+    }
+  };
+
   // Read initial params from URL if present
   const getUrlParams = () => {
     if (typeof window === 'undefined') return { status: 'all', q: '' };
@@ -169,24 +176,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
   }, [vehicleActiveBookingsMap]);
 
   const getStatusBadge = (status: BookingStatus) => {
-    switch (status) {
-      case 'new':
-        return <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">طلب جديد</span>;
-      case 'reviewing':
-        return <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">قيد المراجعة</span>;
-      case 'confirmed':
-        return <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">مؤكد</span>;
-      case 'rented':
-        return <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">جاري التأجير</span>;
-      case 'completed':
-        return <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700">مكتمل ومستلم</span>;
-      case 'cancelled':
-        return <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">ملغي</span>;
-      case 'rejected':
-        return <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-900/40 text-rose-400 border border-rose-800">مرفوض</span>;
-      default:
-        return <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-800 text-slate-400">{status}</span>;
-    }
+    return <StatusBadge status={status} type="booking" />;
   };
 
   const handleUpdateStatus = async (booking: Booking, newStatus: BookingStatus) => {
@@ -221,6 +211,10 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
       setActionSuccess(`تم ${statusLabels[newStatus] || newStatus} بنجاح ومزامنة قاعدة البيانات السحابية.`);
       setStatusActionConfirm(null);
       setTimeout(() => setActionSuccess(null), 4000);
+      if (newStatus === 'confirmed') {
+        // Booking confirmed: open the printable rental contract
+        navigate(`/admin/contracts/${encodeURIComponent(bookingId)}`);
+      }
     } catch (err: any) {
       console.error('Update booking status error:', err);
       setActionError(err?.message || 'عذراً، حدث خطأ أثناء تحديث حالة الحجز.');
@@ -394,7 +388,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
 
   // Export filtered results as CSV
   const handleExportFilteredCSV = () => {
-    const headers = ['رقم الحجز', 'العميل', 'الهاتف', 'السيارة', 'تاريخ الاستلام', 'تاريخ الإعادة', 'المدة', 'الإجمالي', 'المسدد', 'المتبقي', 'الحالة'];
+    const headers = ['رقم الحجز', 'العميل', 'الهاتف', 'السيارة', 'تاريخ الاستلام', 'تاريخ الإعادة', 'المدة', 'الإجمالي', 'الحالة'];
     const rows = filteredBookings.map((b) => [
       `"${b.bookingNumber || ''}"`,
       `"${b.customerName || ''}"`,
@@ -404,8 +398,6 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
       `"${b.returnDate || ''}"`,
       b.rentalDays || 1,
       b.totalPrice || 0,
-      b.paidAmount || 0,
-      getRemaining(b),
       `"${b.status}"`,
     ]);
     const csv = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -947,9 +939,21 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                               </button>
                             )}
 
+                            {/* Print rental contract (confirmed / rented / completed bookings) */}
+                            {['confirmed', 'rented', 'completed'].includes(b.status) && (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/admin/contracts/${encodeURIComponent(b.id)}`)}
+                                className="p-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-amber-200 border border-amber-500/30 transition-colors cursor-pointer"
+                                title="عقد الإيجار (عرض وطباعة)"
+                              >
+                                <FileText className="w-[18px] h-[18px]" />
+                              </button>
+                            )}
+
                             {/* WhatsApp Chat */}
                             <button
-                              onClick={() => openWhatsAppChatWithCustomer(b)}
+                              onClick={() => handleWhatsAppToCustomer(b)}
                               className="p-2 rounded-xl bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white transition-colors cursor-pointer"
                               title="مراسلة العميل عبر الواتساب"
                             >
@@ -1114,8 +1118,21 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                         </button>
                       )}
 
+                      {/* Print rental contract (confirmed / rented / completed bookings) */}
+                      {['confirmed', 'rented', 'completed'].includes(b.status) && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/admin/contracts/${encodeURIComponent(b.id)}`)}
+                          className="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          title="عقد الإيجار (عرض وطباعة)"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>العقد</span>
+                        </button>
+                      )}
+
                       <button
-                        onClick={() => openWhatsAppChatWithCustomer(b)}
+                        onClick={() => handleWhatsAppToCustomer(b)}
                         className="p-1.5 rounded-xl bg-emerald-600/20 text-emerald-400"
                         title="واتساب"
                       >
@@ -1317,6 +1334,8 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
           </div>
         </div>
       )}
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 };

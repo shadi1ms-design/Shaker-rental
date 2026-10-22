@@ -1,7 +1,7 @@
 // Firebase Cloud Messaging Service Worker for Shaker Car Rental
 
-importScripts('https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.14.0/firebase-messaging-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/13.0.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/13.0.0/firebase-messaging-compat.js');
 
 try {
   const urlParams = new URLSearchParams(self.location.search);

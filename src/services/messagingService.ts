@@ -1,5 +1,5 @@
 import { getToken, onMessage, isSupported } from 'firebase/messaging';
-import { messaging, firebaseConfig, isFirebaseConfigured, db } from '../firebase/config';
+import { messaging, firebaseConfig, isFirebaseConfigured, getDb } from '../firebase/config';
 import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
 
 export interface PushNotificationPayload {
@@ -101,9 +101,10 @@ class MessagingService {
         }
 
         // Save token to user profile in Firestore if signed in
-        if (userId && db) {
+        if (userId) {
           try {
-            const userRef = doc(db, 'users', userId);
+            const activeDb = getDb();
+            const userRef = doc(activeDb, 'users', userId);
             await updateDoc(userRef, {
               fcmTokens: arrayUnion(token),
               fcmLastUpdated: new Date().toISOString(),
@@ -159,7 +160,7 @@ class MessagingService {
           }
         }
       });
-    } catch (err) {
+    } catch {
       // Foreground listener setup failed silently
     }
   }

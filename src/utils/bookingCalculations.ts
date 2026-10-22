@@ -1,20 +1,11 @@
 import { Booking } from '../types';
 
 /**
- * Calculates remaining balance accurately.
- * remainingAmount ?? (totalPrice - paidAmount)
+ * Legacy remaining balance helper (always 0 now that payments are removed).
  */
-export function getRemaining(booking: {
-  totalPrice?: number;
-  paidAmount?: number;
-  remainingAmount?: number;
-}): number {
-  if (typeof booking.remainingAmount === 'number' && !isNaN(booking.remainingAmount)) {
-    return Math.max(0, booking.remainingAmount);
-  }
-  const total = booking.totalPrice || 0;
-  const paid = booking.paidAmount || 0;
-  return Math.max(0, total - paid);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function getRemaining(..._args: any[]): number {
+  return 0;
 }
 
 /**
@@ -25,24 +16,45 @@ export function isFinanciallyActiveBooking(booking: Booking): boolean {
 }
 
 /**
- * Calculates revenue and balances for a set of bookings according to financial standards.
- * Excludes cancelled and rejected bookings from collected revenue and outstanding balance.
+ * Calculates revenue and booking metrics according to actual completed and active contracts.
+ * Total revenue for reports is based on completed bookings (and active rentals).
  */
 export function calculateBookingFinancials(bookings: Booking[]): {
+  totalRevenue: number;
+  completedRevenue: number;
+  totalValidBookings: number;
+  completedBookingsCount: number;
+  // Legacy aliases for non-breaking UI support
   collectedRevenue: number;
   outstandingBalance: number;
-  totalValidBookings: number;
 } {
   return bookings.reduce(
     (acc, b) => {
       if (!isFinanciallyActiveBooking(b)) {
         return acc;
       }
-      acc.collectedRevenue += b.paidAmount || 0;
-      acc.outstandingBalance += getRemaining(b);
+      const price = Number(b.totalPrice || 0);
+      acc.totalRevenue += price;
       acc.totalValidBookings += 1;
+
+      if (b.status === 'completed') {
+        acc.completedRevenue += price;
+        acc.completedBookingsCount += 1;
+      }
+
+      // Maintain legacy aliases mapped to completed revenue
+      acc.collectedRevenue = acc.completedRevenue;
+      acc.outstandingBalance = 0;
+
       return acc;
     },
-    { collectedRevenue: 0, outstandingBalance: 0, totalValidBookings: 0 }
+    {
+      totalRevenue: 0,
+      completedRevenue: 0,
+      totalValidBookings: 0,
+      completedBookingsCount: 0,
+      collectedRevenue: 0,
+      outstandingBalance: 0,
+    }
   );
 }

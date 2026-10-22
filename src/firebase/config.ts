@@ -58,25 +58,23 @@ if (isFirebaseConfigured) {
   try {
     const existingApps = getApps();
     app = existingApps && existingApps.length > 0 && existingApps[0] ? existingApps[0] : initializeApp(firebaseConfig);
-    auth = getAuth(app);
 
     // Firebase App Check with reCAPTCHA Enterprise
-    try {
-      const recaptchaSiteKey = env.VITE_RECAPTCHA_SITE_KEY || '6Le-GMItAAAAAJQeoGFLzB7crB0JgnkL_eLkNYY5';
+    const recaptchaSiteKey = env.VITE_RECAPTCHA_SITE_KEY || appletConfig?.recaptchaSiteKey || '6Le-GMItAAAAAJQeoGFLzB7crB0JgnkL_eLkNYY5';
 
-      // تفعيل Debug Token في بيئة التطوير/معاينة AI Studio فقط
-      if (import.meta.env.DEV && typeof window !== 'undefined') {
-        (window as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+    if (typeof window !== 'undefined') {
+      try {
+        appCheckInstance = initializeAppCheck(app, {
+          provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+          isTokenAutoRefreshEnabled: true,
+        });
+        console.log('[Firebase App Check] تم تفعيل Firebase App Check بنجاح باستخدام reCAPTCHA Enterprise.');
+      } catch (appCheckErr) {
+        console.warn('[Firebase App Check] Initialization issue:', appCheckErr);
       }
-
-      appCheckInstance = initializeAppCheck(app, {
-        provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
-        isTokenAutoRefreshEnabled: true,
-      });
-      console.log('[Firebase App Check] تم التفعيل بنجاح.');
-    } catch (appCheckErr) {
-      console.error('[Firebase App Check Failure] فشل تهيئة App Check:', appCheckErr);
     }
+
+    auth = getAuth(app);
 
     // Suppress Firestore verbose connection failure and retry warnings in console
     try {
@@ -87,45 +85,28 @@ if (isFirebaseConfigured) {
 
     const customDbId = firestoreDatabaseId && firestoreDatabaseId !== '(default)' ? firestoreDatabaseId : undefined;
 
-    // Try to get existing Firestore instance first if already running
-    if (existingApps && existingApps.length > 0) {
-      try {
-        db = customDbId ? getFirestore(app, customDbId) : getFirestore(app);
-      } catch {
-        db = null;
-      }
-    }
-
-    // Initialize Firestore with forced long-polling and resilient cache
-    // experimentalForceLongPolling avoids WebSocket connection attempts that fail in iframe/sandbox environments
-    if (!db) {
+    // Initialize Firestore with resilient cache and auto-recovery
+    try {
       const primarySettings = {
-        experimentalForceLongPolling: true,
+        experimentalAutoDetectLongPolling: true,
         localCache: persistentLocalCache({
           tabManager: persistentMultipleTabManager()
         })
       };
-
+      if (customDbId) {
+        db = initializeFirestore(app, primarySettings, customDbId);
+      } else {
+        db = initializeFirestore(app, primarySettings);
+      }
+    } catch {
       try {
-        if (customDbId) {
-          db = initializeFirestore(app, primarySettings, customDbId);
-        } else {
-          db = initializeFirestore(app, primarySettings);
-        }
+        const fallbackMemorySettings = {
+          experimentalAutoDetectLongPolling: true,
+          localCache: memoryLocalCache()
+        };
+        db = customDbId ? initializeFirestore(app, fallbackMemorySettings, customDbId) : initializeFirestore(app, fallbackMemorySettings);
       } catch {
-        try {
-          const fallbackMemorySettings = {
-            experimentalForceLongPolling: true,
-            localCache: memoryLocalCache()
-          };
-          if (customDbId) {
-            db = initializeFirestore(app, fallbackMemorySettings, customDbId);
-          } else {
-            db = initializeFirestore(app, fallbackMemorySettings);
-          }
-        } catch {
-          db = customDbId ? getFirestore(app, customDbId) : getFirestore(app);
-        }
+        db = customDbId ? getFirestore(app, customDbId) : getFirestore(app);
       }
     }
 
@@ -139,7 +120,7 @@ if (isFirebaseConfigured) {
     // Firebase Cloud Functions
     try {
       functions = getFunctions(app, 'asia-south1');
-    } catch (funcErr) {
+    } catch {
       try {
         functions = getFunctions(app);
       } catch (e) {
@@ -191,5 +172,33 @@ if (isFirebaseConfigured) {
   }
 }
 
+/**
+ * Returns the active Firestore instance, auto-recovering if it was terminated or uninitialized.
+ */
+export const getDb = (): Firestore => {
+  const customDbId = firestoreDatabaseId && firestoreDatabaseId !== '(default)' ? firestoreDatabaseId : undefined;
+  if (!app) {
+    const existingApps = getApps();
+    app = existingApps && existingApps.length > 0 && existingApps[0] ? existingApps[0] : initializeApp(firebaseConfig);
+  }
+  if (!db || (db as any)._isTerminated) {
+    try {
+      db = customDbId ? getFirestore(app, customDbId) : getFirestore(app);
+    } catch {
+      try {
+        const fallbackMemorySettings = {
+          experimentalAutoDetectLongPolling: true,
+          localCache: memoryLocalCache()
+        };
+        db = customDbId ? initializeFirestore(app, fallbackMemorySettings, customDbId) : initializeFirestore(app, fallbackMemorySettings);
+      } catch {
+        db = customDbId ? getFirestore(app, customDbId) : getFirestore(app);
+      }
+    }
+  }
+  return db!;
+};
+
 export { app, auth, db, storage, functions, messaging, analytics, appCheckInstance };
+
 

@@ -1,10 +1,10 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
-import { isCallerStaff } from './authz';
+import { isCallerStaff, assertNotRevoked } from './authz';
 
-const db = getFirestore(admin.app(), DATABASE_ID);
+const db = getFirestore(getApp(), DATABASE_ID);
 
 function sanitizeString(input: unknown, maxLen = 100): string {
   if (typeof input !== 'string') return '';
@@ -18,8 +18,9 @@ function sanitizeString(input: unknown, maxLen = 100): string {
 /**
  * Cloud Function: verifyCustomerIdentity (region: asia-south1)
  * Requirement 1:
- * - Administrative path: Staff cannot self-verify.
- * - Self-service path: Does NOT overwrite verified/rejected statuses previously set by staff.
+ * - Administrative path: Staff cannot self-verify, session revocation check enforced.
+ * - Self-service path: Does NOT overwrite verified/rejected statuses previously set by staff,
+ *   and format validation failures NEVER set status to rejected.
  */
 export const verifyCustomerIdentity = onCall(
   {
@@ -39,6 +40,8 @@ export const verifyCustomerIdentity = onCall(
     // Path A: Administrative Status Decision (Server-Authoritative)
     // ---------------------------------------------------------------------------
     if (action === 'set_status' || action === 'review_decision') {
+      await assertNotRevoked(request);
+
       if (!isStaff) {
         throw new HttpsError(
           'permission-denied',
@@ -105,7 +108,7 @@ export const verifyCustomerIdentity = onCall(
         newStatus,
         isVerified,
         timestamp: nowIso,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
 
       return {
@@ -134,7 +137,7 @@ export const verifyCustomerIdentity = onCall(
     const existingStatus = existingUserData?.verificationStatus;
 
     // Invariant: Do not overwrite verified or rejected statuses previously set by staff
-    if (existingStatus === 'verified' || existingStatus === 'rejected') {
+    if (existingStatus === 'verified') {
       return {
         success: true,
         formatValid: true,
@@ -147,7 +150,7 @@ export const verifyCustomerIdentity = onCall(
       };
     }
 
-    const { nationalId, phone, fileUrl, documentType } = data || {};
+    const { nationalId, phone, storagePath, documentType } = data || {};
     const cleanId = String(nationalId || '').trim().replace(/\D/g, '');
     const cleanPhone = String(phone || '').trim().replace(/[^\d+]/g, '');
 
@@ -157,18 +160,32 @@ export const verifyCustomerIdentity = onCall(
     const hasPhone = cleanPhone.length > 0;
     const isValidPhone = hasPhone ? (cleanPhone.length >= 9 && cleanPhone.length <= 15) : true;
 
-    const hasDocument = Boolean(fileUrl && typeof fileUrl === 'string');
+    const hasDocument = Boolean(storagePath && typeof storagePath === 'string');
 
     const formatValid = (hasNationalId ? isValidNationalId : true) &&
                         (hasPhone ? isValidPhone : true) &&
                         (hasNationalId || hasPhone || hasDocument);
 
-    const verificationStatus: 'manual_review' | 'rejected' = formatValid ? 'manual_review' : 'rejected';
-    const verified = false;
+    if (!formatValid) {
+      return {
+        success: false,
+        formatValid: false,
+        verified: false,
+        verificationStatus: existingStatus || 'unverified',
+        requiresManualReview: false,
+        details: {
+          nationalIdValid: hasNationalId ? isValidNationalId : undefined,
+          phoneValid: hasPhone ? isValidPhone : undefined,
+          documentReceived: hasDocument,
+          documentType: sanitizeString(documentType, 50) || undefined,
+        },
+        message: 'صيغة الرقم الوطني أو رقم الهاتف غير مطابقة للمعايير المعتمدة.',
+      };
+    }
 
     if (userSnap.exists) {
       await userDocRef.set({
-        verificationStatus,
+        verificationStatus: 'manual_review',
         verified: false,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
@@ -176,9 +193,9 @@ export const verifyCustomerIdentity = onCall(
 
     return {
       success: true,
-      formatValid,
-      verified,
-      verificationStatus,
+      formatValid: true,
+      verified: false,
+      verificationStatus: 'manual_review',
       requiresManualReview: true,
       details: {
         nationalIdValid: hasNationalId ? isValidNationalId : undefined,
@@ -187,9 +204,7 @@ export const verifyCustomerIdentity = onCall(
         documentType: sanitizeString(documentType, 50) || undefined,
         requiresManualReview: true,
       },
-      message: formatValid
-        ? 'تم استلام البيانات والمستندات بنجاح. الطلب الآن قيد التدقيق الإداري اليدوي من قِبل فريق العمل.'
-        : 'صيغة الرقم الوطني أو رقم الهاتف غير مطابقة للمعايير المعتمدة.',
+      message: 'تم استلام البيانات والمستندات بنجاح. الطلب الآن قيد التدقيق الإداري اليدوي من قِبل فريق العمل.',
     };
   }
 );

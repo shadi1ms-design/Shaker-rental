@@ -1,12 +1,12 @@
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
-import { createServer as createViteServer } from 'vite';
-
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    // Dynamic import: 'vite' is a devDependency and must not be required in production.
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -46,7 +46,7 @@ async function startServer() {
       console.log(`Development server running on http://localhost:${PORT}`);
     });
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.resolve(process.cwd(), 'dist');
     const server = http.createServer((req, res) => {
       const url = req.url || '/';
 
@@ -56,8 +56,15 @@ async function startServer() {
         return;
       }
 
-      const filePath = path.join(distPath, url === '/' ? 'index.html' : url);
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      let requestPath = '/';
+      try {
+        requestPath = decodeURIComponent(url.split('?')[0].split('#')[0]);
+      } catch {
+        requestPath = '/';
+      }
+      const filePath = path.resolve(distPath, '.' + (requestPath === '/' ? '/index.html' : requestPath));
+      const insideDist = filePath === distPath || filePath.startsWith(distPath + path.sep);
+      if (insideDist && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath);
         const mimeTypes: Record<string, string> = {
           '.html': 'text/html',
@@ -69,9 +76,20 @@ async function startServer() {
           '.svg': 'image/svg+xml',
           '.ico': 'image/x-icon',
           '.webp': 'image/webp',
+          '.webmanifest': 'application/manifest+json',
+          '.woff2': 'font/woff2',
+          '.woff': 'font/woff',
+          '.map': 'application/json',
+          '.txt': 'text/plain',
         };
         res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' });
-        fs.createReadStream(filePath).pipe(res);
+        const stream = fs.createReadStream(filePath);
+        stream.on('error', () => { if (!res.headersSent) res.writeHead(500); res.end(); });
+        stream.pipe(res);
+      } else if (path.extname(requestPath)) {
+        // Missing static asset: return 404 instead of the SPA shell
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
       } else {
         const indexPath = path.join(distPath, 'index.html');
         res.writeHead(200, { 'Content-Type': 'text/html' });

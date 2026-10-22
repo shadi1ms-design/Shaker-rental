@@ -1,12 +1,12 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
-import { isCallerAdmin } from './authz';
+import { isCallerAdmin, assertNotRevoked } from './authz';
 import { calculateRentalPriceServer } from './pricingServer';
 import { resolveVehicleDocument } from './bookingHelpers';
 
-const db = getFirestore(admin.app(), DATABASE_ID);
+const db = getFirestore(getApp(), DATABASE_ID);
 
 /**
  * Cloud Function: calculateDynamicPricing (region: asia-south1)
@@ -54,7 +54,7 @@ export const calculateDynamicPricing = onCall(
 /**
  * Cloud Function: updateSettingsSecure (region: asia-south1)
  * Server-authoritative settings update with rigorous bounds validation (Requirement 3).
- * Validates: insurance >= 0, discount 0-25%, driver fee >= 0, and logs immutable audit.
+ * Validates: insurance >= 0, discount 0-25%, driver fee >= 0, cancellationLeadHours (0-720), phone formats, and logs immutable audit.
  */
 export const updateSettingsSecure = onCall(
   {
@@ -62,11 +62,9 @@ export const updateSettingsSecure = onCall(
     enforceAppCheck: true,
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لتعديل إعدادات النظام.');
-    }
+    await assertNotRevoked(request);
 
-    const callerToken = request.auth.token;
+    const callerToken = request.auth!.token;
     if (!isCallerAdmin(callerToken)) {
       throw new HttpsError('permission-denied', 'تعديل إعدادات النظام مقتصر حصراً على مدراء النظام (Admin).');
     }
@@ -102,14 +100,6 @@ export const updateSettingsSecure = onCall(
       updates.driverDailyRate = driverRate;
     }
 
-    // Validate oil change interval (>= 1000)
-    if (incomingSettings.oilChangeIntervalKm !== undefined) {
-      const oilKm = Number(incomingSettings.oilChangeIntervalKm);
-      if (isNaN(oilKm) || oilKm < 1000) {
-        throw new HttpsError('invalid-argument', 'مسافة دورة تغيير الزيت يجب أن تكون 1,000 كم على الأقل.');
-      }
-      updates.oilChangeIntervalKm = oilKm;
-    }
 
     // Validate discount config (0-25%)
     if (incomingSettings.discountConfig !== undefined) {
@@ -123,7 +113,7 @@ export const updateSettingsSecure = onCall(
           enabled: Boolean(cfg.enabled),
           percentage: pct,
           scope: cfg.scope === 'specific' ? 'specific' : 'all',
-          vehicleIds: Array.isArray(cfg.vehicleIds) ? cfg.vehicleIds.map((id: any) => String(id).trim()) : [],
+          vehicleIds: Array.isArray(cfg.vehicleIds) ? cfg.vehicleIds.slice(0, 200).map((id: any) => String(id).trim()) : [],
           title: String(cfg.title || 'خصم خاص للأعضاء').slice(0, 100),
         };
       }
@@ -132,16 +122,42 @@ export const updateSettingsSecure = onCall(
     // Other non-financial settings
     if (incomingSettings.companyName) updates.companyName = String(incomingSettings.companyName).slice(0, 100);
     if (incomingSettings.companyNameEn) updates.companyNameEn = String(incomingSettings.companyNameEn).slice(0, 100);
-    if (incomingSettings.companyPhone) updates.companyPhone = String(incomingSettings.companyPhone).slice(0, 30);
-    if (incomingSettings.whatsappNumber) updates.whatsappNumber = String(incomingSettings.whatsappNumber).slice(0, 30);
-    if (incomingSettings.address) updates.address = String(incomingSettings.address).slice(0, 200);
-    if (incomingSettings.rentalTerms) updates.rentalTerms = String(incomingSettings.rentalTerms).slice(0, 3000);
-    if (incomingSettings.cancellationLeadHours !== undefined) {
-      const lead = Number(incomingSettings.cancellationLeadHours);
-      if (!isNaN(lead) && lead >= 0) updates.cancellationLeadHours = lead;
+    const PHONE_REGEX = /^((\+?963\s?9\d{8})|(09\d{8})|(\+?[1-9]\d{6,14}))$/;
+
+    if (incomingSettings.companyPhone !== undefined) {
+      const phoneStr = String(incomingSettings.companyPhone || '').trim();
+      if (phoneStr) {
+        const digitsOnly = phoneStr.replace(/[\s\-\(\)]/g, '');
+        if (!PHONE_REGEX.test(digitsOnly)) {
+          throw new HttpsError('invalid-argument', 'صيغة هاتف الشركة غير صالحة. يرجى إدخال رقم صحيح مع الرمز الدولي أو المحلي.');
+        }
+      }
+      updates.companyPhone = phoneStr.slice(0, 30);
     }
 
-    updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+    if (incomingSettings.whatsappNumber !== undefined) {
+      const waStr = String(incomingSettings.whatsappNumber || '').trim();
+      if (waStr) {
+        const digitsOnly = waStr.replace(/[\s\-\(\)]/g, '');
+        if (!PHONE_REGEX.test(digitsOnly)) {
+          throw new HttpsError('invalid-argument', 'صيغة رقم واتساب غير صالحة. يرجى إدخال رقم صحيح مع الرمز الدولي أو المحلي.');
+        }
+      }
+      updates.whatsappNumber = waStr.slice(0, 30);
+    }
+
+    if (incomingSettings.address !== undefined) updates.address = String(incomingSettings.address).slice(0, 200);
+    if (incomingSettings.rentalTerms !== undefined) updates.rentalTerms = String(incomingSettings.rentalTerms).slice(0, 3000);
+
+    if (incomingSettings.cancellationLeadHours !== undefined) {
+      const lead = Number(incomingSettings.cancellationLeadHours);
+      if (isNaN(lead) || lead < 0 || lead > 720) {
+        throw new HttpsError('invalid-argument', 'مهلة الإلغاء بالساعات يجب أن تكون رقماً بين 0 و 720 ساعة (30 يوماً).');
+      }
+      updates.cancellationLeadHours = lead;
+    }
+
+    updates.updatedAt = FieldValue.serverTimestamp();
 
     // Persist to single authoritative document: settings/global
     const settingsRef = db.collection('settings').doc('global');
@@ -151,17 +167,17 @@ export const updateSettingsSecure = onCall(
     const auditRef = db.collection('auditLogs').doc();
     await auditRef.set({
       id: auditRef.id,
-      user: request.auth.token.email || request.auth.uid,
-      userId: request.auth.uid,
-      actorUid: request.auth.uid,
-      actorEmail: request.auth.token.email || null,
+      user: request.auth!.token.email || request.auth!.uid,
+      userId: request.auth!.uid,
+      actorUid: request.auth!.uid,
+      actorEmail: request.auth!.token.email || null,
       actorType: 'staff',
       action: 'SETTINGS_UPDATED_SECURE',
       entity: 'settings',
       entityId: 'global',
       details: 'تحديث إعدادات المنظومة العامة والمالية عبر معالج الإعدادات الآمن',
       timestamp: new Date().toISOString(),
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     return {

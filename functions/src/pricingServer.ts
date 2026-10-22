@@ -92,10 +92,9 @@ export function calculateRentalPriceServer(
     const safePercentage = Math.min(25, Math.max(0, Math.round(rawPct)));
 
     const isVehicleMatched =
-      discountCfg.scope === 'all' ||
-      !discountCfg.vehicleIds ||
-      discountCfg.vehicleIds.length === 0 ||
-      (vehicleId ? discountCfg.vehicleIds.includes(vehicleId) : true);
+      discountCfg.scope === 'specific'
+        ? Boolean(discountCfg.vehicleIds && discountCfg.vehicleIds.length > 0 && vehicleId && discountCfg.vehicleIds.includes(vehicleId))
+        : true;
 
     if (isVehicleMatched && safePercentage > 0 && isUserLoggedIn) {
       discountPercentage = safePercentage;

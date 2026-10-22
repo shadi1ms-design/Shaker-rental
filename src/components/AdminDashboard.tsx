@@ -1,3 +1,4 @@
+import { navigate, useLocation, matchPath, goBack } from '../router';
 import React, { useState, useEffect } from 'react';
 import {
   Vehicle,
@@ -16,6 +17,7 @@ const AdminUsersFilesView = React.lazy(() => import('./AdminUsersFilesView').the
 const AdminStaffRoles = React.lazy(() => import('./admin/AdminStaffRoles').then((m) => ({ default: m.AdminStaffRoles })));
 const AdminActivityLog = React.lazy(() => import('./admin/AdminActivityLog').then((m) => ({ default: m.AdminActivityLog })));
 import { SkeletonLoader } from './common/SkeletonLoader';
+import { StatusBadge } from './common/StatusBadge';
 
 // Modular Sub-components for Admin
 import { AdminOverview } from './admin/AdminOverview';
@@ -26,6 +28,7 @@ import { AdminNotifications } from './admin/AdminNotifications';
 // Modals
 import { VehicleFormModal } from './VehicleFormModal';
 import { InspectionModal } from './InspectionModal';
+import { RentalContract } from './RentalContract';
 import { UserProfileModal } from './UserProfileModal';
 
 // Icons
@@ -36,11 +39,8 @@ import {
   Calendar,
   BarChart3,
   Settings,
-  Plus,
-  Wrench,
   FolderOpen,
   Shield,
-  FileText,
   Bell,
   RefreshCw,
   Trash2,
@@ -54,14 +54,13 @@ import {
   X,
   Copy,
   Mail,
-  ChevronDown,
-  ChevronUp,
   BarChart2,
   Search,
   ChevronLeft,
   ChevronRight,
-  Command
+  ArrowRight
 } from 'lucide-react';
+import { GlobalMenu } from './GlobalMenu';
 
 export type AdminTabType =
   | 'firestore_users'
@@ -110,6 +109,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const pathToTabMap: Record<string, AdminTabType> = {
     '/admin/dashboard': 'overview',
     '/admin/bookings': 'bookings',
+    '/admin/contracts': 'bookings',
     '/admin/vehicles': 'vehicles',
     '/admin/reports': 'reports',
     '/admin/settings': 'settings',
@@ -182,7 +182,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
       const targetPath = pathMap[tab];
       if (window.location.pathname !== targetPath) {
-        window.history.pushState(null, '', targetPath);
+        navigate(targetPath);
       }
     }
   };
@@ -191,21 +191,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [showAccountDetails, setShowAccountDetails] = useState(false);
   const [copiedUid, setCopiedUid] = useState(false);
   const [showMyProfile, setShowMyProfile] = useState(false);
-  const [editingVehicle, setEditingVehicle] = useState<Vehicle | null | undefined>(undefined); // undefined = closed, null = new
-  const [inspectionVehicle, setInspectionVehicle] = useState<Vehicle | null>(null);
-  const [inspectionBookingId, setInspectionBookingId] = useState<string>('');
+  // Vehicle form / inspection are full pages with their own URLs
+  const { pathname: currentPath, search: currentSearch } = useLocation();
+  const isNewVehicleRoute = currentPath === '/admin/vehicles/new';
+  const editVehicleMatch = matchPath('/admin/vehicles/:id/edit', currentPath);
+  const inspectionMatch = matchPath('/admin/vehicles/:id/inspection', currentPath);
+  const contractMatch = matchPath('/admin/contracts/:id', currentPath);
+  const editingVehicle: Vehicle | null | undefined = isNewVehicleRoute
+    ? null
+    : editVehicleMatch
+    ? vehicles.find((v) => v.id === editVehicleMatch.id)
+    : undefined; // undefined = no form page, null = new vehicle
+  const inspectionVehicle: Vehicle | null = inspectionMatch
+    ? vehicles.find((v) => v.id === inspectionMatch.id) || null
+    : null;
+  const inspectionBookingId = new URLSearchParams(currentSearch).get('booking') || '';
+  const openVehicleForm = (v: Vehicle | null) =>
+    navigate(v ? `/admin/vehicles/${encodeURIComponent(v.id)}/edit` : '/admin/vehicles/new');
+  const openInspection = (v: Vehicle, bookingId = '') =>
+    navigate(
+      `/admin/vehicles/${encodeURIComponent(v.id)}/inspection${bookingId ? `?booking=${encodeURIComponent(bookingId)}` : ''}`
+    );
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
   const [isDeletingVehicle, setIsDeletingVehicle] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Aux Data State - Instant cached bootstrap
-  const [customers, setCustomers] = useState<Customer[]>(() => dataService.getCachedCustomers());
+  const [, setCustomers] = useState<Customer[]>(() => dataService.getCachedCustomers());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => dataService.getNotifications());
-
-  // Vehicles needing oil change computed reactively in 0ms without network roundtrip
-  const vehiclesNeedingOil = React.useMemo(() => {
-    return dataService.calculateVehiclesNeedingOil(vehicles, settings.oilChangeIntervalKm || 5000);
-  }, [vehicles, settings.oilChangeIntervalKm]);
 
   // Cloud Sync State & Timestamp
   const [isSyncing, setIsSyncing] = useState(false);
@@ -232,6 +245,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const loadAuxData = async () => {
+    try {
+      const custs = await dataService.getCustomers(true);
+      setCustomers(custs || []);
+
+      if (isAdmin) {
+        const notifs = await dataService.getNotifications();
+        setNotifications(notifs || []);
+      }
+    } catch (err) {
+      console.warn('Auxiliary admin data loading note:', err);
+    }
+  };
+
   useEffect(() => {
     loadAuxData();
 
@@ -249,20 +276,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
     };
   }, [isAdmin]);
-
-  const loadAuxData = async () => {
-    try {
-      const custs = await dataService.getCustomers(true);
-      setCustomers(custs || []);
-
-      if (isAdmin) {
-        const notifs = await dataService.getNotifications();
-        setNotifications(notifs || []);
-      }
-    } catch (err) {
-      console.warn('Auxiliary admin data loading note:', err);
-    }
-  };
 
   const handleSyncAllWithFirestore = async () => {
     try {
@@ -321,11 +334,102 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     );
   }
 
+  const vehicleNotFound = (
+    <div className="min-h-[40vh] flex flex-col items-center justify-center gap-4 text-center">
+      <p className="text-slate-300 font-bold">لم يتم العثور على هذه السيارة.</p>
+      <button
+        type="button"
+        onClick={() => navigate('/admin/vehicles')}
+        className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black"
+      >
+        العودة إلى أسطول السيارات
+      </button>
+    </div>
+  );
+
+  const vehiclePage =
+    isNewVehicleRoute || editVehicleMatch ? (
+      editingVehicle === undefined ? (
+        vehicleNotFound
+      ) : (
+        <VehicleFormModal
+          key={editingVehicle?.id || 'new'}
+          vehicle={editingVehicle}
+          onClose={() => goBack('/admin/vehicles')}
+          onSaved={() => {
+            onRefreshData();
+            loadAuxData();
+            navigate('/admin/vehicles');
+          }}
+        />
+      )
+    ) : inspectionMatch ? (
+      inspectionVehicle ? (
+        <InspectionModal
+          key={`${inspectionVehicle.id}:${inspectionBookingId}`}
+          vehicle={inspectionVehicle}
+          bookingId={inspectionBookingId}
+          onClose={() => goBack('/admin/vehicles')}
+          onSaved={() => {
+            onRefreshData();
+            loadAuxData();
+          }}
+        />
+      ) : (
+        vehicleNotFound
+      )
+    ) : contractMatch ? (
+      (() => {
+        const contractBooking = bookings.find((b) => b.id === contractMatch.id);
+        return contractBooking ? (
+          <RentalContract
+            booking={contractBooking}
+            settings={settings}
+            vehicle={vehicles.find((v) => v.id === contractBooking.vehicleId) || null}
+            onBack={() => goBack('/admin/bookings')}
+          />
+        ) : (
+          <div className="min-h-[40vh] flex flex-col items-center justify-center gap-4 text-center">
+            <p className="text-slate-300 font-bold">لم يتم العثور على هذا الحجز.</p>
+            <button
+              type="button"
+              onClick={() => navigate('/admin/bookings')}
+              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black"
+            >
+              العودة إلى الحجوزات
+            </button>
+          </div>
+        );
+      })()
+    ) : null;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Sticky Top Header Bar */}
-      <header className="sticky top-0 z-30 bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-2 flex flex-wrap items-center justify-between gap-3 shadow-md">
+      {/* Global Fixed ☰ Menu */}
+      <GlobalMenu
+        currentView="admin"
+        onNavigate={(v) => {
+          if (v === 'home') onBackToSite();
+          else navigate(v === 'cars' ? '/cars' : v === 'contact' ? '/contact' : '/');
+        }}
+        onOpenBooking={() => navigate('/cars')}
+        onOpenAuth={() => navigate('/login')}
+        onOpenProfile={() => setShowMyProfile(true)}
+      />
+
+      {/* Non-sticky Top Header Bar with right margin for fixed menu button */}
+      <header className="relative z-20 bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-md pr-16 sm:pr-20">
         <div className="flex items-center gap-2.5 sm:gap-3">
+          <button
+            type="button"
+            onClick={onBackToSite}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all shadow-sm cursor-pointer"
+            title="الرجوع إلى الموقع الرئيسي"
+          >
+            <ArrowRight className="w-4 h-4 text-amber-400" />
+            <span className="hidden sm:inline">الموقع</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setShowAccountDetails(true)}
@@ -563,6 +667,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           )}
 
           {/* ANIMATED ACTIVE TAB CONTENT */}
+          {vehiclePage ?? (
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -577,9 +682,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <AdminOverview
                   vehicles={vehicles}
                   bookings={bookings}
-                  vehiclesNeedingOil={vehiclesNeedingOil}
                   onNavigateTab={handleTabChange}
-                  onOpenAddVehicle={() => setEditingVehicle(null)}
+                  onOpenAddVehicle={() => openVehicleForm(null)}
                   onSyncAll={handleSyncAllWithFirestore}
                   isSyncing={isSyncing}
                 />
@@ -594,10 +698,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     onRefreshData();
                     loadAuxData();
                   }}
-                  onOpenInspection={(v, bookingId) => {
-                    setInspectionVehicle(v);
-                    setInspectionBookingId(bookingId);
-                  }}
+                  onOpenInspection={(v, bookingId) => openInspection(v, bookingId)}
                   onDeleteBooking={async (bookingId) => {
                     await dataService.deleteBooking(bookingId);
                     onRefreshData();
@@ -618,16 +719,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     onRefreshData();
                     loadAuxData();
                   }}
-                  onOpenAddVehicle={() => setEditingVehicle(null)}
-                  onOpenEditVehicle={(v) => setEditingVehicle(v)}
+                  onOpenAddVehicle={() => openVehicleForm(null)}
+                  onOpenEditVehicle={(v) => openVehicleForm(v)}
                   onDeleteVehicle={(v) => {
                     setDeleteError(null);
                     setVehicleToDelete(v);
                   }}
-                  onOpenInspection={(v) => {
-                    setInspectionVehicle(v);
-                    setInspectionBookingId('');
-                  }}
+                  onOpenInspection={(v) => openInspection(v)}
                   isSyncing={isSyncing}
                   onSyncWithFirestore={handleSyncAllWithFirestore}
                   syncStatus={syncStatus}
@@ -685,36 +783,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               )}
             </motion.div>
           </AnimatePresence>
+          )}
         </main>
       </div>
 
       {/* ALL MODALS */}
-      {/* 1. Vehicle Add/Edit */}
-      {editingVehicle !== undefined && (
-        <VehicleFormModal
-          vehicle={editingVehicle}
-          onClose={() => setEditingVehicle(undefined)}
-          onSaved={() => {
-            onRefreshData();
-            loadAuxData();
-            setEditingVehicle(undefined);
-          }}
-        />
-      )}
-
-      {/* 2. Inspection Modal */}
-      {inspectionVehicle && (
-        <InspectionModal
-          vehicle={inspectionVehicle}
-          bookingId={inspectionBookingId}
-          onClose={() => setInspectionVehicle(null)}
-          onSaved={() => {
-            onRefreshData();
-            loadAuxData();
-          }}
-        />
-      )}
-
       {/* 3. Vehicle Deletion Confirmation Modal with Feedback */}
       {vehicleToDelete && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
@@ -1019,10 +1092,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 <Car className="w-4 h-4 text-blue-400" />
                                 <div>
                                   <span className="font-bold text-white">{v.brand} {v.model} ({v.year})</span>
-                                  <span className="text-[11px] text-slate-400 font-mono block">لوحة: {v.plateNumber} • ${v.dailyPrice}/يوم</span>
+                                  <span className="text-xs text-slate-400 font-mono block">لوحة: {v.plateNumber} • ${v.dailyPrice}/يوم</span>
                                 </div>
                               </div>
-                              <span className="text-[10px] text-emerald-400 font-bold">{v.status === 'available' ? 'متوفرة' : v.status === 'rented' ? 'مؤجرة' : 'صيانة'}</span>
+                              <StatusBadge status={v.status} type="vehicle" size="sm" />
                             </button>
                           ))}
                         </div>

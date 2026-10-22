@@ -13,7 +13,6 @@ export type BookingStatus =
 
 export type FuelType = 'petrol' | 'diesel' | 'hybrid' | 'electric';
 export type TransmissionType = 'automatic' | 'manual';
-export type PaymentMethod = 'cash' | 'bank_transfer' | 'other';
 export type UserRole = 'super_admin' | 'superAdmin' | 'admin' | 'employee' | 'customer';
 
 export interface Vehicle {
@@ -29,7 +28,6 @@ export interface Vehicle {
   dailyPrice: number;
   plateNumber: string;
   currentMileage: number;
-  lastOilChangeMileage: number;
   status: VehicleStatus;
   imageUrl: string;
   images?: string[];
@@ -67,10 +65,7 @@ export interface Booking {
   withDriver?: boolean;
   deliveryLocation?: string;
   totalPrice: number;
-  paidAmount: number;
-  remainingAmount: number;
   status: BookingStatus;
-  paymentStatus?: string;
   notes?: string;
   isDeleted?: boolean;
   hiddenFromCustomer?: boolean;
@@ -145,39 +140,7 @@ export interface Contract {
   updatedAt?: string;
 }
 
-export interface Payment {
-  id: string;
-  bookingId: string;
-  customerId?: string;
-  amount: number;
-  method: PaymentMethod;
-  paymentDate: string;
-  receiptNumber?: string;
-  notes?: string;
-  createdAt: string;
-}
 
-export type MaintenanceType =
-  | 'oil_change'
-  | 'tires'
-  | 'brakes'
-  | 'battery'
-  | 'engine'
-  | 'transmission'
-  | 'general';
-
-export interface MaintenanceRecord {
-  id: string;
-  vehicleId: string;
-  serviceType: MaintenanceType;
-  mileage: number;
-  cost: number;
-  serviceDate: string;
-  nextDueMileage?: number;
-  technicianNotes?: string;
-  performedBy?: string;
-  createdAt: string;
-}
 
 export interface VehicleInspection {
   id: string;
@@ -225,9 +188,9 @@ export interface AppSettings {
   monthlyRateLight: number;
   monthlyRateMedium: number;
   monthlyRateJeep: number;
-  oilChangeIntervalKm: number;
   driverDailyRate?: number;
   rentalTerms: string;
+  cancellationLeadHours?: number;
   updatedAt?: string;
 }
 
@@ -280,7 +243,7 @@ export interface AuditLog {
 
 export interface AppNotification {
   id: string;
-  type: 'new_booking' | 'booking_confirmed' | 'booking_cancelled' | 'upcoming_rental' | 'rental_return' | 'oil_change_reminder' | 'maintenance_reminder' | 'payment_due';
+  type: 'new_booking' | 'booking_confirmed' | 'booking_cancelled' | 'upcoming_rental' | 'rental_return' | 'overdue_rental_alert';
   title: string;
   message: string;
   bookingId?: string;
@@ -294,8 +257,7 @@ export interface UploadedFile {
   userId: string;
   userEmail?: string;
   fileName: string;
-  fileUrl: string;
-  storagePath?: string;
+  storagePath: string;
   fileType: string;
   fileSize: number; // in bytes
   category?: 'national_id' | 'driver_license' | 'passport' | 'contract' | 'other';
@@ -337,9 +299,7 @@ export interface AuthUser {
   isPasswordProvider?: boolean;
 }
 
-export interface UserAccount extends AuthUser {
-  // User profile information
-}
+export type UserAccount = AuthUser;
 
 export interface FilterOptions {
   category: VehicleCategory | 'all';

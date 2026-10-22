@@ -24,7 +24,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   monthlyRateLight: 800,
   monthlyRateMedium: 1200,
   monthlyRateJeep: 1500,
-  oilChangeIntervalKm: 5000,
   rentalTerms: `1. يلتزم المستأجر بالمحافظة على السيارة وإعادتها بنفس الحالة التي استلمها بها.
 2. يتم سداد التأمين المسترد نقداً أو بتحويل بنكي عند استلام السيارة ويُعاد فور فحص السيارة بعد الإرجاع.
 3. يحظر استخدام السيارة لأغراض السباقات أو التدريب أو نقل المواد المحظورة أو قيادتها خارج الحدود المصرح بها.
@@ -95,10 +94,9 @@ export function calculateRentalPrice(
     const safePercentage = Math.min(25, Math.max(1, Math.round(rawPct)));
 
     const isVehicleMatched =
-      discountCfg.scope === 'all' ||
-      !discountCfg.vehicleIds ||
-      discountCfg.vehicleIds.length === 0 ||
-      (options?.vehicleId ? discountCfg.vehicleIds.includes(options.vehicleId) : true);
+      discountCfg.scope === 'specific'
+        ? Boolean(discountCfg.vehicleIds && discountCfg.vehicleIds.length > 0 && options?.vehicleId && discountCfg.vehicleIds.includes(options.vehicleId))
+        : true;
 
     if (isVehicleMatched && safePercentage > 0) {
       memberDiscountEligible = true;

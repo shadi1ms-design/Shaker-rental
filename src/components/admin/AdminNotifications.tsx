@@ -6,12 +6,10 @@ import {
   CheckCircle2,
   Calendar,
   AlertTriangle,
-  Info,
   Clock,
   Trash2,
   CheckCheck,
-  Check,
-  Filter
+  Check
 } from 'lucide-react';
 
 interface AdminNotificationsProps {
@@ -23,7 +21,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
   notifications,
   onRefresh,
 }) => {
-  const [filter, setFilter] = useState<'all' | 'unread' | 'booking' | 'system' | 'maintenance'>('all');
+  const [filter, setFilter] = useState<'all' | 'unread' | 'booking' | 'alerts'>('all');
   const [isProcessing, setIsProcessing] = useState(false);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -69,11 +67,8 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
         n.type === 'rental_return'
       );
     }
-    if (filter === 'maintenance') {
-      return n.type === 'oil_change_reminder' || n.type === 'maintenance_reminder';
-    }
-    if (filter === 'system') {
-      return n.type === 'payment_due' || (!n.type.includes('booking') && !n.type.includes('reminder'));
+    if (filter === 'alerts') {
+      return n.type === 'overdue_rental_alert';
     }
     return true;
   });
@@ -82,7 +77,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
     if (type?.includes('booking') || type === 'upcoming_rental' || type === 'rental_return') {
       return <Calendar className="w-4 h-4 text-amber-400" />;
     }
-    if (type === 'oil_change_reminder' || type === 'maintenance_reminder') {
+    if (type === 'overdue_rental_alert') {
       return <AlertTriangle className="w-4 h-4 text-rose-400" />;
     }
     return <Bell className="w-4 h-4 text-blue-400" />;
@@ -105,7 +100,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
             )}
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            سجل إشعارات الحجوزات الجديدة، تحديثات الحالات، وتنبيهات الصيانة الدورية
+            سجل إشعارات الحجوزات الجديدة، وتحديثات الحالات، وتنبيهات الحجوزات المتأخرة
           </p>
         </div>
 
@@ -129,8 +124,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
               { id: 'all', label: 'الكل' },
               { id: 'unread', label: `غير المقروء (${unreadCount})` },
               { id: 'booking', label: 'الحجوزات' },
-              { id: 'maintenance', label: 'الصيانة' },
-              { id: 'system', label: 'النظام' },
+              { id: 'alerts', label: 'التنبيهات' },
             ].map((f) => (
               <button
                 key={f.id}

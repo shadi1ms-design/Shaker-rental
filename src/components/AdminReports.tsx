@@ -1,13 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { Vehicle, Booking } from '../types';
-import { getRemaining, isFinanciallyActiveBooking } from '../utils/bookingCalculations';
+import { isFinanciallyActiveBooking } from '../utils/bookingCalculations';
 import { todayLocalISO } from '../utils/dateUtils';
 import { VEHICLE_CATEGORY_LABELS } from '../constants/vehicleCategories';
 import {
   BarChart3,
   Download,
   Printer,
-  Calendar,
   TrendingUp,
   DollarSign,
   PieChart as PieChartIcon,
@@ -73,19 +72,8 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
     }, 0);
   }, [filteredBookings]);
 
-  const totalCollected = useMemo(() => {
-    return filteredBookings.reduce((acc, b) => {
-      if (!isFinanciallyActiveBooking(b)) return acc;
-      return acc + (b.paidAmount || 0);
-    }, 0);
-  }, [filteredBookings]);
-
-  const totalOutstanding = useMemo(() => {
-    return filteredBookings.reduce((acc, b) => {
-      if (!isFinanciallyActiveBooking(b)) return acc;
-      return acc + getRemaining(b);
-    }, 0);
-  }, [filteredBookings]);
+  const totalCollected = totalRevenue;
+  const totalOutstanding = 0;
 
   // Fleet utilization
   const rentedVehiclesCount = safeVehicles.filter((v) => v.status === 'rented').length;
@@ -104,20 +92,19 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
     return map;
   }, [filteredBookings]);
 
-  // 1. Timeline Chart Data (Revenue & Collected over time)
+  // 1. Timeline Chart Data (Revenue over time)
   const timelineData = useMemo(() => {
-    const map = new Map<string, { date: string; revenue: number; collected: number; bookingsCount: number }>();
+    const map = new Map<string, { date: string; revenue: number; bookingsCount: number }>();
     filteredBookings.forEach((b) => {
       if (!isFinanciallyActiveBooking(b)) return;
       const rawDate = b.pickupDate || (b.createdAt ? b.createdAt.split('T')[0] : 'غير محدد');
-      const curr = map.get(rawDate) || { date: rawDate, revenue: 0, collected: 0, bookingsCount: 0 };
+      const curr = map.get(rawDate) || { date: rawDate, revenue: 0, bookingsCount: 0 };
       curr.revenue += b.totalPrice || 0;
-      curr.collected += b.paidAmount || 0;
       curr.bookingsCount += 1;
       map.set(rawDate, curr);
     });
     const sorted = Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
-    return sorted.length > 0 ? sorted : [{ date: todayLocalISO(), revenue: 0, collected: 0, bookingsCount: 0 }];
+    return sorted.length > 0 ? sorted : [{ date: todayLocalISO(), revenue: 0, bookingsCount: 0 }];
   }, [filteredBookings]);
 
   // 2. Category Chart Data
@@ -151,7 +138,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
   };
 
   const handleExportCSV = () => {
-    const headers = ['رقم الحجز', 'العميل', 'السيارة', 'تاريخ الاستلام', 'تاريخ الإعادة', 'المدة', 'المبلغ', 'المسدد', 'المتبقي', 'الحالة'];
+    const headers = ['رقم الحجز', 'العميل', 'السيارة', 'تاريخ الاستلام', 'تاريخ الإعادة', 'المدة', 'المبلغ الإجمالي', 'الحالة'];
     const rows = filteredBookings.map((b) => [
       sanitizeCSVCell(b.bookingNumber),
       sanitizeCSVCell(b.customerName),
@@ -160,8 +147,6 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
       sanitizeCSVCell(b.returnDate),
       sanitizeCSVCell(b.rentalDays),
       sanitizeCSVCell(b.totalPrice),
-      sanitizeCSVCell(b.paidAmount || 0),
-      sanitizeCSVCell(getRemaining(b)),
       sanitizeCSVCell(b.status),
     ]);
 
@@ -438,9 +423,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                 <th className="p-3">السيارة</th>
                 <th className="p-3">فترة الإيجار</th>
                 <th className="p-3">المدة</th>
-                <th className="p-3">الإجمالي</th>
-                <th className="p-3">المسدد</th>
-                <th className="p-3">المتبقي</th>
+                <th className="p-3">المبلغ الإجمالي</th>
                 <th className="p-3">الحالة</th>
               </tr>
             </thead>
@@ -453,8 +436,6 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                   <td className="p-3 text-slate-400 font-mono">{b.pickupDate} إلى {b.returnDate}</td>
                   <td className="p-3 text-slate-300">{b.rentalDays} أيام</td>
                   <td className="p-3 font-bold text-white font-mono">${b.totalPrice}</td>
-                  <td className="p-3 font-semibold text-emerald-400 font-mono">${b.paidAmount || 0}</td>
-                  <td className="p-3 font-semibold text-rose-400 font-mono">${getRemaining(b)}</td>
                   <td className="p-3">
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300">
                       {b.status}

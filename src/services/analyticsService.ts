@@ -84,15 +84,6 @@ class AnalyticsService {
     });
   }
 
-  public trackPaymentCompleted(paymentId: string, amount: number, method: string) {
-    this.log('payment_completed', {
-      payment_id: paymentId,
-      value: amount,
-      payment_method: method,
-      currency: 'USD',
-    });
-  }
-
   public trackUserLogin(method: string, userRole: string) {
     this.log('login', { method, user_role: userRole });
   }

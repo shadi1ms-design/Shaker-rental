@@ -6,25 +6,21 @@ import { functionsService } from '../services/functionsService';
 import { bookingFormSchema } from '../services/validation';
 import { openWhatsAppChat } from '../services/whatsapp';
 import { useAuth } from '../contexts/AuthContext';
+import { useFocusTrap } from '../hooks/useFocusTrap';
+import { todayLocalISO } from '../utils/dateUtils';
 import {
   X,
   Calendar,
   Clock,
   User,
-  Phone,
-  CreditCard,
   CheckCircle2,
-  AlertTriangle,
   MessageCircle,
-  Car,
-  FileText,
-  Printer,
   ChevronLeft,
   ChevronRight,
   ShieldAlert,
-  Tag,
   Sparkles,
-  Lock
+  Lock,
+  AlertCircle
 } from 'lucide-react';
 
 interface BookingModalProps {
@@ -33,6 +29,7 @@ interface BookingModalProps {
   vehicle?: Vehicle | null;
   onClose: () => void;
   onOpenAuth?: () => void;
+  onOpenProfile?: () => void;
   onBookingCreated?: (booking: Booking) => void;
   onBookingComplete?: (booking: Booking) => void;
   initialDates?: { pickupDate: string; returnDate: string };
@@ -46,12 +43,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   vehicle,
   onClose,
   onOpenAuth,
+  onOpenProfile,
   onBookingCreated,
   onBookingComplete,
   initialDates,
   initialStartDate,
   initialEndDate,
 }) => {
+  const modalContainerRef = useFocusTrap({ isOpen: true, onClose });
+  const todayDamascus = todayLocalISO();
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const nextWeek = new Date();
@@ -78,18 +78,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [customerPhone, setCustomerPhone] = useState(user?.phone || '');
   const [customerWhatsApp, setCustomerWhatsApp] = useState(user?.phone || '');
   const [customerNationalId, setCustomerNationalId] = useState('');
-  const [customerNationality, setCustomerNationality] = useState('سوري');
   const [customerAddress, setCustomerAddress] = useState('');
   const [customerLicenseNumber, setCustomerLicenseNumber] = useState('');
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
     if (user) {
-      if (!customerName && user.displayName) setCustomerName(user.displayName);
-      if (!customerPhone && user.phone) setCustomerPhone(user.phone);
-      if (!customerWhatsApp && user.phone) setCustomerWhatsApp(user.phone);
+      if (!customerName.trim() && user.displayName) setCustomerName(user.displayName);
+      if (!customerPhone.trim() && user.phone) setCustomerPhone(user.phone);
+      if (!customerWhatsApp.trim() && user.phone) setCustomerWhatsApp(user.phone);
     }
-  }, [user]);
+  }, [user?.phone, user?.displayName, user]);
 
   // Settings for dynamic discounts and rates
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -101,18 +100,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   // UI Flow State
   const [step, setStep] = useState<1 | 2 | 3>(1); // 1: Vehicle & Dates, 2: Customer info & Review, 3: Success Voucher
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCheckingAvailability, setIsCheckingAvailability] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [technicalNotice, setTechnicalNotice] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdBooking, setCreatedBooking] = useState<Booking | null>(null);
 
-  // Target Vehicle
   const currentVehicle = useMemo(() => {
-    return vehicles?.find((v) => v.id === vehicleId) || activeInitialVehicle || vehicles?.[0] || null;
-  }, [vehicles, vehicleId, activeInitialVehicle]);
+    return vehicles.find((v) => v.id === vehicleId) || selectedVehicle || vehicle || vehicles?.[0] || null;
+  }, [vehicles, vehicleId, selectedVehicle, vehicle]);
 
-  // Live Pricing Calculation
   const rentalDays = useMemo(() => {
-    return calculateRentalDays(pickupDate, returnDate);
-  }, [pickupDate, returnDate]);
+    return calculateRentalDays(pickupDate, returnDate, pickupTime, returnTime);
+  }, [pickupDate, returnDate, pickupTime, returnTime]);
 
   const pricing = useMemo(() => {
     if (!currentVehicle) return null;
@@ -121,12 +121,66 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       currentVehicle.dailyPrice,
       rentalDays,
       appSettings,
-      {
-        isUserLoggedIn: !!user,
-        vehicleId: currentVehicle.id,
-      }
+      { isUserLoggedIn: Boolean(user), vehicleId: currentVehicle.id }
     );
   }, [currentVehicle, rentalDays, appSettings, user]);
+
+  // Real-time Vehicle Availability Check
+  React.useEffect(() => {
+    let isMounted = true;
+    if (!vehicleId || !pickupDate || !returnDate) {
+      setAvailabilityError(null);
+      setTechnicalNotice(null);
+      return;
+    }
+
+    const checkAvailability = async () => {
+      setIsCheckingAvailability(true);
+      setAvailabilityError(null);
+      setTechnicalNotice(null);
+      try {
+        const res = await functionsService.getVehicleAvailability({
+          vehicleId,
+          from: pickupDate,
+          to: returnDate,
+          fromTime: pickupTime,
+          toTime: returnTime,
+        });
+
+        if (!isMounted) return;
+
+        if (!res.success) {
+          // Technical failure (e.g. App Check / network error) - do not mark vehicle as unavailable
+          setAvailabilityError(null);
+          setTechnicalNotice('تعذر التحقق من التوفر حالياً، حاول مرة أخرى');
+        } else if (res.data?.available === false) {
+          // Function succeeded, vehicle is genuinely unavailable/conflicting
+          const reason =
+            res.data?.conflictReason ||
+            'عذراً، السيارة غير متاحة في التواريخ والأوقات المحددة.';
+          setAvailabilityError(reason);
+          setTechnicalNotice(null);
+        } else {
+          // Available
+          setAvailabilityError(null);
+          setTechnicalNotice(null);
+        }
+      } catch {
+        if (isMounted) {
+          setAvailabilityError(null);
+          setTechnicalNotice('تعذر التحقق من التوفر حالياً، حاول مرة أخرى');
+        }
+      } finally {
+        if (isMounted) setIsCheckingAvailability(false);
+      }
+    };
+
+    const timer = setTimeout(checkAvailability, 300);
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [vehicleId, pickupDate, returnDate, pickupTime, returnTime]);
 
   const validateDates = async () => {
     setErrorMessage(null);
@@ -148,15 +202,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       return false;
     }
 
-    // Double-booking check
-    const availability = await dataService.checkAvailability(vehicleId, pickupDate, returnDate);
-    if (!availability.available) {
-      setErrorMessage(
-        availability.conflictReason ||
-        'عذراً، السيارة غير متاحة في الفترة المحددة. يرجى اختيار سيارة أو تاريخ آخر.'
-      );
+    if (availabilityError) {
+      setErrorMessage(availabilityError);
       return false;
     }
+
     return true;
   };
 
@@ -204,6 +254,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     try {
       const result = await functionsService.createBookingSecure({
         vehicleId,
+        customerId: user?.uid,
+        customerEmail: user?.email,
         customerName,
         customerPhone,
         customerWhatsApp: customerWhatsApp || customerPhone,
@@ -233,8 +285,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         customerNationalId,
         customerAddress,
         customerLicenseNumber,
-        customerId: user?.uid,
-        customerEmail: user?.email,
+        customerId: result.data.booking?.customerId || user?.uid,
+        customerEmail: result.data.booking?.customerEmail || user?.email,
         pickupDate,
         pickupTime,
         returnDate,
@@ -264,14 +316,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <div className="min-h-[calc(100vh-4rem)] flex items-start justify-center p-3 sm:p-6 bg-slate-950">
       <div 
-        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl my-auto animate-in zoom-in-95 duration-200 text-slate-100 max-h-[90vh] max-h-[90dvh] flex flex-col overflow-hidden"
+        ref={modalContainerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="booking-modal-title"
+        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl animate-in fade-in duration-200 text-slate-100 overflow-clip"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         {/* Header - Fixed at top of modal */}
@@ -281,7 +332,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <Calendar className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-black text-white">
+              <h3 id="booking-modal-title" className="text-base sm:text-lg font-black text-white">
                 {step === 3 ? 'تم تأكيد طلب الحجز' : 'حجز سيارة عبر الإنترنت'}
               </h3>
               <span className="text-xs text-slate-400">شاكر لتأجير السيارات • دمشق – جرمانا</span>
@@ -291,12 +342,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors text-xs font-bold shadow-sm"
+            aria-label="إغلاق نافذة الحجز"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors text-xs font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             id="close-booking-modal-btn"
-            title="إغلاق نافذة الحجز"
+            title="رجوع"
           >
             <X className="w-4 h-4" />
-            <span>إغلاق</span>
+            <span>رجوع</span>
           </button>
         </div>
 
@@ -324,7 +376,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
         {/* Internal Scrollable Content Area */}
         <div 
-          className="overflow-y-auto flex-1 overscroll-contain"
+          className=""
           style={{ WebkitOverflowScrolling: 'touch' }}
         >
           {/* Error Alert */}
@@ -340,13 +392,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
             {/* Vehicle Selector */}
             <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-2">
+              <label htmlFor="booking-vehicle-select" className="block text-xs font-semibold text-slate-300 mb-2">
                 اختر السيارة من الأسطول
               </label>
               <select
+                id="booking-vehicle-select"
                 value={vehicleId || ''}
                 onChange={(e) => setVehicleId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500"
+                className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400"
               >
                 {vehicles.map((v) => {
                   const isRented = v.status === 'rented';
@@ -367,6 +420,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <img
                   src={currentVehicle.imageUrl}
                   alt={currentVehicle.model}
+                  loading="lazy"
+                  decoding="async"
+                  width="96"
+                  height="80"
                   className="w-24 h-20 object-cover rounded-xl shrink-0"
                 />
                 <div className="flex-1 min-w-0">
@@ -380,7 +437,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     موديل {currentVehicle.year} • {currentVehicle.seats} مقاعد • {currentVehicle.color}
                   </p>
                   <span
-                    className={`inline-block mt-2 px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                    className={`inline-block mt-2 px-2 py-0.5 rounded text-[11px] font-semibold border ${
                       currentVehicle.status === 'available'
                         ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                         : currentVehicle.status === 'rented'
@@ -407,23 +464,33 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   موعد الاستلام
                 </span>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">تاريخ الاستلام</label>
-                  <input
-                    type="date"
-                    value={pickupDate || ''}
-                    onChange={(e) => setPickupDate(e.target.value)}
-                    min={new Date().toISOString().split('T')[0]}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
-                    required
-                  />
+                  <label htmlFor="booking-pickup-date" className="block text-xs font-medium text-slate-300 mb-1">تاريخ الاستلام</label>
+                  <div className="relative">
+                    <input
+                      id="booking-pickup-date"
+                      type="date"
+                      value={pickupDate || ''}
+                      onChange={(e) => setPickupDate(e.target.value)}
+                      min={todayDamascus}
+                      className="w-full min-h-[44px] bg-slate-900 border border-slate-700 hover:border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-medium focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 [color-scheme:dark]"
+                      required
+                    />
+                    {!pickupDate && (
+                      <div className="absolute inset-y-0 right-3 pointer-events-none flex items-center gap-1.5 text-slate-400 text-xs sm:text-sm">
+                        <Calendar className="w-3.5 h-3.5 text-amber-400/70" />
+                        <span>اختر التاريخ</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">وقت الاستلام</label>
+                  <label htmlFor="booking-pickup-time" className="block text-xs font-medium text-slate-300 mb-1">وقت الاستلام</label>
                   <input
+                    id="booking-pickup-time"
                     type="time"
                     value={pickupTime || ''}
                     onChange={(e) => setPickupTime(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full min-h-[44px] bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 [color-scheme:dark]"
                     required
                   />
                 </div>
@@ -436,23 +503,33 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   موعد الإعادة والتسليم
                 </span>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">تاريخ الإعادة</label>
-                  <input
-                    type="date"
-                    value={returnDate || ''}
-                    onChange={(e) => setReturnDate(e.target.value)}
-                    min={pickupDate}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
-                    required
-                  />
+                  <label htmlFor="booking-return-date" className="block text-xs font-medium text-slate-300 mb-1">تاريخ الإعادة</label>
+                  <div className="relative">
+                    <input
+                      id="booking-return-date"
+                      type="date"
+                      value={returnDate || ''}
+                      onChange={(e) => setReturnDate(e.target.value)}
+                      min={pickupDate || todayDamascus}
+                      className="w-full min-h-[44px] bg-slate-900 border border-slate-700 hover:border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-medium focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 [color-scheme:dark]"
+                      required
+                    />
+                    {!returnDate && (
+                      <div className="absolute inset-y-0 right-3 pointer-events-none flex items-center gap-1.5 text-slate-400 text-xs sm:text-sm">
+                        <Calendar className="w-3.5 h-3.5 text-amber-400/70" />
+                        <span>اختر التاريخ</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">وقت الإعادة</label>
+                  <label htmlFor="booking-return-time" className="block text-xs font-medium text-slate-300 mb-1">وقت الإعادة</label>
                   <input
+                    id="booking-return-time"
                     type="time"
                     value={returnTime || ''}
                     onChange={(e) => setReturnTime(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full min-h-[44px] bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400"
                     required
                   />
                 </div>
@@ -493,15 +570,38 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             )}
 
+            {/* Availability Warning */}
+            {availabilityError && (
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{availabilityError}</span>
+              </div>
+            )}
+
+            {/* Technical Notice (Non-blocking) */}
+            {technicalNotice && !availabilityError && (
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{technicalNotice}</span>
+              </div>
+            )}
+
             {/* Action: Next Step */}
             <div className="pt-1">
               <button
                 type="button"
                 onClick={handleNextStep}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all"
+                disabled={isCheckingAvailability || Boolean(availabilityError)}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 id="booking-step1-next-btn"
               >
-                <span>متابعة إدخال بيانات المستأجر</span>
+                <span>
+                  {isCheckingAvailability
+                    ? 'جاري التحقق من توفر السيارة...'
+                    : availabilityError
+                    ? 'السيارة غير متاحة في الفترة المحددة'
+                    : 'متابعة إدخال بيانات المستأجر'}
+                </span>
                 <ChevronLeft className="w-4 h-4" />
               </button>
             </div>
@@ -581,89 +681,104 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* Full Name */}
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">الاسم الكامل الثلاثي *</label>
+                  <label htmlFor="booking-customer-name" className="block text-xs font-semibold text-slate-300 mb-1">الاسم الكامل الثلاثي *</label>
                   <input
+                    id="booking-customer-name"
                     type="text"
+                    autoComplete="name"
                     value={customerName || ''}
                     onChange={(e) => setCustomerName(e.target.value)}
                     placeholder="أحمد محمد العلي"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400"
                     required
                   />
                 </div>
 
                 {/* Phone */}
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">رقم الهاتف الجوال *</label>
+                  <label htmlFor="booking-customer-phone" className="block text-xs font-semibold text-slate-300 mb-1">رقم الهاتف الجوال *</label>
                   <input
+                    id="booking-customer-phone"
                     type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    dir="ltr"
                     value={customerPhone || ''}
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     placeholder="0944123456"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 text-right"
                     required
                   />
                 </div>
 
                 {/* WhatsApp */}
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">رقم الواتساب للتأكيد الفوري *</label>
+                  <label htmlFor="booking-customer-whatsapp" className="block text-xs font-semibold text-slate-300 mb-1">رقم الواتساب للتأكيد الفوري *</label>
                   <input
+                    id="booking-customer-whatsapp"
                     type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    dir="ltr"
                     value={customerWhatsApp || ''}
                     onChange={(e) => setCustomerWhatsApp(e.target.value)}
                     placeholder="0944123456"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 text-right"
                     required
                   />
                 </div>
 
                 {/* National ID / Passport */}
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">الرقم الوطني / جواز السفر</label>
+                  <label htmlFor="booking-customer-nid" className="block text-xs font-semibold text-slate-300 mb-1">الرقم الوطني / جواز السفر</label>
                   <input
+                    id="booking-customer-nid"
                     type="text"
                     value={customerNationalId || ''}
                     onChange={(e) => setCustomerNationalId(e.target.value)}
                     placeholder="010200..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400"
                   />
                 </div>
 
                 {/* Driver License */}
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">رقم شهادة القيادة</label>
+                  <label htmlFor="booking-customer-license" className="block text-xs font-semibold text-slate-300 mb-1">رقم شهادة القيادة</label>
                   <input
+                    id="booking-customer-license"
                     type="text"
                     value={customerLicenseNumber || ''}
                     onChange={(e) => setCustomerLicenseNumber(e.target.value)}
                     placeholder="DL-12345"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400"
                   />
                 </div>
 
                 {/* Address */}
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">عنوان الإقامة أو الفندق</label>
+                  <label htmlFor="booking-customer-address" className="block text-xs font-semibold text-slate-300 mb-1">عنوان الإقامة أو الفندق</label>
                   <input
+                    id="booking-customer-address"
                     type="text"
+                    autoComplete="street-address"
                     value={customerAddress || ''}
                     onChange={(e) => setCustomerAddress(e.target.value)}
                     placeholder="دمشق، المزة / فندق الشام..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400"
                   />
                 </div>
               </div>
 
               {/* Optional Notes */}
               <div>
-                <label className="block text-[11px] text-slate-400 mb-1">ملاحظات أو طلبات إضافية (اختياري)</label>
+                <label htmlFor="booking-customer-notes" className="block text-xs font-semibold text-slate-300 mb-1">ملاحظات أو طلبات إضافية (اختياري)</label>
                 <textarea
+                  id="booking-customer-notes"
                   value={notes || ''}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="مثال: طلب كرسي أطفال، تسليم بمطار دمشق، موعد وصول الطائرة..."
                   rows={2}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400"
                 />
               </div>
             </div>
@@ -673,7 +788,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <button
                 type="button"
                 onClick={() => setStep(1)}
-                className="px-5 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-700/60 shrink-0"
+                className="min-h-[44px] px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-700/60 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               >
                 <ChevronRight className="w-4 h-4" />
                 <span>رجوع</span>
@@ -682,7 +797,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all disabled:opacity-50"
+                className="flex-1 min-h-[44px] py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 id="booking-step2-submit-btn"
               >
                 {isSubmitting ? (
@@ -706,27 +821,46 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </div>
 
             <div>
-              <h4 className="text-xl sm:text-2xl font-black text-white">تم استلام وتأكيد طلب الحجز بنجاح!</h4>
-              <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                سند حجز مبدئي معتمد • شركة شاكر لتأجير السيارات (دمشق - جرمانا)
+              <h4 className="text-xl sm:text-2xl font-black text-white">تم استلام طلب الحجز بنجاح</h4>
+              <p className="text-xs sm:text-sm text-slate-300 mt-1 font-semibold">
+                طلبك الآن بانتظار موافقة الإدارة، وسنتواصل معك لتأكيده
+              </p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                إيصال استلام طلب حجز (غير مؤكد)
               </p>
             </div>
 
             {/* Comprehensive Voucher Card */}
             <div className="bg-slate-950 border border-slate-800 rounded-3xl p-5 sm:p-6 text-right space-y-4 max-w-xl mx-auto shadow-2xl print:border-black print:text-black">
               {/* Header */}
-              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <div className="flex justify-between items-start border-b border-slate-800 pb-3 gap-3">
                 <div>
                   <span className="text-xs text-slate-400 block">رقم الحجز المرجعي:</span>
                   <span className="text-base sm:text-lg font-black text-amber-400 font-mono tracking-wider" dir="ltr">
                     {createdBooking.bookingNumber}
                   </span>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    يمكنك الاطلاع على حالة حجزك دائماً من ملفك الشخصي ← حجوزاتي
+                  </p>
+                  {onOpenProfile && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenProfile();
+                      }}
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 hover:text-amber-200 text-xs font-bold transition-all cursor-pointer shadow-sm"
+                    >
+                      <User className="w-3.5 h-3.5 text-amber-400" />
+                      <span>عرض حجوزاتي</span>
+                    </button>
+                  )}
                 </div>
-                <div className="text-left">
+                <div className="text-left shrink-0">
                   <span className="text-xs text-slate-400 block">حالة الحجز:</span>
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                    قيد المراجعة والتجهيز
+                    بانتظار الموافقة
                   </span>
                 </div>
               </div>
@@ -800,7 +934,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             </div>
 
-            {/* Actions: WhatsApp Direct Sharing, Print, and Close */}
+            {/* Actions: WhatsApp Direct Sharing */}
             <div className="space-y-3 max-w-xl mx-auto">
               <button
                 type="button"
@@ -810,16 +944,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               >
                 <MessageCircle className="w-5 h-5" />
                 <span>إرسال تفاصيل وسند الحجز عبر واتساب فوراً (00963944331774)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-bold transition-colors flex items-center justify-center gap-2 border border-slate-700/60"
-                id="booking-print-voucher-btn"
-              >
-                <Printer className="w-4 h-4 text-amber-400" />
-                <span>طباعة سند الحجز</span>
               </button>
             </div>
           </div>

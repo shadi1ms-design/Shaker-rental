@@ -75,16 +75,16 @@ export function generateAdminToCustomerMessage(booking: Booking): string {
 /**
  * Opens WhatsApp chat directly to the customer's phone number with prefilled message
  */
-export function openWhatsAppChatWithCustomer(booking: Booking) {
+export function openWhatsAppChatWithCustomer(booking: Booking): boolean {
   const rawPhone = booking.customerPhone || booking.customerWhatsApp || '';
   const cleanPhone = normalizeCustomerPhoneForWhatsApp(rawPhone);
   if (!cleanPhone) {
-    alert('عذراً، رقم هاتف العميل غير متوفر بهذا الحجز.');
-    return;
+    return false;
   }
   const message = generateAdminToCustomerMessage(booking);
   const encodedText = encodeURIComponent(message);
   const url = `https://wa.me/${cleanPhone}?text=${encodedText}`;
   window.open(url, '_blank', 'noopener,noreferrer');
+  return true;
 }
 

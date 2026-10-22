@@ -41,7 +41,6 @@ export const vehicleFormSchema = z.object({
   dailyPrice: z.number().min(10, 'السعر اليومي يجب ألا يقل عن 10$'),
   plateNumber: z.string().trim().min(3, 'يرجى إدخال رقم اللوحة'),
   currentMileage: z.number().min(0, 'عداد الكيلومترات يجب ألا يكون سالباً'),
-  lastOilChangeMileage: z.number().min(0, 'عداد آخر تغيير زيت'),
   status: z.enum(['available', 'reserved', 'rented', 'maintenance', 'inactive']),
   imageUrl: z.string().trim().refine((val) => {
     if (!val) return false;
@@ -62,23 +61,4 @@ export const customerFormSchema = z.object({
   nationality: z.string().trim().optional().or(z.literal('')),
   address: z.string().trim().optional().or(z.literal('')),
   notes: z.string().max(1000).optional().or(z.literal('')),
-});
-
-export const paymentFormSchema = z.object({
-  bookingId: z.string().min(1, 'الحجز مطلوب'),
-  amount: z.number().min(1, 'المبلغ يجب أن يكون أكبر من 0'),
-  method: z.enum(['cash', 'bank_transfer', 'other']),
-  paymentDate: z.string().min(1, 'تاريخ الدفعة مطلوب'),
-  notes: z.string().max(500).optional().or(z.literal('')),
-});
-
-export const maintenanceFormSchema = z.object({
-  vehicleId: z.string().min(1, 'يرجى اختيار السيارة'),
-  serviceType: z.enum(['oil_change', 'tires', 'brakes', 'battery', 'engine', 'transmission', 'general']),
-  mileage: z.number().min(0, 'الكيلومتر الحالي مطلوب'),
-  cost: z.number().min(0, 'التكلفة مطلوبة'),
-  serviceDate: z.string().min(1, 'تاريخ الصيانة مطلوب'),
-  nextDueMileage: z.number().optional(),
-  technicianNotes: z.string().max(1000).optional().or(z.literal('')),
-  performedBy: z.string().optional().or(z.literal('')),
 });

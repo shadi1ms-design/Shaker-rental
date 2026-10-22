@@ -1,9 +1,10 @@
 import React from 'react';
-import { BOOKING_STATUS_META, VEHICLE_STATUS_META } from '../../constants/statusMeta';
+import { VehicleStatus } from '../../types';
+import { BOOKING_STATUS_META, VEHICLE_STATUS_META, USER_VERIFICATION_STATUS_META } from '../../constants/statusMeta';
 
 interface StatusBadgeProps {
   status: string;
-  type?: 'booking' | 'vehicle' | 'custom';
+  type?: 'booking' | 'vehicle' | 'verification' | 'custom';
   customLabel?: string;
   customClass?: string;
   size?: 'sm' | 'md';
@@ -21,14 +22,21 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   let dotClass = 'bg-slate-400';
 
   if (type === 'booking') {
-    const meta = BOOKING_STATUS_META[status];
+    const meta = (BOOKING_STATUS_META as any)[status];
     if (meta) {
       label = customLabel || meta.label;
       badgeClass = meta.badgeClass;
       dotClass = meta.dotClass;
     }
   } else if (type === 'vehicle') {
-    const meta = VEHICLE_STATUS_META[status as any];
+    const meta = VEHICLE_STATUS_META[status as VehicleStatus];
+    if (meta) {
+      label = customLabel || meta.label;
+      badgeClass = meta.badgeClass;
+      dotClass = meta.dotClass;
+    }
+  } else if (type === 'verification') {
+    const meta = USER_VERIFICATION_STATUS_META[status];
     if (meta) {
       label = customLabel || meta.label;
       badgeClass = meta.badgeClass;

@@ -1,5 +1,6 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions, isFirebaseConfigured } from '../firebase/config';
+import { getArabicErrorMessage } from '../utils/firebaseErrorHandler';
 
 export interface FunctionCallResult<T = any> {
   success: boolean;
@@ -33,10 +34,9 @@ class FunctionsService {
         };
       } catch (err: any) {
         console.error(`[Firebase Functions] Call to "${name}" failed:`, err?.message || err);
-        const errorMsg = err?.details || err?.message || `فشل تنفيذ العملية السحابية (${name}).`;
         return {
           success: false,
-          error: errorMsg,
+          error: getArabicErrorMessage(err),
           source: 'live_cloud_function',
           executionTimeMs: Date.now() - start,
         };
@@ -79,6 +79,10 @@ class FunctionsService {
     return this.invokeCallable('updateBookingStatusSecure', params);
   }
 
+  public async deleteBookingSecure(params: { bookingId: string; bookingNumber?: string }): Promise<FunctionCallResult> {
+    return this.invokeCallable('deleteBookingSecure', params);
+  }
+
   public async sendBookingNotification(params: { bookingId: string; [key: string]: any }): Promise<FunctionCallResult> {
     return this.invokeCallable('sendBookingNotification', params);
   }
@@ -99,18 +103,8 @@ class FunctionsService {
     return this.invokeCallable('updateSettingsSecure', params);
   }
 
-  public async recordPaymentSecure(params: {
-    bookingId: string;
-    amount: number;
-    method?: string;
-    notes?: string;
-    referenceNumber?: string;
-  }): Promise<FunctionCallResult> {
-    return this.invokeCallable('recordPaymentSecure', params);
-  }
-
-  public async syncFleetMaintenance(): Promise<FunctionCallResult> {
-    return this.invokeCallable('syncFleetMaintenance', {});
+  public async verifyContractCode(params: { contractNumber: string; verificationCode: string }): Promise<FunctionCallResult> {
+    return this.invokeCallable('verifyContractCode', params);
   }
 
   public async setUserRole(params: { targetUid: string; newRole: string }): Promise<FunctionCallResult> {

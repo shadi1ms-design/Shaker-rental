@@ -19,11 +19,7 @@ export function isValidPhone(phone: string): boolean {
   return phoneRegex.test(clean);
 }
 
-// Pass-through helper for backwards compatibility without corrupting Arabic input
-export function sanitizeInput(input: string | undefined | null): string {
-  if (input === null || input === undefined) return '';
-  return String(input);
-}
+
 
 export interface FileValidationResult {
   valid: boolean;
@@ -36,7 +32,7 @@ const FORBIDDEN_EXTENSIONS = [
 ];
 
 const ALLOWED_DOCUMENT_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png', 'webp'];
-const ALLOWED_VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov', 'quicktime', 'mkv'];
+const ALLOWED_VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov', 'quicktime'];
 
 export function validateUploadedFile(
   fileName: string,

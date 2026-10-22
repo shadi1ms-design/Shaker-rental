@@ -64,11 +64,6 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null);
 
-  // Fetch users on mount
-  useEffect(() => {
-    loadUsers();
-  }, []);
-
   const loadUsers = async (forceRefresh = false) => {
     if (forceRefresh) setIsRefreshing(true);
     try {
@@ -81,6 +76,11 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
       setIsRefreshing(false);
     }
   };
+
+  // Fetch users on mount
+  useEffect(() => {
+    loadUsers();
+  }, []);
 
   // Check if a user is the currently logged-in account
   const isCurrentSelfUser = (targetUser: FirestoreUser): boolean => {

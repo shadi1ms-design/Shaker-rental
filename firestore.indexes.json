@@ -48,22 +48,6 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "dailyPrice", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "maintenanceRecords",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "vehicleId", "order": "ASCENDING" },
-        { "fieldPath": "serviceDate", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "payments",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "bookingId", "order": "ASCENDING" },
-        { "fieldPath": "paymentDate", "order": "DESCENDING" }
-      ]
     }
   ],
   "fieldOverrides": []

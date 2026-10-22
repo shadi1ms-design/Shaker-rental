@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, isFirebaseConfigured } from '../../firebase/config';
+import { getDb, isFirebaseConfigured } from '../../firebase/config';
 import { collection, getDocs, query, limit } from 'firebase/firestore';
 import {
   ShieldAlert,
@@ -10,12 +10,7 @@ import {
   Activity,
   FileText,
   Filter,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
-  Calendar,
-  Layers,
-  ArrowUpDown
+  AlertTriangle
 } from 'lucide-react';
 
 interface AuditLogItem {
@@ -59,10 +54,7 @@ const ACTION_LABELS_AR: Record<string, { label: string; color: 'blue' | 'amber' 
   USER_VERIFIED: { label: 'توثيق هوية مستخدم', color: 'emerald' },
   USER_REJECTED: { label: 'رفض توثيق مستخدم', color: 'rose' },
 
-  // Payments
-  PAYMENT_RECORDED: { label: 'تسجيل دفعة مالية', color: 'emerald' },
-  PAYMENT_CREATED: { label: 'إنشاء سند قبض', color: 'emerald' },
-  PAYMENT_DELETED: { label: 'حذف سند قبض', color: 'rose' },
+  // User & Roles
 
   // Vehicles
   VEHICLE_ADDED: { label: 'إضافة سيارة للأسطول', color: 'emerald' },
@@ -150,11 +142,11 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
     setError(null);
 
     try {
-      if (!isFirebaseConfigured || !db) {
+      if (!isFirebaseConfigured) {
         throw new Error('الاتصال بقاعدة بيانات Firebase غير متوفر.');
       }
 
-      const logsRef = collection(db, 'auditLogs');
+      const logsRef = collection(getDb(), 'auditLogs');
       const q = query(logsRef, limit(100));
       const querySnapshot = await getDocs(q);
 

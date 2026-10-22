@@ -312,6 +312,24 @@ export const storageService = {
   },
 
   /**
+   * Generates a fresh download URL on demand from a storagePath
+   */
+  async getFileDownloadUrl(storagePath: string): Promise<string> {
+    if (!storagePath) return '';
+    if (storagePath.startsWith('http://') || storagePath.startsWith('https://') || storagePath.startsWith('data:')) {
+      return storagePath;
+    }
+    if (!this.isAvailable() || !storage) return '';
+    try {
+      const fileRef = ref(storage, storagePath);
+      return await getDownloadURL(fileRef);
+    } catch (err) {
+      console.error('Error fetching download URL for path:', storagePath, err);
+      return '';
+    }
+  },
+
+  /**
    * Deletes a file from Firebase Storage
    */
   async deleteFile(storagePath: string): Promise<void> {

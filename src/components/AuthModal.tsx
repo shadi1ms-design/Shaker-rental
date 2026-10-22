@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { isValidEmail, isValidPhone } from '../utils/security';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   Mail,
   Lock,
@@ -33,6 +34,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onSuccess,
   loginWithGoogle: propLoginWithGoogle,
 }) => {
+  const modalRef = useFocusTrap({ isOpen, onClose });
   const authContext = useAuth();
   const effectiveLoginWithGoogle = propLoginWithGoogle || authContext?.loginWithGoogle;
   const loginWithEmail = authContext?.loginWithEmail;
@@ -78,8 +80,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
       setSuccessMessage('تم تسجيل الدخول بواسطة Google بنجاح! مرحباً بك.');
       setTimeout(() => {
-        onSuccess?.();
-        onClose();
+        if (onSuccess) onSuccess();
+        else onClose();
       }, 700);
     } catch (err: any) {
       setErrorMessage(err?.message || 'تعذر تسجيل الدخول عبر Google. يرجى المحاولة ثانية.');
@@ -108,8 +110,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         await loginWithEmail!(cleanEmail, password);
         setSuccessMessage('تم تسجيل الدخول بنجاح! مرحباً بك.');
         setTimeout(() => {
-          onSuccess?.();
-          onClose();
+          if (onSuccess) onSuccess();
+          else onClose();
         }, 600);
       } else if (mode === 'register') {
         const cleanName = displayName.trim();
@@ -146,8 +148,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         setSuccessMessage('تم إنشاء حسابك بنجاح! تم تطبيق خصومات العضوية تلقائياً.');
         setTimeout(() => {
-          onSuccess?.();
-          onClose();
+          if (onSuccess) onSuccess();
+          else onClose();
         }, 800);
       } else if (mode === 'forgot') {
         if (!cleanEmail) {
@@ -167,14 +169,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <div className="min-h-[calc(100vh-4rem)] flex items-start justify-center p-3 sm:p-6 bg-slate-950 items-center">
       <div
-        className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-5 sm:p-8 shadow-2xl relative overflow-y-auto max-h-[90vh] max-h-[90dvh] text-slate-100 my-auto overscroll-contain"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
+        className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-5 sm:p-8 shadow-2xl relative text-slate-100 my-auto overscroll-contain"
         style={{ WebkitOverflowScrolling: 'touch' }}
         onClick={(e) => e.stopPropagation()}
         id="auth-modal"
@@ -187,8 +188,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <button
           onClick={onClose}
           type="button"
-          className="absolute top-4 left-4 sm:top-5 sm:left-5 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors text-xs font-bold shadow-md z-10"
-          aria-label="إغلاق"
+          className="absolute top-4 left-4 sm:top-5 sm:left-5 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors text-xs font-bold shadow-md z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          aria-label="إغلاق نافذة تسجيل الدخول"
           id="close-auth-modal"
           title="إغلاق نافذة تسجيل الدخول"
         >
@@ -208,7 +209,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             )}
           </div>
 
-          <h2 className="text-xl sm:text-2xl font-black text-white">
+          <h2 id="auth-modal-title" className="text-xl sm:text-2xl font-black text-white">
             {mode === 'login' && 'تسجيل الدخول'}
             {mode === 'register' && 'إنشاء حساب جديد'}
             {mode === 'forgot' && 'استعادة كلمة المرور'}
@@ -230,7 +231,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 setErrorMessage(null);
                 setSuccessMessage(null);
               }}
-              className={`py-2.5 rounded-xl font-bold text-xs transition-all ${
+              className={`min-h-[44px] py-2.5 rounded-xl font-bold text-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                 mode === 'login'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                   : 'text-slate-400 hover:text-white'
@@ -246,7 +247,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 setErrorMessage(null);
                 setSuccessMessage(null);
               }}
-              className={`py-2.5 rounded-xl font-bold text-xs transition-all ${
+              className={`min-h-[44px] py-2.5 rounded-xl font-bold text-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                 mode === 'register'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                   : 'text-slate-400 hover:text-white'
@@ -260,7 +261,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* Alert Messages */}
         {errorMessage && (
-          <div className="p-3 mb-4 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2 animate-in fade-in">
+          <div id="auth-error-alert" aria-live="polite" className="p-3 mb-4 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2 animate-in fade-in">
             <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
             <span>{errorMessage}</span>
           </div>
@@ -278,58 +279,72 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {/* Full Name (Register only) */}
           {mode === 'register' && (
             <div>
-              <label className="block text-slate-300 mb-1.5 font-bold">
+              <label htmlFor="auth-display-name" className="block text-slate-300 mb-1.5 font-bold">
                 الاسم الكامل <span className="text-amber-400">*</span>
               </label>
               <div className="relative">
                 <input
+                  id="auth-display-name"
                   type="text"
+                  autoComplete="name"
                   value={displayName || ''}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="مثال: شادي المحمد"
-                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                  aria-invalid={Boolean(errorMessage)}
+                  aria-describedby={errorMessage ? 'auth-error-alert' : undefined}
+                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 text-sm"
                   required
                 />
-                <User className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <User className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
               </div>
             </div>
           )}
 
           {/* Email Address */}
           <div>
-            <label className="block text-slate-300 mb-1.5 font-bold">
+            <label htmlFor="auth-email" className="block text-slate-300 mb-1.5 font-bold">
               البريد الإلكتروني <span className="text-amber-400">*</span>
             </label>
             <div className="relative">
               <input
+                id="auth-email"
                 type="email"
+                inputMode="email"
+                autoComplete="email"
                 value={email || ''}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@example.com"
                 dir="ltr"
-                className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-left"
+                aria-invalid={Boolean(errorMessage)}
+                aria-describedby={errorMessage ? 'auth-error-alert' : undefined}
+                className="w-full min-h-[44px] bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 text-left text-sm"
                 required
               />
-              <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
             </div>
           </div>
 
           {/* Phone Number (Register only) */}
           {mode === 'register' && (
             <div>
-              <label className="block text-slate-300 mb-1.5 font-bold">
-                رقم الهاتف / الواتساب <span className="text-slate-500 font-normal">(اختياري)</span>
+              <label htmlFor="auth-phone" className="block text-slate-300 mb-1.5 font-bold">
+                رقم الهاتف / الواتساب <span className="text-slate-400 font-normal">(اختياري)</span>
               </label>
               <div className="relative">
                 <input
+                  id="auth-phone"
                   type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
                   value={phone || ''}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="0944331774"
                   dir="ltr"
-                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-left"
+                  aria-invalid={Boolean(errorMessage)}
+                  aria-describedby={errorMessage ? 'auth-error-alert' : undefined}
+                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 text-left text-sm"
                 />
-                <Phone className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
               </div>
             </div>
           )}
@@ -338,7 +353,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {mode !== 'forgot' && (
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-slate-300 font-bold">
+                <label htmlFor="auth-password" className="text-slate-300 font-bold">
                   كلمة المرور <span className="text-amber-400">*</span>
                 </label>
                 {mode === 'login' && (
@@ -348,7 +363,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       setMode('forgot');
                       setErrorMessage(null);
                     }}
-                    className="text-[11px] text-amber-400 hover:underline"
+                    className="text-xs text-amber-400 hover:underline focus-visible:ring-2 focus-visible:ring-amber-400 rounded"
                   >
                     نسيت كلمة المرور؟
                   </button>
@@ -356,26 +371,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
               <div className="relative">
                 <input
+                  id="auth-password"
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                   value={password || ''}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   dir="ltr"
-                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 pr-10 text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-left"
+                  aria-invalid={Boolean(errorMessage)}
+                  aria-describedby={errorMessage ? 'auth-error-alert' : undefined}
+                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 pr-10 text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 text-left text-sm"
                   required
                 />
-                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-3 text-slate-500 hover:text-slate-300"
-                  aria-label="إظهار كلمة المرور"
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-200 focus-visible:ring-2 focus-visible:ring-amber-400 rounded"
+                  aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
               {mode === 'register' && (
-                <span className="text-[10px] text-slate-400 mt-1 block">
+                <span className="text-xs text-slate-400 mt-1 block">
                   يجب أن تتكون كلمة المرور من 8 خانات على الأقل وتحتوي على حرف ورقم
                 </span>
               )}
@@ -385,25 +404,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {/* Confirm Password (Register only) */}
           {mode === 'register' && (
             <div>
-              <label className="block text-slate-300 mb-1.5 font-bold">
+              <label htmlFor="auth-confirm-password" className="block text-slate-300 mb-1.5 font-bold">
                 تأكيد كلمة المرور <span className="text-amber-400">*</span>
               </label>
               <div className="relative">
                 <input
+                  id="auth-confirm-password"
                   type={showConfirmPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
                   value={confirmPassword || ''}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
                   dir="ltr"
-                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 pr-10 text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-left"
+                  aria-invalid={Boolean(errorMessage)}
+                  aria-describedby={errorMessage ? 'auth-error-alert' : undefined}
+                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 pl-10 pr-10 text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 text-left text-sm"
                   required
                 />
-                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3 top-3 text-slate-500 hover:text-slate-300"
-                  aria-label="إظهار تأكيد كلمة المرور"
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-200 focus-visible:ring-2 focus-visible:ring-amber-400 rounded"
+                  aria-label={showConfirmPassword ? 'إخفاء تأكيد كلمة المرور' : 'إظهار تأكيد كلمة المرور'}
                 >
                   {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -415,7 +438,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full mt-2 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full min-h-[44px] mt-2 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm transition-all shadow-lg shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             id="auth-submit-btn"
           >
             {isLoading ? (
@@ -434,7 +457,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="space-y-3 pt-2">
               <div className="relative flex items-center justify-center">
                 <div className="border-t border-slate-800 w-full" />
-                <span className="bg-slate-900 px-3 text-[11px] text-slate-400 font-medium whitespace-nowrap">
+                <span className="bg-slate-900 px-3 text-xs text-slate-400 font-medium whitespace-nowrap">
                   أو يمكنك المتابعة عبر
                 </span>
                 <div className="border-t border-slate-800 w-full" />
@@ -445,7 +468,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 type="button"
                 onClick={handleGoogleAuth}
                 disabled={isLoading}
-                className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-2.5 border border-slate-300 disabled:opacity-50"
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2.5 border border-slate-300 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 id="google-auth-btn"
               >
                 <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">

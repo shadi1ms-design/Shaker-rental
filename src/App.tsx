@@ -2,40 +2,44 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Vehicle, Booking, AppSettings, SearchFilters } from './types';
 import { dataService } from './services/dataService';
-import { DEFAULT_SETTINGS } from './services/pricing';
+import { useLocation, navigate, matchPath, goBack, routes } from './router';
 import { openWhatsAppChat } from './services/whatsapp';
 import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { CarCatalog } from './components/CarCatalog';
-import { CarDetailsModal } from './components/CarDetailsModal';
-import { BookingModal } from './components/BookingModal';
 import { ContactPage } from './components/ContactPage';
-import { AuthModal } from './components/AuthModal';
-import { UserProfileModal } from './components/UserProfileModal';
 import { AdminDashboard, AdminTabType } from './components/AdminDashboard';
 import { EmailVerificationGate } from './components/EmailVerificationGate';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
 import { VehicleImagePlaceholder } from './components/VehicleImagePlaceholder';
+import { useDocumentTitle } from './hooks/useDocumentTitle';
+
+// Heavy modals lazy loaded with React.lazy
+const CarDetailsModal = React.lazy(() => import('./components/CarDetailsModal').then((m) => ({ default: m.CarDetailsModal })));
+const BookingModal = React.lazy(() => import('./components/BookingModal').then((m) => ({ default: m.BookingModal })));
+const AuthModal = React.lazy(() => import('./components/AuthModal').then((m) => ({ default: m.AuthModal })));
+const UserProfileModal = React.lazy(() => import('./components/UserProfileModal').then((m) => ({ default: m.UserProfileModal })));
+
 import {
   MessageCircle,
   Shield,
-  ShieldCheck,
-  Phone,
   CheckCircle2,
-  Sparkles,
-  Award,
-  Clock,
-  Car as CarIcon,
   ChevronDown,
   HelpCircle,
-  LogIn,
   KeyRound,
   ArrowRight,
-  ArrowLeft,
-  Bot,
-  Plane
+  ArrowLeft
 } from 'lucide-react';
+import { PageTopBar } from './components/common/PageTopBar';
+import { PageHeaderBanner } from './components/common/PageHeaderBanner';
+import { GlobalMenu } from './components/GlobalMenu';
+import { motion } from 'motion/react';
+import {
+  getPageVariants,
+  getStaggerVariants,
+  getItemVariants,
+} from './constants/motion';
 
 function MainAppContent() {
   const {
@@ -45,25 +49,61 @@ function MainAppContent() {
     isEmployee,
     isLoadingAuth,
     loginWithEmail,
-    loginWithGoogle,
-    logout
+    loginWithGoogle
   } = useAuth();
 
   const isStaffAuthorized = isAdmin || isEmployee;
 
   // App Navigation View
-  const [currentView, setCurrentView] = useState<'home' | 'catalog' | 'about' | 'admin'>(() => {
-    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
-      return 'admin';
-    }
-    return 'home';
-  });
+  const { pathname } = useLocation();
+  const carDetailsMatch = matchPath('/cars/:id', pathname);
+  const carBookingMatch = matchPath('/cars/:id/book', pathname);
+  const isAdminRoute = pathname.startsWith('/admin');
+  const currentView: 'home' | 'catalog' | 'about' | 'admin' | 'login' | 'register' | 'profile' | 'dashboard' | 'notfound' =
+    isAdminRoute
+      ? 'admin'
+      : pathname === '/dashboard'
+      ? 'dashboard'
+      : pathname === '/'
+      ? 'home'
+      : pathname === '/cars' || pathname === '/catalog' || carDetailsMatch || carBookingMatch
+      ? 'catalog'
+      : pathname === '/about' || pathname === '/contact'
+      ? 'about'
+      : pathname === '/login'
+      ? 'login'
+      : pathname === '/register'
+      ? 'register'
+      : pathname === '/profile'
+      ? 'profile'
+      : 'notfound';
 
   // Core Data State - Immediate cache bootstrap for 0ms initial render
   const [vehicles, setVehicles] = useState<Vehicle[]>(() => dataService.getCachedVehicles());
   const [bookings, setBookings] = useState<Booking[]>(() => dataService.getCachedBookings());
   const [settings, setSettings] = useState<AppSettings>(() => dataService.getCachedSettings());
-  const [isLoading, setIsLoading] = useState(false);
+  const [vehiclesReady, setVehiclesReady] = useState<boolean>(() => dataService.getCachedVehicles().length > 0);
+  const routeVehicleId = carDetailsMatch?.id || carBookingMatch?.id;
+  const routeVehicle = routeVehicleId ? vehicles.find((v) => v.id === routeVehicleId) || null : null;
+
+  // Dynamic document title based on current path and state
+  const currentTitle = React.useMemo(() => {
+    if (isAdminRoute) return 'لوحة الإدارة';
+    if (pathname === '/profile') return 'حسابي';
+    if (pathname === '/login') return 'تسجيل الدخول';
+    if (pathname === '/register') return 'إنشاء حساب جديد';
+    if (pathname === '/about' || pathname === '/contact') return 'تواصل معنا';
+    if (carBookingMatch) {
+      return routeVehicle ? `حجز ${routeVehicle.brand} ${routeVehicle.model}` : 'حجز سيارة';
+    }
+    if (carDetailsMatch) {
+      return routeVehicle ? `${routeVehicle.brand} ${routeVehicle.model}` : 'تفاصيل السيارة';
+    }
+    if (pathname === '/cars' || pathname === '/catalog') return 'أسطول السيارات';
+    return 'الرئيسية';
+  }, [isAdminRoute, pathname, carBookingMatch, carDetailsMatch, routeVehicle]);
+
+  useDocumentTitle(currentTitle);
 
   // Admin login form state
   const [adminEmail, setAdminEmail] = useState('');
@@ -71,18 +111,57 @@ function MainAppContent() {
   const [adminLoginLoading, setAdminLoginLoading] = useState(false);
   const [adminLoginError, setAdminLoginError] = useState<string | null>(null);
 
-  // Modals
-  const [selectedVehicleForDetails, setSelectedVehicleForDetails] = useState<Vehicle | null>(null);
-  const [selectedVehicleForBooking, setSelectedVehicleForBooking] = useState<Vehicle | null>(null);
+  // Search filters carried from the hero search to the catalog / booking pages
   const [activeBookingFilters, setActiveBookingFilters] = useState<SearchFilters | undefined>(undefined);
-
-  // User Auth & Profile Modals
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   // Success Notification
   const [lastCreatedBooking, setLastCreatedBooking] = useState<Booking | null>(null);
+
+  // Restore persisted recent booking on auth load
+  useEffect(() => {
+    if (!user?.uid) {
+      setLastCreatedBooking(null);
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(`shaker_recent_booking_${user.uid}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.id) {
+          setLastCreatedBooking(prev => prev || (parsed as Booking));
+        }
+      }
+    } catch {}
+  }, [user?.uid]);
+
+  // Dismiss persisted recent booking if status changes from 'new' / 'reviewing' in live Firestore data
+  useEffect(() => {
+    if (!lastCreatedBooking || !user?.uid) return;
+    const found = bookings.find((b) => b.id === lastCreatedBooking.id || b.bookingNumber === lastCreatedBooking.bookingNumber);
+    if (found && found.status !== 'new' && found.status !== 'reviewing') {
+      setLastCreatedBooking(null);
+      try {
+        localStorage.removeItem(`shaker_recent_booking_${user.uid}`);
+      } catch {}
+    }
+  }, [bookings, lastCreatedBooking, user?.uid]);
+
+  const handleBookingCreated = (b: Booking) => {
+    setLastCreatedBooking(b);
+    refreshData();
+    if (user?.uid) {
+      try {
+        const minimalSummary = {
+          id: b.id,
+          bookingNumber: b.bookingNumber || b.id,
+          vehicleName: b.vehicleName,
+          status: b.status || 'new',
+          createdAt: b.createdAt || new Date().toISOString(),
+        };
+        localStorage.setItem(`shaker_recent_booking_${user.uid}`, JSON.stringify(minimalSummary));
+      } catch {}
+    }
+  };
 
   // Home Page Interaction State
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
@@ -91,38 +170,44 @@ function MainAppContent() {
   // Admin auto-navigation ref to avoid trapping user in an infinite redirect loop
   const hasAutoNavigatedAdminRef = useRef(false);
 
-  // Listen to browser popstate (back/forward navigation)
-  useEffect(() => {
-    const handleLocationChange = () => {
-      const path = window.location.pathname;
-
-      if (path.startsWith('/admin')) {
-        setCurrentView('admin');
-      } else if (path.includes('/cars') || path.includes('/catalog')) {
-        setCurrentView('catalog');
-      } else if (path.includes('/about') || path.includes('/contact')) {
-        setCurrentView('about');
-      } else {
-        setCurrentView('home');
-      }
-    };
-    window.addEventListener('popstate', handleLocationChange);
-    return () => window.removeEventListener('popstate', handleLocationChange);
-  }, []);
-
   // When admin logs in, automatically show admin view once instead of normal dashboard
   useEffect(() => {
     if (isAdmin && !hasAutoNavigatedAdminRef.current) {
       hasAutoNavigatedAdminRef.current = true;
-      setIsProfileModalOpen(false);
-      setCurrentView('admin');
-      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin')) {
-        window.history.replaceState(null, '', '/admin/dashboard');
+      if (!window.location.pathname.startsWith('/admin')) {
+        navigate(routes.adminDashboard, { replace: true });
       }
     } else if (!isAdmin) {
       hasAutoNavigatedAdminRef.current = false;
     }
   }, [isAdmin]);
+
+  // /dashboard: staff -> admin panel, customers -> their account page, visitors -> login
+  useEffect(() => {
+    if (currentView !== 'dashboard' || isLoadingAuth) return;
+    if (!user) navigate(routes.login, { replace: true });
+    else if (isStaffAuthorized) navigate(routes.adminDashboard, { replace: true });
+    else navigate(routes.profile, { replace: true });
+  }, [currentView, isLoadingAuth, user, isStaffAuthorized]);
+
+  // Unknown URL -> home
+  useEffect(() => {
+    if (currentView === 'notfound') navigate(routes.home, { replace: true });
+  }, [currentView]);
+
+  // Unauthenticated visitors on admin routes belong on /admin/login; /profile requires a session
+  useEffect(() => {
+    if (isLoadingAuth) return;
+    if (currentView === 'admin' && (!user || !isStaffAuthorized) && pathname !== routes.adminLogin) {
+      navigate(routes.adminLogin, { replace: true });
+    }
+    if (currentView === 'profile' && !user) {
+      navigate(routes.login, { replace: true });
+    }
+    if ((currentView === 'login' || currentView === 'register') && user) {
+      navigate(isAdmin ? routes.adminDashboard : routes.profile, { replace: true });
+    }
+  }, [currentView, isLoadingAuth, user, isStaffAuthorized, isAdmin, pathname]);
 
   // Load initial data from dataService
   const refreshData = async () => {
@@ -146,7 +231,7 @@ function MainAppContent() {
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
-      setIsLoading(false);
+      setVehiclesReady(true);
     }
   };
 
@@ -180,12 +265,14 @@ function MainAppContent() {
   // Handle search submitted from Hero section
   const handleHeroSearch = (filters: SearchFilters) => {
     setActiveBookingFilters(filters);
-    setCurrentView('catalog');
+    navigate(routes.cars);
   };
 
-  const handleSelectCarForBooking = (vehicle: Vehicle) => {
-    setSelectedVehicleForDetails(null);
-    setSelectedVehicleForBooking(vehicle);
+  const handleSelectCarForBooking = (vehicle: Vehicle) => navigate(routes.book(vehicle.id));
+  const handleViewCarDetails = (vehicle: Vehicle) => navigate(routes.car(vehicle.id));
+  const handleBookFirstVehicle = () => {
+    if (vehicles[0]) navigate(routes.book(vehicles[0].id));
+    else navigate(routes.cars);
   };
 
   const getAdminTabFromPath = (path: string): AdminTabType => {
@@ -195,7 +282,6 @@ function MainAppContent() {
     if (path.includes('/admin/calendar')) return 'bookings';
     if (path.includes('/admin/rentals')) return 'bookings';
     if (path.includes('/admin/contracts')) return 'bookings';
-    if (path.includes('/admin/payments')) return 'bookings';
     if (path.includes('/admin/maintenance')) return isAdmin ? 'vehicles' : 'bookings';
     if (path.includes('/admin/reports')) return isAdmin ? 'reports' : 'bookings';
     if (path.includes('/admin/settings')) return isAdmin ? 'settings' : 'bookings';
@@ -216,9 +302,9 @@ function MainAppContent() {
     setAdminLoginLoading(true);
     try {
       await loginWithEmail(adminEmail, adminPassword);
-      window.history.replaceState(null, '', '/admin/dashboard');
-    } catch (err: any) {
-      setAdminLoginError(err.message || 'فشل تسجيل الدخول. يرجى التأكد من البريد وكلمة المرور.');
+      navigate(routes.adminDashboard, { replace: true });
+    } catch (err: unknown) {
+      setAdminLoginError((err instanceof Error && err.message) || 'فشل تسجيل الدخول. يرجى التأكد من البريد وكلمة المرور.');
     } finally {
       setAdminLoginLoading(false);
     }
@@ -240,10 +326,6 @@ function MainAppContent() {
 
     // 2. Unauthenticated or non-staff user: Redirect to /admin/login
     if (!user || !isStaffAuthorized) {
-      if (typeof window !== 'undefined' && window.location.pathname !== '/admin/login') {
-        window.history.replaceState(null, '', '/admin/login');
-      }
-
       return (
         <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-cairo" dir="rtl">
           <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-6 shadow-2xl relative overflow-hidden">
@@ -320,8 +402,8 @@ function MainAppContent() {
                     if (typeof loginWithGoogle === 'function') {
                       await loginWithGoogle();
                     }
-                  } catch (err: any) {
-                    setAdminLoginError(err?.message || 'تعذر تسجيل الدخول الإداري عبر Google.');
+                  } catch (err: unknown) {
+                    setAdminLoginError((err instanceof Error && err.message) || 'تعذر تسجيل الدخول الإداري عبر Google.');
                   } finally {
                     setAdminLoginLoading(false);
                   }
@@ -354,10 +436,7 @@ function MainAppContent() {
             <div className="pt-2 border-t border-slate-800 space-y-2">
               <button
                 type="button"
-                onClick={() => {
-                  setCurrentView('home');
-                  window.history.pushState(null, '', '/');
-                }}
+                onClick={() => navigate(routes.home)}
                 className="w-full py-2 rounded-xl bg-slate-800/40 hover:bg-slate-800 text-slate-400 hover:text-white text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
               >
                 <span>العودة للموقع الرئيسي</span>
@@ -370,7 +449,7 @@ function MainAppContent() {
     }
 
     // 3. Authenticated Staff/Admin
-    const initialTab = getAdminTabFromPath(typeof window !== 'undefined' ? window.location.pathname : '');
+    const initialTab = getAdminTabFromPath(pathname);
     return (
       <AdminDashboard
         vehicles={vehicles}
@@ -378,20 +457,16 @@ function MainAppContent() {
         settings={settings}
         initialTab={initialTab}
         onRefreshData={refreshData}
-        onBackToSite={() => {
-          setCurrentView('home');
-          if (typeof window !== 'undefined') {
-            window.history.pushState(null, '', '/');
-          }
-        }}
+        onBackToSite={() => navigate(routes.home)}
       />
     );
   }
 
   // Mandatory Email Verification Gate for new customer accounts created on/after 2026-09-19
   const EMAIL_VERIFICATION_CUTOFF_DATE = new Date('2026-09-19T00:00:00.000Z').getTime();
-  const userCreatedAtTime = user?.createdAt ? new Date(user.createdAt).getTime() : Date.now();
-  const isAccountNewerThanCutoff = userCreatedAtTime >= EMAIL_VERIFICATION_CUTOFF_DATE;
+  const isAccountNewerThanCutoff = user?.createdAt
+    ? new Date(user.createdAt).getTime() >= EMAIL_VERIFICATION_CUTOFF_DATE
+    : true;
 
   const requiresEmailVerification = Boolean(
     user &&
@@ -408,70 +483,128 @@ function MainAppContent() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-cairo">
-      {/* Top Navigation */}
-      <Navbar
-        currentView={currentView}
+      {/* Global Fixed ☰ Menu Button on Physical Right (w-12 h-12 matching logo) */}
+      <GlobalMenu
+        currentView={currentView === 'about' ? 'contact' : currentView === 'catalog' ? 'cars' : currentView}
         onNavigate={(view) => {
-          if (view === 'cars' || view === 'catalog') {
-            setCurrentView('catalog');
-            if (typeof window !== 'undefined') window.history.pushState(null, '', '/cars');
-          } else if (view === 'contact' || view === 'about') {
-            setCurrentView('about');
-            if (typeof window !== 'undefined') window.history.pushState(null, '', '/about');
-          } else if (view === 'admin') {
-            setCurrentView('admin');
-            if (typeof window !== 'undefined') window.history.pushState(null, '', '/admin/dashboard');
-          } else {
-            setCurrentView('home');
-            if (typeof window !== 'undefined') window.history.pushState(null, '', '/');
-          }
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          if (view === 'cars' || view === 'catalog') navigate(routes.cars);
+          else if (view === 'contact' || view === 'about') navigate(routes.about);
+          else if (view === 'admin') navigate(routes.dashboard);
+          else navigate(routes.home);
         }}
-        onOpenBooking={() => setSelectedVehicleForBooking(vehicles[0] || null)}
-        onOpenAuth={(mode) => {
-          setAuthModalMode(mode || 'login');
-          setIsAuthModalOpen(true);
-        }}
-        onOpenProfile={() => {
-          if (isAdmin) {
-            setCurrentView('admin');
-          } else {
-            setIsProfileModalOpen(true);
-          }
-        }}
+        onOpenBooking={handleBookFirstVehicle}
+        onOpenAuth={(mode) => navigate(mode === 'register' ? routes.register : routes.login)}
+        onOpenProfile={() => navigate(isAdmin ? routes.adminDashboard : routes.profile)}
       />
 
-      {/* Booking Confirmation Alert Toast */}
+      {/* Top Header: Full non-sticky Navbar ONLY on Home; minimal non-sticky PageTopBar on other sub-pages */}
+      {currentView === 'home' ? (
+        <Navbar
+          currentView="home"
+          onNavigate={(view) => {
+            if (view === 'cars' || view === 'catalog') navigate(routes.cars);
+            else if (view === 'contact' || view === 'about') navigate(routes.about);
+            else if (view === 'admin') navigate(routes.dashboard);
+            else navigate(routes.home);
+          }}
+          onOpenBooking={handleBookFirstVehicle}
+          onOpenAuth={(mode) => navigate(mode === 'register' ? routes.register : routes.login)}
+          onOpenProfile={() => navigate(isAdmin ? routes.adminDashboard : routes.profile)}
+        />
+      ) : (
+        <PageTopBar
+          title={
+            carBookingMatch
+              ? routeVehicle
+                ? `حجز ${routeVehicle.brand} ${routeVehicle.model}`
+                : 'حجز سيارة'
+              : carDetailsMatch
+              ? routeVehicle
+                ? `${routeVehicle.brand} ${routeVehicle.model}`
+                : 'تفاصيل السيارة'
+              : currentView === 'catalog'
+              ? 'أسطول السيارات'
+              : currentView === 'about'
+              ? 'تواصل معنا وموقعنا'
+              : currentView === 'profile'
+              ? 'حسابي وحجوزاتي'
+              : currentView === 'login'
+              ? 'تسجيل الدخول'
+              : currentView === 'register'
+              ? 'إنشاء حساب جديد'
+              : 'شاكر لتأجير السيارات'
+          }
+          onBack={() => {
+            if (carBookingMatch && carBookingMatch.id) {
+              goBack(routes.car(carBookingMatch.id));
+            } else if (carDetailsMatch) {
+              goBack(routes.cars);
+            } else if (currentView === 'login' || currentView === 'register') {
+              goBack(routes.home);
+            } else {
+              navigate(routes.home);
+            }
+          }}
+          badge={
+            carBookingMatch
+              ? 'حجز إلكتروني'
+              : carDetailsMatch
+              ? 'مواصفات المركبة'
+              : currentView === 'catalog'
+              ? 'الأسطول المتاح'
+              : currentView === 'about'
+              ? 'خدمة العملاء'
+              : undefined
+          }
+        />
+      )}
+
+      {/* Booking Status Alert Toast */}
       {lastCreatedBooking && (
-        <div className="bg-emerald-600/90 text-white px-4 py-3 text-xs sm:text-sm text-center flex items-center justify-center gap-2 sticky top-16 z-30 shadow-lg backdrop-blur-md">
-          <CheckCircle2 className="w-5 h-5" />
+        <div className="bg-amber-600/90 text-white px-4 py-3 text-xs sm:text-sm text-center flex items-center justify-center gap-2 sticky top-0 z-30 shadow-lg backdrop-blur-md">
+          <CheckCircle2 className="w-5 h-5 shrink-0" />
           <span>
-            تم استلام طلب حجزك بنجاح للسيارة <strong>{lastCreatedBooking.vehicleName}</strong> برقم حجز{' '}
-            <strong className="font-mono">{lastCreatedBooking.bookingNumber}</strong>! سيتم التواصل معك عبر الواتساب فوراً.
+            تم استلام طلب حجزك رقم <strong className="font-mono">{lastCreatedBooking.bookingNumber}</strong> وهو الآن بانتظار موافقة الإدارة.
           </span>
           <button
-            onClick={() => setLastCreatedBooking(null)}
-            className="mr-3 text-xs underline font-bold"
+            onClick={() => {
+              setLastCreatedBooking(null);
+              if (user?.uid) {
+                try {
+                  localStorage.removeItem(`shaker_recent_booking_${user.uid}`);
+                } catch {}
+              }
+            }}
+            className="mr-3 text-xs underline font-bold cursor-pointer"
           >
             إغلاق
           </button>
         </div>
       )}
 
-      {/* Main Content Router */}
-      <main className="flex-1">
+      {/* Main Content Router with bottom padding to avoid WhatsApp button overlap */}
+      <main className="flex-1 pb-28 sm:pb-32">
         {/* VIEW 1: HOME PAGE */}
         {currentView === 'home' && (
-          <div className="space-y-16">
+          <motion.div
+            key="home-view"
+            variants={getPageVariants()}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="space-y-16"
+          >
             {/* Hero Section */}
-            <HeroSection
-              vehicles={vehicles}
-              onSearch={handleHeroSearch}
-              onSelectVehicle={(v) => setSelectedVehicleForBooking(v)}
-            />
+            <motion.div variants={getItemVariants()}>
+              <HeroSection
+                vehicles={vehicles}
+                onSearch={handleHeroSearch}
+                onSelectVehicle={(v) => handleSelectCarForBooking(v)}
+              />
+            </motion.div>
 
             {/* Featured Fleet Catalog Section */}
-            <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <motion.section variants={getItemVariants()} className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-8">
                 <div>
                   <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-full inline-block mb-2">
@@ -486,11 +619,9 @@ function MainAppContent() {
                   type="button"
                   onClick={() => {
                     setActiveBookingFilters(undefined);
-                    setCurrentView('catalog');
-                    if (typeof window !== 'undefined') window.history.pushState(null, '', '/cars');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    navigate(routes.cars);
                   }}
-                  className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-orange-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-orange-500/20 transition-all hover:scale-[1.02] active:scale-[0.97] cursor-pointer"
                 >
                   <span>تصفح كامل الأسطول</span>
                   <span className="text-xs opacity-90 font-mono font-medium">({vehicles.length})</span>
@@ -498,12 +629,15 @@ function MainAppContent() {
                 </button>
               </div>
 
-              {/* Cars Grid (2 items preview) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto">
+              {/* Cars Grid with Staggered Entrance */}
+              <motion.div variants={getStaggerVariants()} className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto">
                 {vehicles.slice(0, 2).map((vehicle) => (
-                  <div
+                  <motion.div
                     key={vehicle.id}
-                    className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl overflow-hidden transition-all duration-300 hover:shadow-2xl hover:shadow-amber-500/5 group flex flex-col justify-between"
+                    variants={getItemVariants()}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.97 }}
+                    className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl overflow-hidden transition-colors duration-300 hover:shadow-2xl hover:shadow-amber-500/5 group flex flex-col justify-between"
                   >
                     <div>
                       {/* Image Frame */}
@@ -595,25 +729,27 @@ function MainAppContent() {
                     {/* Action buttons */}
                     <div className="p-4 bg-slate-950/60 border-t border-slate-800/80 flex items-center gap-2">
                       <button
-                        onClick={() => setSelectedVehicleForDetails(vehicle)}
-                        className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors"
+                        type="button"
+                        onClick={() => handleViewCarDetails(vehicle)}
+                        className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all active:scale-[0.97] cursor-pointer"
                       >
                         تفاصيل السيارة
                       </button>
                       <button
+                        type="button"
                         onClick={() => handleSelectCarForBooking(vehicle)}
-                        className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20"
+                        className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 active:scale-[0.97] cursor-pointer"
                       >
                         احجز الآن
                       </button>
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
-              </div>
-            </section>
+              </motion.div>
+            </motion.section>
 
             {/* FAQ Section (Accordion) */}
-            <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
+            <motion.section variants={getItemVariants()} className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
               <div className="text-center mb-10">
                 <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-full inline-block mb-3">
                   الأسئلة الشائعة
@@ -678,106 +814,211 @@ function MainAppContent() {
                   );
                 })}
               </div>
-            </section>
+            </motion.section>
+          </motion.div>
+        )}
+
+        {/* VIEW 2: CAR CATALOG  (/cars) */}
+        {currentView === 'catalog' && !carDetailsMatch && !carBookingMatch && (
+          <motion.div
+            key="catalog-view"
+            variants={getPageVariants()}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            <PageHeaderBanner themeKey="catalog" />
+            <CarCatalog
+              vehicles={vehicles}
+              initialFilters={activeBookingFilters}
+              onSelectVehicle={(v) => handleSelectCarForBooking(v)}
+              onViewDetails={(v) => handleViewCarDetails(v)}
+              onBookCar={(v) => handleSelectCarForBooking(v)}
+              onSelectCar={(v) => handleViewCarDetails(v)}
+            />
+          </motion.div>
+        )}
+
+        {/* VIEW 3: CAR DETAILS PAGE  (/cars/:id) */}
+        {(carDetailsMatch || carBookingMatch) && !routeVehicle && (
+          <motion.div
+            key="notfound-car-view"
+            variants={getPageVariants()}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="min-h-[50vh] flex items-center justify-center text-center p-6"
+          >
+            {vehiclesReady ? (
+              <div className="space-y-4">
+                <p className="text-slate-300 font-bold">لم يتم العثور على هذه السيارة.</p>
+                <button
+                  type="button"
+                  onClick={() => navigate(routes.cars)}
+                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black active:scale-[0.97] transition-transform"
+                >
+                  العودة إلى الأسطول
+                </button>
+              </div>
+            ) : (
+              <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            )}
+          </motion.div>
+        )}
+
+        {carDetailsMatch && routeVehicle && (
+          <motion.div
+            key={`details-${routeVehicle.id}`}
+            variants={getPageVariants()}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            <PageHeaderBanner
+              themeKey="car_details"
+              customTitle={`${routeVehicle.brand} ${routeVehicle.model} (${routeVehicle.year})`}
+              customSubtitle={`فئة ${routeVehicle.category === 'light' ? 'اقتصادي' : routeVehicle.category === 'medium' ? 'سيدان متوسط' : 'جيب 7 ركاب'} • السعر: $${routeVehicle.dailyPrice}/يوم • جاهزة للتسليم`}
+            />
+            <React.Suspense fallback={<div className="min-h-[40vh] flex items-center justify-center p-6"><div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>}>
+              <CarDetailsModal
+                vehicle={routeVehicle}
+                onClose={() => goBack(routes.cars)}
+                onBook={(v) => handleSelectCarForBooking(v)}
+                onBookNow={(v) => handleSelectCarForBooking(v)}
+              />
+            </React.Suspense>
+          </motion.div>
+        )}
+
+        {/* VIEW 4: BOOKING PAGE  (/cars/:id/book) */}
+        {carBookingMatch && routeVehicle && (
+          <motion.div
+            key={`booking-${routeVehicle.id}`}
+            variants={getPageVariants()}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            <PageHeaderBanner
+              themeKey="booking"
+              customTitle={`حجز ${routeVehicle.brand} ${routeVehicle.model}`}
+              customSubtitle="حدد تواريخ الاستلام والإرجاع وأكمل بيانات الحجز للاستفادة من خصومات الأعضاء"
+            />
+            <React.Suspense fallback={<div className="min-h-[40vh] flex items-center justify-center p-6"><div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>}>
+              <BookingModal
+                key={carBookingMatch.id}
+                vehicles={vehicles}
+                selectedVehicle={routeVehicle}
+                vehicle={routeVehicle}
+                initialDates={
+                  activeBookingFilters?.pickupDate && activeBookingFilters?.returnDate
+                    ? {
+                        pickupDate: activeBookingFilters.pickupDate,
+                        returnDate: activeBookingFilters.returnDate,
+                      }
+                    : undefined
+                }
+                initialStartDate={activeBookingFilters?.pickupDate}
+                initialEndDate={activeBookingFilters?.returnDate}
+                onClose={() => goBack(routes.car(carBookingMatch.id))}
+                onOpenAuth={() => navigate(routes.login)}
+                onOpenProfile={() => navigate(routes.profile)}
+                onBookingCreated={handleBookingCreated}
+                onBookingComplete={handleBookingCreated}
+              />
+            </React.Suspense>
+          </motion.div>
+        )}
+
+        {/* VIEW 5: ABOUT & CONTACT  (/about, /contact) */}
+        {currentView === 'about' && (
+          <motion.div
+            key="about-view"
+            variants={getPageVariants()}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            <PageHeaderBanner themeKey="contact" />
+            <ContactPage />
+          </motion.div>
+        )}
+
+        {/* VIEW 6: LOGIN / REGISTER  (/login, /register) */}
+        {(currentView === 'login' || currentView === 'register') && !user && (
+          <motion.div
+            key="auth-view"
+            variants={getPageVariants()}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            <PageHeaderBanner
+              themeKey={currentView === 'register' ? 'register' : 'login'}
+            />
+            <React.Suspense fallback={<div className="min-h-[40vh] flex items-center justify-center p-6"><div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>}>
+              <AuthModal
+                isOpen
+                initialMode={currentView === 'register' ? 'register' : 'login'}
+                loginWithGoogle={loginWithGoogle}
+                onClose={() => goBack(routes.home)}
+                onSuccess={() => navigate(isAdmin ? routes.adminDashboard : routes.profile, { replace: true })}
+              />
+            </React.Suspense>
+          </motion.div>
+        )}
+
+        {/* VIEW 7: ACCOUNT PAGE  (/profile) */}
+        {currentView === 'profile' && user && (
+          <motion.div
+            key="profile-view"
+            variants={getPageVariants()}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            <PageHeaderBanner themeKey="profile" />
+            <React.Suspense fallback={<div className="min-h-[40vh] flex items-center justify-center p-6"><div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>}>
+              <UserProfileModal
+                isOpen
+                bookings={bookings}
+                onClose={() => navigate(routes.home)}
+                onOpenBooking={handleBookFirstVehicle}
+                onOpenAdminView={() => navigate(routes.adminDashboard)}
+              />
+            </React.Suspense>
+          </motion.div>
+        )}
+
+        {/* /dashboard is resolved by an effect above while auth loads */}
+        {currentView === 'dashboard' && (
+          <div className="min-h-[50vh] flex items-center justify-center">
+            <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
           </div>
         )}
-
-        {/* VIEW 2: CAR CATALOG */}
-        {currentView === 'catalog' && (
-          <CarCatalog
-            vehicles={vehicles}
-            initialFilters={activeBookingFilters}
-            onSelectVehicle={(v) => handleSelectCarForBooking(v)}
-            onViewDetails={(v) => setSelectedVehicleForDetails(v)}
-            onBookCar={(v) => handleSelectCarForBooking(v)}
-            onSelectCar={(v) => setSelectedVehicleForDetails(v)}
-          />
-        )}
-
-        {/* VIEW 3: ABOUT & CONTACT */}
-        {currentView === 'about' && <ContactPage />}
       </main>
 
-      {/* Floating WhatsApp Action Button */}
+      {/* Floating WhatsApp Action Button positioned at physical RIGHT at screen bottom */}
       <button
+        type="button"
         onClick={() => openWhatsAppChat()}
-        className="fixed bottom-6 left-6 z-40 p-3.5 sm:px-5 sm:py-3.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm flex items-center gap-2.5 shadow-2xl shadow-emerald-500/40 transition-all hover:scale-105 active:scale-95 group"
+        style={{
+          bottom: 'max(16px, env(safe-area-inset-bottom, 16px))',
+          right: 'max(16px, env(safe-area-inset-right, 16px))',
+        }}
+        className="fixed z-40 p-3.5 sm:px-5 sm:py-3.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm flex items-center gap-2.5 shadow-2xl shadow-emerald-500/40 transition-all hover:scale-105 active:scale-95 group cursor-pointer"
         title="تواصل معنا فوراً على الواتساب"
+        aria-label="تواصل واتساب مباشر"
       >
         <MessageCircle className="w-6 h-6 fill-current text-slate-950" />
         <span className="hidden sm:inline font-bold">تواصل واتساب مباشر</span>
       </button>
 
       {/* Footer */}
-      <Footer onNavigate={(v) => setCurrentView(v)} />
-
-      {/* MODAL 1: Car Details */}
-      {selectedVehicleForDetails && (
-        <CarDetailsModal
-          vehicle={selectedVehicleForDetails}
-          onClose={() => setSelectedVehicleForDetails(null)}
-          onBook={(v) => handleSelectCarForBooking(v)}
-          onBookNow={(v) => handleSelectCarForBooking(v)}
-        />
-      )}
-
-      {/* MODAL 2: Secure Booking & Reservation Flow */}
-      {selectedVehicleForBooking && (
-        <BookingModal
-          vehicles={vehicles}
-          selectedVehicle={selectedVehicleForBooking}
-          vehicle={selectedVehicleForBooking}
-          initialDates={
-            activeBookingFilters?.pickupDate && activeBookingFilters?.returnDate
-              ? {
-                  pickupDate: activeBookingFilters.pickupDate,
-                  returnDate: activeBookingFilters.returnDate,
-                }
-              : undefined
-          }
-          initialStartDate={activeBookingFilters?.pickupDate}
-          initialEndDate={activeBookingFilters?.returnDate}
-          onClose={() => setSelectedVehicleForBooking(null)}
-          onOpenAuth={() => setIsAuthModalOpen(true)}
-          onBookingCreated={(b) => {
-            setLastCreatedBooking(b);
-            refreshData();
-          }}
-          onBookingComplete={(b) => {
-            setLastCreatedBooking(b);
-            refreshData();
-          }}
-        />
-      )}
-
-      {/* MODAL 3: Universal Email Login & Account Registration */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        initialMode={authModalMode}
-        loginWithGoogle={loginWithGoogle}
-        onClose={() => setIsAuthModalOpen(false)}
-        onSuccess={() => {
-          setIsAuthModalOpen(false);
-          // If customer, show their normal personal dashboard
-          if (!isAdmin) {
-            setIsProfileModalOpen(true);
-          }
-        }}
-      />
-
-      {/* MODAL 4: User Profile & Bookings Management */}
-      <UserProfileModal
-        isOpen={isProfileModalOpen}
-        bookings={bookings}
-        onClose={() => setIsProfileModalOpen(false)}
-        onOpenBooking={() => {
-          setIsProfileModalOpen(false);
-          setSelectedVehicleForBooking(vehicles[0] || null);
-        }}
-        onOpenAdminView={() => {
-          setIsProfileModalOpen(false);
-          setCurrentView('admin');
-        }}
+      <Footer
+        onNavigate={(v) =>
+          navigate(v === 'catalog' ? routes.cars : v === 'about' ? routes.about : v === 'admin' ? routes.dashboard : routes.home)
+        }
       />
     </div>
   );

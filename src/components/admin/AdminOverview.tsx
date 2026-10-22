@@ -3,29 +3,22 @@ import { Vehicle, Booking } from '../../types';
 import {
   Calendar,
   Car,
-  Droplet,
-  CheckCircle2,
-  AlertTriangle,
   ArrowUpRight,
-  Wrench,
   Plus,
   RefreshCw,
   Clock,
   DollarSign,
-  FileText,
-  BarChart2
+  FileText
 } from 'lucide-react';
 import { AdminTabType } from '../AdminDashboard';
-import { todayLocalISO, isTodayLocal, formatArabicDate } from '../../utils/dateUtils';
+import { isTodayLocal, formatArabicDate } from '../../utils/dateUtils';
 import { calculateBookingFinancials } from '../../utils/bookingCalculations';
-import { BOOKING_STATUS_META } from '../../constants/statusMeta';
 import { StatCard } from '../common/StatCard';
 import { StatusBadge } from '../common/StatusBadge';
 
 interface AdminOverviewProps {
   vehicles: Vehicle[];
   bookings: Booking[];
-  vehiclesNeedingOil?: Array<{ vehicle: Vehicle; kmSinceOil: number; isUrgent: boolean }>;
   onNavigateTab: (tab: AdminTabType) => void;
   onOpenAddVehicle: () => void;
   onSyncAll: () => Promise<void>;
@@ -35,7 +28,6 @@ interface AdminOverviewProps {
 export const AdminOverview: React.FC<AdminOverviewProps> = ({
   vehicles,
   bookings,
-  vehiclesNeedingOil = [],
   onNavigateTab,
   onOpenAddVehicle,
   onSyncAll,
@@ -45,7 +37,11 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
 
   // Filter bookings according to period and Damascus local timezone
   const periodFilteredBookings = React.useMemo(() => {
-    const today = todayLocalISO();
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
     return bookings.filter((b) => {
       if (!b.createdAt) return period === 'all';
       if (period === 'today') {
@@ -53,13 +49,11 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
       }
       if (period === '7days') {
         const d = new Date(b.createdAt);
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         return d >= sevenDaysAgo;
       }
       if (period === 'month') {
         const d = new Date(b.createdAt);
-        const now = new Date();
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       }
       return true;
     });
@@ -152,54 +146,6 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
 
       {/* Main KPI & Metrics Content */}
       <div className="space-y-8">
-        {/* Vehicles Needing Oil Change Notice Card (If any exist) */}
-        {vehiclesNeedingOil.length > 0 && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-3xl p-5 sm:p-6 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 text-amber-400">
-                <AlertTriangle className="w-5 h-5 shrink-0" />
-                <h3 className="text-sm font-black text-white">
-                  سيارات تتطلب غيار زيت دوري ({vehiclesNeedingOil.length} مركبة)
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => onNavigateTab('vehicles')}
-                className="text-xs text-amber-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
-              >
-                <span>متابعة جدول الصيانة بالأسطول</span>
-                <span>←</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {vehiclesNeedingOil.map(({ vehicle: v, kmSinceOil, isUrgent }) => (
-                <div
-                  key={v.id}
-                  className="bg-slate-950/80 border border-amber-500/20 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="space-y-1">
-                    <span className="font-bold text-white block">
-                      {v.brand} {v.model} ({v.year})
-                    </span>
-                    <span className="text-[11px] text-slate-400 block font-mono">
-                      لوحة: {v.plateNumber} • قاطع: {kmSinceOil.toLocaleString()} كم
-                    </span>
-                  </div>
-                  {isUrgent ? (
-                    <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse shrink-0">
-                      عاجل تجاوز الفاصل
-                    </span>
-                  ) : (
-                    <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
-                      قارب 5000 كم
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
             {/* 6 Metric KPI Cards using shared StatCard component */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
               <StatCard

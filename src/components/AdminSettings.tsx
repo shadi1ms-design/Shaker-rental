@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { AppSettings, Vehicle, DiscountConfig } from '../types';
-import { dataService } from '../services/dataService';
+import { functionsService } from '../services/functionsService';
 import { DEFAULT_SETTINGS } from '../services/pricing';
-import { Settings, Save, CheckCircle2, Shield, DollarSign, Wrench, Building2, Tag, Percent, Check, AlertCircle } from 'lucide-react';
+import { Settings, Save, CheckCircle2, Shield, DollarSign, Building2, Tag, Percent, Check, AlertCircle } from 'lucide-react';
 
 interface AdminSettingsProps {
   settings?: AppSettings;
@@ -35,7 +35,6 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
       monthlyRateLight: base.monthlyRateLight ?? DEFAULT_SETTINGS.monthlyRateLight ?? 800,
       monthlyRateMedium: base.monthlyRateMedium ?? DEFAULT_SETTINGS.monthlyRateMedium ?? 1200,
       monthlyRateJeep: base.monthlyRateJeep ?? DEFAULT_SETTINGS.monthlyRateJeep ?? 1500,
-      oilChangeIntervalKm: base.oilChangeIntervalKm ?? DEFAULT_SETTINGS.oilChangeIntervalKm ?? 5000,
       rentalTerms: base.rentalTerms ?? DEFAULT_SETTINGS.rentalTerms,
       discountConfig: {
         enabled: base.discountConfig?.enabled ?? DEFAULT_SETTINGS.discountConfig?.enabled ?? true,
@@ -49,6 +48,7 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
 
   const [formData, setFormData] = useState<AppSettings>(() => getNormalizedSettings(settings));
   const [isSaving, setIsSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   React.useEffect(() => {
@@ -86,7 +86,37 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    setErrorMsg(null);
     try {
+      const PHONE_REGEX = /^((\+?963\s?9\d{8})|(09\d{8})|(\+?[1-9]\d{6,14}))$/;
+
+      if (formData.companyPhone) {
+        const digitsOnly = formData.companyPhone.trim().replace(/[\s\-\(\)]/g, '');
+        if (digitsOnly && !PHONE_REGEX.test(digitsOnly)) {
+          setErrorMsg('صيغة هاتف الشركة غير صالحة. يرجى إدخال رقم صحيح مع الرمز الدولي أو المحلي.');
+          setIsSaving(false);
+          return;
+        }
+      }
+
+      if (formData.whatsappNumber) {
+        const digitsOnly = formData.whatsappNumber.trim().replace(/[\s\-\(\)]/g, '');
+        if (digitsOnly && !PHONE_REGEX.test(digitsOnly)) {
+          setErrorMsg('صيغة رقم واتساب غير صالحة. يرجى إدخال رقم صحيح مع الرمز الدولي أو المحلي.');
+          setIsSaving(false);
+          return;
+        }
+      }
+
+      if (formData.cancellationLeadHours !== undefined) {
+        const lead = Number(formData.cancellationLeadHours);
+        if (isNaN(lead) || lead < 0 || lead > 720) {
+          setErrorMsg('مهلة الإلغاء بالساعات يجب أن تكون رقماً بين 0 و 720 ساعة (30 يوماً).');
+          setIsSaving(false);
+          return;
+        }
+      }
+
       const payload: AppSettings = {
         ...formData,
         insurance1to2Days: formData.insuranceShortTerm ?? formData.insurance1to2Days ?? 500,
@@ -94,12 +124,18 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
         insuranceShortTerm: formData.insuranceShortTerm ?? formData.insurance1to2Days ?? 500,
         insuranceLongTerm: formData.insuranceLongTerm ?? formData.insuranceAbove2Days ?? 300,
       };
-      const updated = await dataService.updateSettings(payload);
-      onSettingsUpdated(updated);
+
+      const res = await functionsService.updateSettingsSecure(payload as any);
+      if (!res.success) {
+        throw new Error(res.error || 'تعذر تحديث إعدادات النظام عبر الخادم.');
+      }
+
+      onSettingsUpdated(payload);
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setErrorMsg(err?.message || 'حدث خطأ أثناء حفظ الإعدادات.');
     } finally {
       setIsSaving(false);
     }
@@ -126,6 +162,13 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
           </div>
         )}
       </div>
+
+      {errorMsg && (
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Company Identity */}
@@ -419,28 +462,6 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
                 required
               />
             </div>
-          </div>
-        </div>
-
-        {/* Maintenance Rules */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-          <h4 className="font-bold text-sm text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-            <Wrench className="w-4 h-4 text-amber-400" />
-            سياسة صيانة وتغيير الزيت
-          </h4>
-
-          <div className="text-xs">
-            <label className="block text-slate-300 font-bold mb-1">
-              المسافة الدورية لتغيير الزيت (كم)
-            </label>
-            <p className="text-[11px] text-slate-500 mb-2">القاعدة الإلزامية: كل 5,000 كم</p>
-            <input
-              type="number"
-              value={formData.oilChangeIntervalKm ?? 5000}
-              onChange={(e) => setFormData({ ...formData, oilChangeIntervalKm: Number(e.target.value) || 5000 })}
-              className="w-full sm:w-1/3 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-bold text-sm focus:outline-none focus:border-amber-500"
-              required
-            />
           </div>
         </div>
 

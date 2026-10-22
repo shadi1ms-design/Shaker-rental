@@ -10,15 +10,14 @@ import {
   Car,
   Save,
   AlertCircle,
-  Sparkles,
   Upload,
   Image as ImageIcon,
   Trash2,
   Star,
-  Plus,
   Link as LinkIcon,
-  Loader2,
+  Loader2
 } from 'lucide-react';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface VehicleFormModalProps {
   vehicle?: Vehicle | null; // null if adding new
@@ -42,7 +41,6 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
   const [dailyPrice, setDailyPrice] = useState<number>(vehicle?.dailyPrice || 50);
   const [plateNumber, setPlateNumber] = useState(vehicle?.plateNumber || 'دمشق ');
   const [currentMileage, setCurrentMileage] = useState<number>(vehicle?.currentMileage || 50000);
-  const [lastOilChangeMileage, setLastOilChangeMileage] = useState<number>(vehicle?.lastOilChangeMileage || 50000);
   const [status, setStatus] = useState<VehicleStatus>(vehicle?.status || 'available');
 
   // Images state: multiple uploaded images and chosen primary image
@@ -182,7 +180,6 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
       dailyPrice,
       plateNumber,
       currentMileage,
-      lastOilChangeMileage,
       status,
       imageUrl: finalImageUrl,
       images: finalImages,
@@ -209,7 +206,6 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
           dailyPrice,
           plateNumber,
           currentMileage,
-          lastOilChangeMileage,
           status,
           imageUrl: finalImageUrl,
           images: finalImages,
@@ -230,7 +226,6 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
           dailyPrice,
           plateNumber,
           currentMileage,
-          lastOilChangeMileage,
           status,
           imageUrl: finalImageUrl,
           images: finalImages,
@@ -247,20 +242,32 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
     }
   };
 
+  const modalRef = useFocusTrap({ isOpen: true, onClose });
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6 text-slate-100">
+    <div className="min-h-[60vh] flex items-start justify-center py-2 text-slate-100">
       <div 
-        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl my-auto animate-in zoom-in-95 duration-200 max-h-[90vh] max-h-[90dvh] flex flex-col overflow-hidden"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="vehicle-form-modal-title"
+        tabIndex={-1}
+        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl animate-in fade-in duration-200 overflow-clip focus:outline-none"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <div className="flex items-center justify-between px-5 sm:px-6 py-4 bg-slate-950 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-2">
             <Car className="w-5 h-5 text-amber-400" />
-            <h3 className="font-bold text-white text-base">
+            <h3 id="vehicle-form-modal-title" className="font-bold text-white text-base">
               {vehicle ? 'تعديل بيانات سيارة في الأسطول' : 'إضافة سيارة جديدة للأسطول'}
             </h3>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
+          <button 
+            type="button" 
+            onClick={onClose} 
+            aria-label="إغلاق النافذة"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -274,7 +281,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
 
         <form 
           onSubmit={handleSubmit} 
-          className="overflow-y-auto flex-1 p-4 sm:p-6 space-y-4 text-xs overscroll-contain"
+          className="p-4 sm:p-6 space-y-4 text-xs"
           style={{ WebkitOverflowScrolling: 'touch' }}
         >
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -406,16 +413,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
                 required
               />
             </div>
-            <div>
-              <label className="block text-slate-400 mb-1 font-semibold">عداد آخر تغيير زيت (كم)</label>
-              <input
-                type="number"
-                value={lastOilChangeMileage ?? 0}
-                onChange={(e) => setLastOilChangeMileage(Number(e.target.value) || 0)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
-                required
-              />
-            </div>
+
             <div>
               <label className="block text-slate-400 mb-1 font-semibold">الحالة الحالية</label>
               <select
@@ -565,8 +563,9 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
                                 e.stopPropagation();
                                 handleRemoveImage(idx);
                               }}
-                              className="p-1 rounded-md bg-rose-500/90 hover:bg-rose-600 text-white transition-colors"
+                              className="p-1.5 rounded-md bg-rose-500/90 hover:bg-rose-600 text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                               title="حذف هذه الصورة"
+                              aria-label={`حذف الصورة ${idx + 1}`}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -579,7 +578,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
                                 e.stopPropagation();
                                 handleSetPrimaryImage(img);
                               }}
-                              className="w-full py-1 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[10px] flex items-center justify-center gap-1 shadow-sm"
+                              className="w-full py-1.5 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                             >
                               <Star className="w-3 h-3" />
                               <span>تعيين كرئيسية</span>

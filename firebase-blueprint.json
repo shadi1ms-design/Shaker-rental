@@ -17,7 +17,6 @@
         "dailyPrice": { "type": "number" },
         "plateNumber": { "type": "string", "maxLength": 50 },
         "currentMileage": { "type": "number" },
-        "lastOilChangeMileage": { "type": "number" },
         "status": { "type": "string", "enum": ["available", "reserved", "rented", "maintenance", "inactive"] },
         "imageUrl": { "type": "string", "maxLength": 500 },
         "features": { "type": "string", "maxLength": 500 },
@@ -53,8 +52,6 @@
         "discountAmount": { "type": "number" },
         "insuranceAmount": { "type": "number" },
         "totalPrice": { "type": "number" },
-        "paidAmount": { "type": "number" },
-        "remainingAmount": { "type": "number" },
         "status": { "type": "string", "enum": ["new", "reviewing", "confirmed", "rented", "completed", "cancelled", "rejected"] },
         "notes": { "type": "string", "maxLength": 1000 },
         "isDeleted": { "type": "boolean" },
@@ -102,39 +99,6 @@
       },
       "required": ["id", "contractNumber", "bookingId", "vehicleId", "status"]
     },
-    "Payment": {
-      "title": "Payment",
-      "description": "Financial transaction record",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "bookingId": { "type": "string", "maxLength": 128 },
-        "customerId": { "type": "string", "maxLength": 128 },
-        "amount": { "type": "number" },
-        "method": { "type": "string", "enum": ["cash", "bank_transfer", "other"] },
-        "paymentDate": { "type": "string", "format": "date-time" },
-        "notes": { "type": "string", "maxLength": 500 },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["id", "bookingId", "amount", "method", "paymentDate"]
-    },
-    "MaintenanceRecord": {
-      "title": "MaintenanceRecord",
-      "description": "Vehicle servicing and maintenance history",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "vehicleId": { "type": "string", "maxLength": 128 },
-        "serviceType": { "type": "string", "enum": ["oil_change", "tires", "brakes", "battery", "engine", "transmission", "general"] },
-        "mileage": { "type": "number" },
-        "cost": { "type": "number" },
-        "serviceDate": { "type": "string", "format": "date" },
-        "nextDueMileage": { "type": "number" },
-        "technicianNotes": { "type": "string", "maxLength": 1000 },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["id", "vehicleId", "serviceType", "mileage", "serviceDate"]
-    },
     "VehicleInspection": {
       "title": "VehicleInspection",
       "description": "Handover and return condition inspection",
@@ -172,7 +136,6 @@
         "monthlyRateLight": { "type": "number" },
         "monthlyRateMedium": { "type": "number" },
         "monthlyRateJeep": { "type": "number" },
-        "oilChangeIntervalKm": { "type": "number" },
         "rentalTerms": { "type": "string", "maxLength": 10000 },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -203,13 +166,13 @@
         "userId": { "type": "string", "maxLength": 128 },
         "userEmail": { "type": "string", "maxLength": 150 },
         "fileName": { "type": "string", "maxLength": 250 },
-        "fileUrl": { "type": "string", "maxLength": 1000 },
+        "storagePath": { "type": "string", "maxLength": 500 },
         "fileType": { "type": "string", "maxLength": 100 },
         "fileSize": { "type": "number" },
         "category": { "type": "string", "enum": ["national_id", "driver_license", "passport", "contract", "other"] },
         "uploadedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "userId", "fileName", "fileUrl", "uploadedAt"]
+      "required": ["id", "userId", "fileName", "storagePath", "uploadedAt"]
     }
   },
   "firestore": {
@@ -240,14 +203,6 @@
     "/contracts/{contractId}": {
       "schema": "Contract",
       "description": "Rental contracts generated for bookings"
-    },
-    "/payments/{paymentId}": {
-      "schema": "Payment",
-      "description": "Payments and receipts"
-    },
-    "/maintenanceRecords/{recordId}": {
-      "schema": "MaintenanceRecord",
-      "description": "Vehicle maintenance and oil change logs"
     },
     "/vehicleInspections/{inspectionId}": {
       "schema": "VehicleInspection",

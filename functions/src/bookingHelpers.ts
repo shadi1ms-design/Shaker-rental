@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
+import type { Firestore, DocumentReference, DocumentSnapshot } from 'firebase-admin/firestore';
 
 /**
  * Booking Lifecycle State Machine: Strict allowed transitions.
@@ -6,7 +7,8 @@ import * as admin from 'firebase-admin';
  * Allows cancellation of 'new', 'reviewing', and 'confirmed' states according to rules.
  */
 export const ALLOWED_TRANSITIONS: Record<string, readonly string[]> = {
-  new: ['confirmed', 'rejected', 'cancelled'],
+  new: ['reviewing', 'confirmed', 'rejected', 'cancelled'],
+  pending: ['reviewing', 'confirmed', 'rejected', 'cancelled'], // legacy status
   reviewing: ['confirmed', 'rejected', 'cancelled'],
   confirmed: ['rented', 'cancelled'],
   rented: ['completed'],
@@ -19,9 +21,9 @@ export const ALLOWED_TRANSITIONS: Record<string, readonly string[]> = {
  * Resolves a vehicle document reference directly from Firestore collection 'vehicles'.
  */
 export async function resolveVehicleDocument(
-  db: admin.firestore.Firestore,
+  db: Firestore,
   rawVehicleId: string
-): Promise<{ ref: admin.firestore.DocumentReference; data: any } | null> {
+): Promise<{ ref: DocumentReference; data: any } | null> {
   const cleanId = String(rawVehicleId || '').trim();
   if (!cleanId) return null;
 
@@ -42,10 +44,10 @@ export async function resolveVehicleDocument(
  * Resolves a booking document reference directly from the canonical 'bookings' collection.
  */
 export async function resolveBookingDocument(
-  db: admin.firestore.Firestore,
+  db: Firestore,
   rawIdOrNumber: string,
   secondaryNumber?: string
-): Promise<admin.firestore.DocumentReference | null> {
+): Promise<DocumentReference | null> {
   const cleanId = String(rawIdOrNumber || '').trim();
   if (!cleanId) return null;
 
@@ -85,7 +87,7 @@ export async function resolveBookingDocument(
  * vehicle availability verification, and immutable audit logging.
  */
 export async function applyBookingStatusChange(
-  db: admin.firestore.Firestore,
+  db: Firestore,
   bookingId: string,
   newStatus: string,
   actorLabel: string,
@@ -97,7 +99,7 @@ export async function applyBookingStatusChange(
     telegramName?: string | null;
   }
 ): Promise<{ success: boolean; message: string; bookingId?: string; oldStatus?: string; newStatus?: string }> {
-  const validStatuses = ['new', 'reviewing', 'confirmed', 'rented', 'completed', 'cancelled', 'rejected'];
+  const validStatuses = ['new', 'pending', 'reviewing', 'confirmed', 'rented', 'completed', 'cancelled', 'rejected'];
   if (!validStatuses.includes(newStatus)) {
     return { success: false, message: 'حالة الحجز المطلوبة غير صحيحة.' };
   }
@@ -124,7 +126,7 @@ export async function applyBookingStatusChange(
     };
   }
 
-  let preResolvedVehicleRef: admin.firestore.DocumentReference | null = null;
+  let preResolvedVehicleRef: DocumentReference | null = null;
   if (preBookingData.vehicleId) {
     const vRes = await resolveVehicleDocument(db, String(preBookingData.vehicleId).trim());
     if (vRes) {
@@ -142,7 +144,17 @@ export async function applyBookingStatusChange(
 
       const bData = bookingDoc.data()!;
 
-      let vehicleDoc: admin.firestore.DocumentSnapshot | null = null;
+      // Re-validate the transition against the status read INSIDE the transaction
+      // (prevents races between web UI and Telegram actions).
+      const txStatus = String(bData.status || 'new').toLowerCase().trim();
+      if (!(ALLOWED_TRANSITIONS[txStatus] || []).includes(newStatus)) {
+        return {
+          success: false,
+          message: `تحويل حالة الحجز من "${txStatus}" إلى "${newStatus}" غير مسموح به وفق مسار دورة حياة الحجوزات.`,
+        };
+      }
+
+      let vehicleDoc: DocumentSnapshot | null = null;
       if (preResolvedVehicleRef) {
         vehicleDoc = await transaction.get(preResolvedVehicleRef);
       }
@@ -192,9 +204,11 @@ export async function applyBookingStatusChange(
       // Check if other active bookings exist before releasing vehicle to 'available'
       let shouldFreeVehicle = false;
       if ((newStatus === 'completed' || newStatus === 'cancelled' || newStatus === 'rejected') && targetVehicleId) {
+        // Only another booking that is currently RENTED keeps the vehicle out of 'available';
+        // future 'confirmed' bookings must not pin the vehicle as rented.
         const remainingActiveQuery = db.collection('bookings')
           .where('vehicleId', '==', targetVehicleId)
-          .where('status', 'in', ['confirmed', 'rented']);
+          .where('status', '==', 'rented');
         const remainingSnap = await transaction.get(remainingActiveQuery);
 
         const otherActiveBookings = remainingSnap.docs.filter(
@@ -209,7 +223,7 @@ export async function applyBookingStatusChange(
       if (newStatus === 'rented' && preResolvedVehicleRef && vehicleDoc && vehicleDoc.exists) {
         transaction.update(preResolvedVehicleRef, {
           status: 'rented',
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         });
       }
 
@@ -217,7 +231,7 @@ export async function applyBookingStatusChange(
         if (vehicleDoc.data()?.status === 'rented') {
           transaction.update(preResolvedVehicleRef, {
             status: 'available',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           });
         }
       }
@@ -225,7 +239,7 @@ export async function applyBookingStatusChange(
       // Update ONLY status and updatedAt - financial fields remain strictly immutable here
       transaction.update(targetBookingRef, {
         status: newStatus,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
 
       // Audit log with unified actor schema
@@ -248,7 +262,7 @@ export async function applyBookingStatusChange(
         entityId: targetBookingRef.id,
         details: `تحديث حالة الحجز ${bData.bookingNumber || targetBookingRef.id} من ${bData.status} إلى ${newStatus} بواسطة ${actorLabel}`,
         timestamp: new Date().toISOString(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
 
       return {

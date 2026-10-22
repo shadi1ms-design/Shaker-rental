@@ -1,56 +1,51 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
-import { isCallerStaff } from './authz';
+import { isCallerStaff, assertNotRevoked } from './authz';
 import { resolveBookingDocument } from './bookingHelpers';
 
-const db = getFirestore(admin.app(), DATABASE_ID);
+const db = getFirestore(getApp(), DATABASE_ID);
 
-/**
- * Builds a minimalist, valid PDF 1.4 document buffer.
- */
-function buildMinimalContractPdfBuffer(contractNumber: string, customerName: string, vehicleName: string, totalPrice: number, verificationCode: string): Buffer {
-  const content = `BT /F1 16 Tf 50 750 Td (SHAKER CAR RENTAL - RENTAL CONTRACT) Tj ET ` +
-    `BT /F1 12 Tf 50 710 Td (Contract Number: ${contractNumber}) Tj ET ` +
-    `BT /F1 12 Tf 50 680 Td (Customer: ${customerName}) Tj ET ` +
-    `BT /F1 12 Tf 50 650 Td (Vehicle: ${vehicleName}) Tj ET ` +
-    `BT /F1 12 Tf 50 620 Td (Total Price: $${totalPrice}) Tj ET ` +
-    `BT /F1 10 Tf 50 580 Td (Security Verification Code: ${verificationCode}) Tj ET ` +
-    `BT /F1 10 Tf 50 550 Td (Issued: ${new Date().toISOString()}) Tj ET`;
-
-  const streamLength = Buffer.byteLength(content, 'utf-8');
-
-  const pdf = `%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj
-4 0 obj << /Length ${streamLength} >>
-stream
-${content}
-endstream
-endobj
-5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-xref
-0 6
-0000000000 65535 f 
-0000000009 00000 n 
-0000000056 00000 n 
-0000000111 00000 n 
-0000000244 00000 n 
-0000000300 00000 n 
-trailer << /Size 6 /Root 1 0 R >>
-startxref
-380
-%%EOF`;
-
-  return Buffer.from(pdf, 'utf-8');
+export interface ContractResponsePayload {
+  contractId: string;
+  contractNumber: string;
+  bookingId: string;
+  bookingNumber: string;
+  verificationCode: string;
+  status: 'active' | 'closed' | 'terminated';
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  customerNationalId: string;
+  vehicleId: string;
+  vehicleName: string;
+  pickupDate: string;
+  returnDate: string;
+  pickupTime: string;
+  returnTime: string;
+  rentalDays: number;
+  dailyPrice: number;
+  basePrice: number;
+  insuranceAmount: number;
+  driverFee: number;
+  totalPrice: number;
+  withDriver: boolean;
+  deliveryLocation: string;
+  termsAndConditions: string[];
+  issuedAt: string;
 }
 
 /**
  * Cloud Function: generateRentalContractPdf (region: asia-south1)
- * Enforces dual contract & booking ownership verification and strict HMAC-SHA256 signature.
+ * Enforces:
+ * 1. Dual contract & booking ownership verification (or staff).
+ * 2. Rejection if booking status is NOT confirmed, rented, or completed.
+ * 3. Rejection if booking is marked as deleted (isDeleted === true).
+ * 4. Cryptographic HMAC verification code combining:
+ *    contractNumber:bookingId:customerId:vehicleId:pickupDate:returnDate:totalPrice
+ * 5. Returns signed contract data (JSON) only, allowing client-side RTL rendering and printing without PDF injection vulnerabilities.
  */
 export const generateRentalContractPdf = onCall(
   {
@@ -59,54 +54,61 @@ export const generateRentalContractPdf = onCall(
     secrets: ['CONTRACT_HMAC_SECRET'],
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لعرض أو تحميل العقد.');
+    await assertNotRevoked(request);
+
+    const { bookingId } = request.data || {};
+    if (!bookingId || typeof bookingId !== 'string') {
+      throw new HttpsError('invalid-argument', 'معرف الحجز مطلوب لإصدار العقد.');
     }
 
-    const { contractId, bookingId } = request.data || {};
-    const targetId = contractId || bookingId;
-    if (!targetId || typeof targetId !== 'string') {
-      throw new HttpsError('invalid-argument', 'معرف العقد أو الحجز مطلوب.');
+    const callerUid = request.auth!.uid;
+    const isStaff = isCallerStaff(request.auth!.token);
+
+    const bookingRef = await resolveBookingDocument(db, bookingId.trim());
+    if (!bookingRef) {
+      throw new HttpsError('not-found', 'بيانات الحجز المرتبط بهذا العقد غير موجودة.');
     }
 
-    const callerUid = request.auth.uid;
-    const isStaff = isCallerStaff(request.auth.token);
+    const bookingDoc = await bookingRef.get();
+    if (!bookingDoc.exists) {
+      throw new HttpsError('not-found', 'بيانات الحجز المرتبط بهذا العقد غير موجودة.');
+    }
+
+    const bookingData = bookingDoc.data()!;
+    const resolvedBookingId = bookingDoc.id;
+    const finalContractId = `CTR_${resolvedBookingId}`;
 
     let contractData: any = null;
-    let bookingData: any = null;
-
-    if (contractId) {
-      const contractDoc = await db.collection('contracts').doc(contractId).get();
-      if (contractDoc.exists) {
-        contractData = contractDoc.data();
-      }
+    const contractDoc = await db.collection('contracts').doc(finalContractId).get();
+    if (contractDoc.exists) {
+      contractData = contractDoc.data();
     }
 
-    const resolvedBookingId = bookingId || contractData?.bookingId || targetId;
-    if (resolvedBookingId) {
-      const bookingRef = await resolveBookingDocument(db, resolvedBookingId);
-      if (bookingRef) {
-        const bookingDoc = await bookingRef.get();
-        if (bookingDoc.exists) {
-          bookingData = bookingDoc.data();
-        }
-      }
+    // 1. Rejection of deleted bookings
+    if (bookingData.isDeleted === true) {
+      throw new HttpsError('failed-precondition', 'لا يمكن إصدار أو عرض عقد لحجز محذوف من النظام.');
     }
 
-    // Verify dual ownership: if non-staff, MUST own contract AND booking together
+    // 2. Rejection of unconfirmed/cancelled/rejected bookings
+    const allowedStatuses = ['confirmed', 'rented', 'completed'];
+    if (!allowedStatuses.includes(bookingData.status)) {
+      throw new HttpsError(
+        'failed-precondition',
+        'لا يمكن إصدار وثيقة العقد إلا للحجوزات المؤكدة أو الجارية أو المكتملة.'
+      );
+    }
+
+    // 3. Verify ownership: if non-staff, caller MUST be the customer of this booking
     if (!isStaff) {
-      if (contractData && contractData.customerId !== callerUid) {
-        throw new HttpsError('permission-denied', 'غير مصرح لك بالوصول إلى بيانات هذا العقد (Contract Ownership Mismatch).');
+      if (bookingData.customerId !== callerUid) {
+        throw new HttpsError('permission-denied', 'غير مصرح لك بالوصول إلى بيانات عقد هذا الحجز.');
       }
-      if (bookingData && bookingData.customerId !== callerUid) {
-        throw new HttpsError('permission-denied', 'غير مصرح لك بالوصول إلى بيانات حجز هذا العقد (Booking Ownership Mismatch).');
-      }
-      if (!contractData && !bookingData) {
-        throw new HttpsError('not-found', 'بيانات العقد أو الحجز غير موجودة.');
+      if (contractData && contractData.customerId && contractData.customerId !== callerUid) {
+        throw new HttpsError('permission-denied', 'غير مصرح لك بالوصول إلى هذا العقد.');
       }
     }
 
-    // HMAC secret validation - MUST come from CONTRACT_HMAC_SECRET without fallbacks
+    // 4. HMAC secret validation
     const hmacSecret = process.env.CONTRACT_HMAC_SECRET;
     if (!hmacSecret || !hmacSecret.trim()) {
       throw new HttpsError(
@@ -115,39 +117,211 @@ export const generateRentalContractPdf = onCall(
       );
     }
 
-    const contractNumber = contractData?.contractNumber || `SHK-CTR-${targetId.slice(-6).toUpperCase()}`;
-    const customerName = bookingData?.customerName || contractData?.customerName || 'المستأجر';
-    const vehicleName = bookingData?.vehicleName || contractData?.vehicleName || 'المركبة';
-    const totalPrice = Number(bookingData?.totalPrice || contractData?.totalAmount || 0);
+    const contractNumber =
+      contractData?.contractNumber || `SHK-CTR-${resolvedBookingId.slice(-6).toUpperCase()}`;
+    const customerId = bookingData.customerId || callerUid;
+    const customerName = String(bookingData.customerName || 'المستأجر').trim();
+    const vehicleId = String(bookingData.vehicleId || '').trim();
+    const vehicleName = String(bookingData.vehicleName || 'المركبة').trim();
+    const pickupDate = String(bookingData.pickupDate || '').trim();
+    const returnDate = String(bookingData.returnDate || '').trim();
+    const totalPrice = Number(bookingData.totalPrice || 0);
 
-    // Cryptographic HMAC-SHA256 verification code
+    // 5. Cryptographic HMAC calculation incorporating all critical contract terms
+    const hmacPayload = `${contractNumber}:${resolvedBookingId}:${customerId}:${vehicleId}:${pickupDate}:${returnDate}:${totalPrice}`;
     const hmac = crypto.createHmac('sha256', hmacSecret.trim());
-    hmac.update(`${targetId}:${contractNumber}:${bookingData?.customerId || contractData?.customerId || callerUid}`);
+    hmac.update(hmacPayload);
     const verificationCode = hmac.digest('hex').slice(0, 24).toUpperCase();
 
-    // Generate genuine PDF document buffer
-    const pdfBuffer = buildMinimalContractPdfBuffer(
+    // Fetch official terms from settings if available
+    let officialTerms = [
+      'يلتزم المستأجر بالمحافظة على السيارة واستخدامها وفق القوانين والأنظمة المرورية السورية.',
+      'تعتبر السيارة أمانة لدى المستأجر ولا يحق له تأجيرها للغير أو قيادتها من غير المفوضين بالعقد.',
+      'إرجاع السيارة في الموعد والمكان المحددين وبنفس الحالة الفنية التي تم استلامها عليها.',
+      'المستأجر مسؤول عن أي مخالفات مرورية أو أضرار ناجمة عن سوء الاستخدام خلال فترة الإيجار.',
+    ];
+
+    try {
+      const settingsSnap = await db.collection('settings').doc('global').get();
+      if (settingsSnap.exists && settingsSnap.data()?.rentalTerms) {
+        const termsStr = String(settingsSnap.data()?.rentalTerms).trim();
+        const splitLines = termsStr
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+        if (splitLines.length > 0) {
+          officialTerms = splitLines;
+        }
+      }
+    } catch {
+      // Fallback to default terms
+    }
+
+    // Contract status follows the booking lifecycle and is never reset to 'active' on re-view.
+    const contractStatus: 'active' | 'closed' | 'terminated' =
+      bookingData.status === 'completed' ? 'closed' : 'active';
+
+    const contractPayload: ContractResponsePayload = {
+      contractId: finalContractId,
       contractNumber,
+      bookingId: resolvedBookingId,
+      bookingNumber: bookingData.bookingNumber || resolvedBookingId,
+      verificationCode,
+      status: contractStatus,
+      customerId,
       customerName,
+      customerPhone: bookingData.customerPhone || '',
+      customerNationalId: bookingData.customerNationalId || '',
+      vehicleId,
       vehicleName,
+      pickupDate,
+      returnDate,
+      pickupTime: bookingData.pickupTime || '',
+      returnTime: bookingData.returnTime || '',
+      rentalDays: Number(bookingData.rentalDays || 1),
+      dailyPrice: Number(bookingData.dailyPrice || 0),
+      basePrice: Number(bookingData.basePrice || 0),
+      insuranceAmount: Number(bookingData.insuranceAmount || 0),
+      driverFee: Number(bookingData.driverFee || 0),
       totalPrice,
-      verificationCode
-    );
+      withDriver: Boolean(bookingData.withDriver),
+      deliveryLocation: bookingData.deliveryLocation || 'مقر شركة شاكر لتأجير السيارات - دمشق',
+      termsAndConditions: officialTerms,
+      issuedAt: contractData?.issuedAt || new Date().toISOString(),
+    };
+
+    // Persist contract record in Firestore /contracts/{contractId}
+    try {
+      await db.collection('contracts').doc(finalContractId).set(
+        {
+          id: finalContractId,
+          contractNumber,
+          bookingId: resolvedBookingId,
+          bookingNumber: contractPayload.bookingNumber,
+          customerId,
+          customerName,
+          vehicleId,
+          vehicleName,
+          pickupDate,
+          returnDate,
+          totalPrice,
+          verificationCode,
+          status: contractData?.status === 'terminated' ? 'terminated' : contractStatus,
+          issuedAt: contractPayload.issuedAt,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (saveErr) {
+      console.warn('[generateRentalContractPdf] Contract Firestore sync note:', saveErr);
+    }
 
     return {
       success: true,
-      contractId: contractId || targetId,
-      bookingId: resolvedBookingId,
-      contractNumber,
+      contract: contractPayload,
       verificationCode,
-      status: 'generated',
-      customerName,
-      vehicleName,
-      totalPrice,
-      generatedAt: new Date().toISOString(),
-      pdfBase64: pdfBuffer.toString('base64'),
-      contentType: 'application/pdf',
-      message: 'تم التحقق من ملكية العقد والحجز معاً وتوليد وثيقة العقد الرقمية الموقعة بنجاح.',
+      contractNumber,
+      message: 'تم التحقق من الحجز وتوليد بيانات العقد الموقعة رقمياً بنجاح.',
+    };
+  }
+);
+
+/**
+ * Cloud Function: verifyContractCode (region: asia-south1)
+ * Enforces App Check and checks verification code authenticity.
+ * Returns boolean isValid and public non-personal contract verification info only.
+ */
+export const verifyContractCode = onCall(
+  {
+    region: FUNCTION_REGION,
+    enforceAppCheck: true,
+    secrets: ['CONTRACT_HMAC_SECRET'],
+  },
+  async (request) => {
+    const { contractNumber, verificationCode } = request.data || {};
+
+    if (!contractNumber || typeof contractNumber !== 'string' || !contractNumber.trim()) {
+      throw new HttpsError('invalid-argument', 'رقم العقد مطلوب للتحقق.');
+    }
+    if (!verificationCode || typeof verificationCode !== 'string' || !verificationCode.trim()) {
+      throw new HttpsError('invalid-argument', 'رمز التحقق الرقمي مطلوب.');
+    }
+
+    const cleanContractNumber = contractNumber.trim();
+    const cleanCode = verificationCode.trim().toUpperCase();
+
+    // HMAC secret validation
+    const hmacSecret = process.env.CONTRACT_HMAC_SECRET;
+    if (!hmacSecret || !hmacSecret.trim()) {
+      throw new HttpsError(
+        'failed-precondition',
+        'خادم التحقق غير مهيأ بالمفتاح الأمني للعقود.'
+      );
+    }
+
+    // Query contract from Firestore
+    const contractsQuery = await db
+      .collection('contracts')
+      .where('contractNumber', '==', cleanContractNumber)
+      .limit(1)
+      .get();
+
+    if (contractsQuery.empty) {
+      return {
+        isValid: false,
+        message: 'رقم العقد غير مسجل في منظومة شركة شاكر لتأجير السيارات.',
+      };
+    }
+
+    const contractDoc = contractsQuery.docs[0];
+    const contractData = contractDoc.data();
+
+    // Verify booking
+    let bookingData: any = null;
+    if (contractData.bookingId) {
+      const bRef = await resolveBookingDocument(db, contractData.bookingId);
+      if (bRef) {
+        const bDoc = await bRef.get();
+        if (bDoc.exists) {
+          bookingData = bDoc.data();
+        }
+      }
+    }
+
+    const bookingId = contractData.bookingId || '';
+    const customerId = contractData.customerId || bookingData?.customerId || '';
+    const vehicleId = contractData.vehicleId || bookingData?.vehicleId || '';
+    const pickupDate = contractData.pickupDate || bookingData?.pickupDate || '';
+    const returnDate = contractData.returnDate || bookingData?.returnDate || '';
+    const totalPrice = Number(contractData.totalPrice || bookingData?.totalPrice || 0);
+
+    const hmacPayload = `${cleanContractNumber}:${bookingId}:${customerId}:${vehicleId}:${pickupDate}:${returnDate}:${totalPrice}`;
+    const hmac = crypto.createHmac('sha256', hmacSecret.trim());
+    hmac.update(hmacPayload);
+    const expectedCode = hmac.digest('hex').slice(0, 24).toUpperCase();
+
+    const expectedBuf = Buffer.from(expectedCode);
+    const givenBuf = Buffer.from(cleanCode);
+    const isMatch = expectedBuf.length === givenBuf.length && crypto.timingSafeEqual(expectedBuf, givenBuf);
+
+    if (!isMatch) {
+      return {
+        isValid: false,
+        contractNumber: cleanContractNumber,
+        message: 'رمز التحقق الرقمي غير مطابق لبيانات هذا العقد. قد تكون الوثيقة معدلة أو غير صالحة.',
+      };
+    }
+
+    return {
+      isValid: true,
+      contractNumber: cleanContractNumber,
+      bookingNumber: contractData.bookingNumber || bookingId,
+      vehicleName: contractData.vehicleName || bookingData?.vehicleName || 'مركبة مسجلة',
+      pickupDate,
+      returnDate,
+      status: contractData.status || 'active',
+      issuedAt: contractData.issuedAt || '',
+      message: 'وثيقة العقد أصلية ومعتمدة ومطابقة لسجلات شركة شاكر لتأجير السيارات.',
     };
   }
 );

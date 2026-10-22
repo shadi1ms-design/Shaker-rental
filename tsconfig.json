@@ -24,6 +24,7 @@
       "vite/client"
     ],
     "allowImportingTsExtensions": true,
+    "strict": true,
     "noEmit": true
   },
   "include": [

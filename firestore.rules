@@ -62,7 +62,12 @@ service cloud.firestore {
     // Users collection: users/{userId}
     match /users/{userId} {
       allow read: if isEmployee() || (isSignedIn() && request.auth.uid == userId);
-      allow create: if isSignedIn() && request.auth.uid == userId && (
+      allow create: if isSignedIn() && request.auth.uid == userId &&
+        request.resource.data.keys().hasOnly([
+          'id', 'uid', 'email', 'displayName', 'name', 'phone', 'role', 'photoURL',
+          'createdAt', 'updatedAt', 'active', 'verificationStatus', 'verified',
+          'identityVerified', 'fcmTokens', 'fcmLastUpdated', 'uploadedFilesCount'
+        ]) && (
         (!('role' in request.resource.data) || request.resource.data.role in ['customer', 'user']) &&
         (!('verificationStatus' in request.resource.data) || request.resource.data.verificationStatus in ['pending', 'manual_review', 'unverified']) &&
         (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
@@ -87,16 +92,18 @@ service cloud.firestore {
       // Subcollection for user files (/users/{userId}/files/{fileId})
       match /files/{fileId} {
         allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
-        allow create: if isAdmin() || (
+        allow create: if (isAdmin() || (
           isEmailVerified() && request.auth.uid == userId &&
           (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
           (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
-        );
-        allow update: if isAdmin() || (
+        )) && request.resource.data.keys().hasOnly([
+          'id', 'userId', 'userEmail', 'fileName', 'storagePath', 'fileType',
+          'fileSize', 'category', 'status', 'verified', 'uploadedAt', 'createdAt', 'updatedAt'
+        ]);
+        allow update: if (isAdmin() || (
           isSignedIn() && request.auth.uid == userId &&
-          (!('verified' in request.resource.data) || request.resource.data.verified == resource.data.get('verified', false)) &&
           (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending') || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
-        );
+        )) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storagePath', 'userId', 'verified']);
         allow delete: if isAdmin() || (
           isSignedIn() && request.auth.uid == userId &&
           resource.data.get('verified', false) != true &&
@@ -108,18 +115,20 @@ service cloud.firestore {
     // Top-level files index: /files/{fileId}
     match /files/{fileId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isAdmin() || (
+      allow create: if (isAdmin() || (
         isEmailVerified() && request.resource.data.userId == request.auth.uid &&
         (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
         (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
-      );
-      allow update: if isAdmin() || (
+      )) && request.resource.data.keys().hasOnly([
+        'id', 'userId', 'userEmail', 'fileName', 'storagePath', 'fileType',
+        'fileSize', 'category', 'status', 'verified', 'uploadedAt', 'createdAt', 'updatedAt'
+      ]);
+      allow update: if (isAdmin() || (
         isSignedIn() && 
         resource.data.userId == request.auth.uid && 
         request.resource.data.userId == request.auth.uid &&
-        (!('verified' in request.resource.data) || request.resource.data.verified == resource.data.get('verified', false)) &&
         (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending') || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
-      );
+      )) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storagePath', 'userId', 'verified']);
       allow delete: if isAdmin() || (
         isSignedIn() && resource.data.userId == request.auth.uid &&
         resource.data.get('verified', false) != true &&
@@ -127,18 +136,18 @@ service cloud.firestore {
       );
     }
 
-    // Settings collection
+    // Settings collection - Client writes completely blocked (Admin Cloud Functions / SDK only)
     match /settings/{settingsId} {
       allow read: if settingsId in ['company', 'global', 'rates'];
-      allow write: if isAdmin();
+      allow write: if false;
     }
 
     // Fleet Vehicles collection
-    // Public vehicles document CANNOT include plateNumber, currentMileage, lastOilChangeMileage (which belong strictly to internal/details)
+    // Public vehicles document CANNOT include plateNumber, currentMileage (which belong strictly to internal/details)
     match /vehicles/{vehicleId} {
       allow read: if true;
       allow create, update: if isAdmin() &&
-        !request.resource.data.keys().hasAny(['plateNumber', 'currentMileage', 'lastOilChangeMileage']);
+        !request.resource.data.keys().hasAny(['plateNumber', 'currentMileage']);
       allow delete: if isAdmin();
 
       match /_internal/{docId} {
@@ -151,15 +160,16 @@ service cloud.firestore {
     }
 
     // Bookings collection:
-    // Employee updates restricted to operational fields (status, notes, pickup/return dates, deliveryLocation, updatedAt).
-    // Prices, totals, paidAmount, paymentStatus, and deletions are strictly managed via Cloud Functions / Admin SDK.
+    // Direct client creation blocked (enforced via createBookingSecure).
+    // Employee updates restricted strictly to notes, deliveryLocation, and updatedAt.
+    // Status changes are executed exclusively via updateBookingStatusSecure.
     match /bookings/{bookingId} {
       allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow create: if isEmployee();
+      allow create: if false;
       allow update: if (
         isEmployee() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'notes', 'pickupDate', 'returnDate', 'pickupTime', 'returnTime', 'deliveryLocation', 'updatedAt'
+          'notes', 'deliveryLocation', 'updatedAt'
         ])
       ) || (
         isSignedIn() && 
@@ -179,7 +189,7 @@ service cloud.firestore {
     // Customers CRM collection
     match /customers/{customerId} {
       allow read: if isEmployee() || (isSignedIn() && request.auth.uid == customerId);
-      allow create: if isEmployee() || (
+      allow create: if (isEmployee() || (
         isSignedIn() && 
         request.auth.uid == customerId && 
         request.resource.data.id == customerId &&
@@ -192,7 +202,12 @@ service cloud.firestore {
         (!('verifiedBy' in request.resource.data)) &&
         (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted == false) &&
         (!('isBlacklisted' in request.resource.data) || request.resource.data.isBlacklisted == false)
-      );
+      )) && request.resource.data.keys().hasOnly([
+        'id', 'uid', 'name', 'fullName', 'email', 'phone', 'nationalId',
+        'licenseNumber', 'address', 'city', 'role', 'totalSpending',
+        'totalRentals', 'verificationStatus', 'verified', 'isDeleted',
+        'isBlacklisted', 'createdAt', 'updatedAt', 'notes', 'tags', 'lastRentalDate'
+      ]);
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
@@ -201,16 +216,6 @@ service cloud.firestore {
     match /contracts/{contractId} {
       allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
       allow write: if isAdmin();
-    }
-
-    // Payments collection - creation & updates strictly managed via recordPaymentSecure Cloud Function
-    match /payments/{paymentId} {
-      allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow write: if isAdmin();
-    }
-
-    match /maintenanceRecords/{recordId} {
-      allow read, write: if isAdmin();
     }
 
     match /vehicleInspections/{inspectionId} {

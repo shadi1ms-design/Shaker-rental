@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Vehicle, VehicleCategory, SearchFilters } from '../types';
 import { VEHICLE_CATEGORY_LABELS } from '../constants/vehicleCategories';
+import { todayLocalISO } from '../utils/dateUtils';
 
 interface HeroSectionProps {
   vehicles?: Vehicle[];
@@ -26,6 +27,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
   const [pickupDate, setPickupDate] = useState('');
   const [returnDate, setReturnDate] = useState('');
   const [category, setCategory] = useState<VehicleCategory | 'all'>('all');
+  const todayDamascus = todayLocalISO();
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,6 +51,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
   return (
     <section className="relative overflow-hidden pt-8 pb-16 lg:pt-14 lg:pb-20 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
       {/* Background visual image layer (Skyline/Automotive) with subtle opacity */}
+      {/* TODO: استضافة صورة الهيرو محلياً بصيغة WebP لتحسين الأداء وسرعة التحميل */}
       <div
         className="absolute inset-0 bg-cover bg-center pointer-events-none opacity-10 mix-blend-luminosity"
         style={{
@@ -91,40 +94,61 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
           >
             <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-3.5 items-end">
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                <label htmlFor="hero-pickup-date" className="text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-amber-400" />
                   <span>تاريخ الاستلام</span>
                 </label>
-                <input
-                  type="date"
-                  value={pickupDate}
-                  onChange={(e) => setPickupDate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-amber-500 transition-colors"
-                />
+                <div className="relative">
+                  <input
+                    id="hero-pickup-date"
+                    type="date"
+                    min={todayDamascus}
+                    value={pickupDate}
+                    onChange={(e) => setPickupDate(e.target.value)}
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 hover:border-slate-600 text-white font-medium text-sm focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors [color-scheme:dark]"
+                  />
+                  {!pickupDate && (
+                    <div className="absolute inset-y-0 right-3.5 pointer-events-none flex items-center gap-1.5 text-slate-400 text-xs sm:text-sm">
+                      <Calendar className="w-3.5 h-3.5 text-amber-400/70" />
+                      <span>اختر التاريخ</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                <label htmlFor="hero-return-date" className="text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-amber-400" />
                   <span>تاريخ الإرجاع</span>
                 </label>
-                <input
-                  type="date"
-                  value={returnDate}
-                  onChange={(e) => setReturnDate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-amber-500 transition-colors"
-                />
+                <div className="relative">
+                  <input
+                    id="hero-return-date"
+                    type="date"
+                    min={pickupDate || todayDamascus}
+                    value={returnDate}
+                    onChange={(e) => setReturnDate(e.target.value)}
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 hover:border-slate-600 text-white font-medium text-sm focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors [color-scheme:dark]"
+                  />
+                  {!returnDate && (
+                    <div className="absolute inset-y-0 right-3.5 pointer-events-none flex items-center gap-1.5 text-slate-400 text-xs sm:text-sm">
+                      <Calendar className="w-3.5 h-3.5 text-amber-400/70" />
+                      <span>اختر التاريخ</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                <label htmlFor="hero-category" className="text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
                   <Car className="w-3.5 h-3.5 text-amber-400" />
                   <span>فئة السيارة</span>
                 </label>
                 <select
+                  id="hero-category"
                   value={category}
                   onChange={(e) => setCategory(e.target.value as VehicleCategory | 'all')}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-amber-500 transition-colors"
+                  className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors"
                 >
                   <option value="all">جميع فئات الأسطول</option>
                   <option value="light">{VEHICLE_CATEGORY_LABELS.light}</option>
@@ -136,7 +160,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
               <div className="sm:col-span-3 lg:col-span-1">
                 <button
                   type="submit"
-                  className="w-full py-2.5 sm:py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                  className="w-full min-h-[44px] py-2.5 sm:py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 >
                   <Search className="w-4 h-4 text-slate-950" />
                   <span>بحث عن سيارة</span>
@@ -152,7 +176,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
             <button
               type="button"
               onClick={() => handleQuickCategory('light')}
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/40 text-slate-200 hover:text-emerald-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/40 text-slate-200 hover:text-emerald-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             >
               <Fuel className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
               <span>اقتصادي أقل من 35$</span>
@@ -161,7 +185,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
             <button
               type="button"
               onClick={() => handleQuickCategory('medium')}
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             >
               <Sparkles className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
               <span>سيدان متوسط فاخر</span>
@@ -170,7 +194,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
             <button
               type="button"
               onClick={() => handleQuickCategory('jeep_7seats')}
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-blue-500/40 text-slate-200 hover:text-blue-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-blue-500/40 text-slate-200 hover:text-blue-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             >
               <Users className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
               <span>جيب 7 مقاعد</span>
@@ -179,7 +203,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
             <button
               type="button"
               onClick={() => handleQuickCategory('all')}
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-rose-500/40 text-slate-200 hover:text-rose-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-rose-500/40 text-slate-200 hover:text-rose-300 text-xs font-semibold transition-all cursor-pointer shadow-sm group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             >
               <Tag className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
               <span>خصومات أسبوعية وشهرية</span>

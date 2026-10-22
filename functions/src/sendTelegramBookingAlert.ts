@@ -9,13 +9,14 @@
  * - HTML parse mode & escaping
  */
 
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
 import { isCallerStaff } from './authz';
 
-const db = getFirestore(admin.app(), DATABASE_ID);
+const db = getFirestore(getApp(), DATABASE_ID);
 
 function escapeHtml(text: unknown): string {
   if (text === null || text === undefined) return '';
@@ -69,7 +70,7 @@ export const sendTelegramBookingAlert = onDocumentCreated(
       const customerId = bookingData.customerId;
       if (customerId) {
         try {
-          const userRecord = await admin.auth().getUser(customerId).catch(() => null);
+          const userRecord = await getAuth().getUser(customerId).catch(() => null);
           if (userRecord && isCallerStaff(userRecord.customClaims)) {
             // Skip alerting for staff internal tests/bookings
             return;
@@ -108,11 +109,6 @@ export const sendTelegramBookingAlert = onDocumentCreated(
       const totalPrice = bookingData.totalPrice !== undefined ? `${bookingData.totalPrice}` : '0';
       const status = bookingData.status || 'new';
 
-      // 3. Mark alert as sent immediately for strict idempotency
-      await bookingRef.update({
-        telegramAlertSentAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
       const chatId = process.env.TELEGRAM_CHAT_ID;
 
@@ -144,27 +140,40 @@ export const sendTelegramBookingAlert = onDocumentCreated(
       const messageText = messageLines.join('\n');
       const telegramEndpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
 
-      const response = await fetch(telegramEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: messageText,
-          parse_mode: 'HTML',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ تأكيد', callback_data: `bk_confirm_${bookingId}` },
-                { text: '❌ رفض', callback_data: `bk_reject_${bookingId}` },
-              ],
-            ],
-          },
-        }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      if (!response.ok) {
-        const errorBody = await response.text().catch(() => '');
-        console.error('[sendTelegramBookingAlert] Telegram API error:', response.status, errorBody);
+      try {
+        const response = await fetch(telegramEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: messageText,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '✅ تأكيد', callback_data: `bk_confirm_${bookingId}` },
+                  { text: '❌ رفض', callback_data: `bk_reject_${bookingId}` },
+                ],
+              ],
+            },
+          }),
+        });
+
+        if (response.ok) {
+          // Set telegramAlertSentAt strictly after successful delivery
+          await bookingRef.update({
+            telegramAlertSentAt: FieldValue.serverTimestamp(),
+          });
+        } else {
+          const errorBody = await response.text().catch(() => '');
+          console.error('[sendTelegramBookingAlert] Telegram API error:', response.status, errorBody);
+        }
+      } finally {
+        clearTimeout(timeoutId);
       }
     } catch (err: any) {
       console.error('[sendTelegramBookingAlert] Error sending Telegram alert:', err);

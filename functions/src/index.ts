@@ -11,17 +11,18 @@
  * - Asynchronous Storage Media Signature Validation
  */
 
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps } from 'firebase-admin/app';
 
 // Initialize Firebase Admin globally once
-if (!admin.apps.length) {
-  admin.initializeApp();
+if (!getApps().length) {
+  initializeApp();
 }
 
 // 1. Booking Functions
 export {
   createBookingSecure,
   updateBookingStatusSecure,
+  deleteBookingSecure,
   sendBookingNotification,
   getVehicleAvailability,
 } from './bookingFunctions';
@@ -29,6 +30,7 @@ export {
 // 2. Contract Functions
 export {
   generateRentalContractPdf,
+  verifyContractCode,
 } from './contractFunctions';
 
 // 3. Settings & Pricing Functions
@@ -37,15 +39,9 @@ export {
   updateSettingsSecure,
 } from './settingsFunctions';
 
-// 4. Financial & Payment Functions
+// 4. Overdue Rental Alerts Function
 export {
-  recordPaymentSecure,
-} from './paymentFunctions';
-
-// 5. Fleet & Scheduled Maintenance Functions
-export {
-  syncFleetMaintenance,
-  checkMaintenanceAndRentals,
+  checkOverdueRentals,
 } from './fleetFunctions';
 
 // 6. User Management & Authorization Functions

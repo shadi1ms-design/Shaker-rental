@@ -2,27 +2,20 @@ import {
   Vehicle,
   Booking,
   Customer,
-  Payment,
-  MaintenanceRecord,
   VehicleInspection,
   AppSettings,
   BookingStatus,
-  VehicleStatus,
   AuditLog,
   AppNotification,
   FirestoreUser,
   UploadedFile
 } from '../types';
-import {
-  INITIAL_VEHICLES,
-  INITIAL_CUSTOMERS,
-  INITIAL_BOOKINGS,
-  INITIAL_MAINTENANCE_RECORDS,
-  INITIAL_FIRESTORE_USERS,
-  INITIAL_UPLOADED_FILES
-} from '../data/seedData';
+import * as seedData from '../data/seedData';
+
+const INITIAL_VEHICLES = import.meta.env.DEV ? seedData.INITIAL_VEHICLES : [];
+const INITIAL_UPLOADED_FILES = import.meta.env.DEV ? seedData.INITIAL_UPLOADED_FILES : {};
 import { DEFAULT_SETTINGS, calculateRentalDays, calculateRentalPrice } from './pricing';
-import { auth, db, functions, isFirebaseConfigured, firestoreDatabaseId } from '../firebase/config';
+import { auth, db, functions, isFirebaseConfigured, firestoreDatabaseId, getDb as getFirebaseDb } from '../firebase/config';
 import { httpsCallable } from 'firebase/functions';
 import {
   collection,
@@ -38,17 +31,20 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { storageService } from './storageService';
+import { functionsService } from './functionsService';
 import { handleFirestoreError } from '../utils/firebaseErrorHandler';
 import { todayLocalISO } from '../utils/dateUtils';
+import { Firestore } from 'firebase/firestore';
 
+const getDb = (): Firestore => {
+  return getFirebaseDb();
+};
 // Storage keys for local persistence (STRICTLY NON-SENSITIVE / PUBLIC DATA ONLY)
 export const STORAGE_KEYS = {
   // Public Fleet Data (Safe for fast initial rendering & offline catalog browsing)
   VEHICLES: 'shaker_vehicles_v1',
   // Public Business Configuration (Company name, public phone, insurance rates)
   SETTINGS: 'shaker_settings_v1',
-  // Internal Operational Telemetry (Vehicle maintenance & oil change logs - no customer PII)
-  MAINTENANCE: 'shaker_maintenance_v1',
   // Vehicle condition checklists (fuel level, odometer, vehicle exterior/interior condition)
   INSPECTIONS: 'shaker_inspections_v1',
   // Non-sensitive Operational UI Notifications
@@ -61,7 +57,6 @@ export const STORAGE_KEYS = {
 const PERMITTED_STORAGE_KEYS = new Set<string>([
   STORAGE_KEYS.VEHICLES,
   STORAGE_KEYS.SETTINGS,
-  STORAGE_KEYS.MAINTENANCE,
   STORAGE_KEYS.INSPECTIONS,
   STORAGE_KEYS.NOTIFICATIONS,
   STORAGE_KEYS.BOOKING_COUNTER,
@@ -123,7 +118,6 @@ export function purgeSensitiveStorage(): void {
       'shaker_customers_v1',
       'shaker_uploaded_files_v1',
       'shaker_firestore_users_v1',
-      'shaker_payments_v1',
       'shaker_bookings_v1',
       'shaker_audit_v1',
       'shaker_auth_session_v1',
@@ -157,7 +151,6 @@ export function purgeSensitiveStorage(): void {
     // 4. Reset sensitive volatile in-memory collections
     memoryCache.bookings = null;
     memoryCache.customers = null;
-    memoryCache.payments = null;
     memoryCache.users = null;
     memoryCache.auditLogs = null;
   } catch (e) {
@@ -189,8 +182,6 @@ interface MemoryCache {
   settings: { data: AppSettings; timestamp: number } | null;
   users: { data: FirestoreUser[]; timestamp: number } | null;
   customers: { data: Customer[]; timestamp: number } | null;
-  payments: { data: Payment[]; timestamp: number } | null;
-  maintenance: { data: MaintenanceRecord[]; timestamp: number } | null;
   notifications?: { data: AppNotification[]; timestamp: number } | null;
   auditLogs?: { data: AuditLog[]; timestamp: number } | null;
 }
@@ -201,8 +192,6 @@ const memoryCache: MemoryCache = {
   settings: null,
   users: null,
   customers: null,
-  payments: null,
-  maintenance: null,
   notifications: null,
   auditLogs: null,
 };
@@ -215,9 +204,6 @@ function initStorage() {
 
   if (!localStorage.getItem(STORAGE_KEYS.VEHICLES)) {
     setLocalItem(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
-  }
-  if (!localStorage.getItem(STORAGE_KEYS.MAINTENANCE)) {
-    setLocalItem(STORAGE_KEYS.MAINTENANCE, INITIAL_MAINTENANCE_RECORDS);
   }
   if (!localStorage.getItem(STORAGE_KEYS.SETTINGS)) {
     setLocalItem(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
@@ -320,16 +306,6 @@ export const dataService = {
     return memoryCache.customers?.data || [];
   },
 
-  getCachedPayments(): Payment[] {
-    return memoryCache.payments?.data || [];
-  },
-
-  getCachedMaintenanceRecords(): MaintenanceRecord[] {
-    if (memoryCache.maintenance?.data) return memoryCache.maintenance.data;
-    const local = getLocalItem<MaintenanceRecord[]>(STORAGE_KEYS.MAINTENANCE, INITIAL_MAINTENANCE_RECORDS);
-    memoryCache.maintenance = { data: local, timestamp: Date.now() };
-    return local;
-  },
 
   getCachedUsers(): FirestoreUser[] {
     return memoryCache.users?.data || [];
@@ -338,27 +314,12 @@ export const dataService = {
   clearSensitiveMemoryCache(): void {
     memoryCache.bookings = null;
     memoryCache.customers = null;
-    memoryCache.payments = null;
     memoryCache.users = null;
     memoryCache.notifications = null;
   },
 
   purgeSensitiveStorage(): void {
     purgeSensitiveStorage();
-  },
-
-  calculateVehiclesNeedingOil(
-    vehicles: Vehicle[],
-    intervalKm = 5000
-  ): Array<{ vehicle: Vehicle; kmSinceOil: number; isUrgent: boolean; needsAttention: boolean }> {
-    return vehicles
-      .map((v) => {
-        const kmSinceOil = (v.currentMileage || 0) - (v.lastOilChangeMileage || 0);
-        const isUrgent = kmSinceOil >= intervalKm;
-        const needsAttention = kmSinceOil >= intervalKm - 500;
-        return { vehicle: v, kmSinceOil, isUrgent, needsAttention };
-      })
-      .filter((item) => item.needsAttention);
   },
 
   // -------------------------------------------------------------
@@ -371,18 +332,7 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        // Standard path: settings/company
-        const companyRef = doc(db, 'settings', 'company');
-        const companySnap = await safeFirestore(getDoc(companyRef), 2000);
-        if (companySnap.exists()) {
-          const data = companySnap.data() as AppSettings;
-          setLocalItem(STORAGE_KEYS.SETTINGS, data);
-          memoryCache.settings = { data, timestamp: Date.now() };
-          return data;
-        }
-
-        // Fallback check for legacy settings/global
-        const globalRef = doc(db, 'settings', 'global');
+        const globalRef = doc(getDb(), 'settings', 'global');
         const globalSnap = await safeFirestore(getDoc(globalRef), 2000);
         if (globalSnap.exists()) {
           const data = globalSnap.data() as AppSettings;
@@ -392,7 +342,7 @@ export const dataService = {
         }
       } catch (err: any) {
         if (err?.code !== 'unavailable') {
-          handleFirestoreError('settings', 'company', 'read', err, auth?.currentUser?.uid);
+          handleFirestoreError('settings', 'global', 'read', err, auth?.currentUser?.uid);
         }
       }
     }
@@ -409,39 +359,22 @@ export const dataService = {
       updatedAt: new Date().toISOString(),
     };
 
-    if (isFirebaseConfigured && db) {
-      try {
-        // Write to primary path settings/company
-        await safeFirestore(setDoc(doc(db, 'settings', 'company'), updated, { merge: true }), 2500);
-        // Synchronize legacy path settings/global
-        safeFirestore(setDoc(doc(db, 'settings', 'global'), updated, { merge: true }), 2000).catch(() => {});
-      } catch (err: any) {
-        handleFirestoreError('settings', 'company', 'write', err, auth?.currentUser?.uid);
-      }
-    }
-
     setLocalItem(STORAGE_KEYS.SETTINGS, updated);
-    this.logAudit('تحديث إعدادات الشركة والنظام والأسعار', 'settings', 'company');
+    memoryCache.settings = { data: updated, timestamp: Date.now() };
+    this.logAudit('تحديث إعدادات الشركة والنظام والأسعار', 'settings', 'global');
     return updated;
   },
 
   async ensureDefaultSettings(): Promise<void> {
     if (isFirebaseConfigured && db) {
       try {
-        const companyRef = doc(db, 'settings', 'company');
-        const snap = await safeFirestore(getDoc(companyRef), 2000);
+        const globalRef = doc(getDb(), 'settings', 'global');
+        const snap = await safeFirestore(getDoc(globalRef), 2000);
         if (!snap.exists()) {
-          const currentUser = auth?.currentUser;
-          if (currentUser) {
-            try {
-              await safeFirestore(setDoc(companyRef, DEFAULT_SETTINGS, { merge: true }), 2000);
-            } catch {
-              // Restricted to administrators by Firestore rules
-            }
-          }
+          // Document settings/global is managed by functionsService or server
         }
       } catch {
-        // Unauthenticated visitor or offline mode will safely skip seeding
+        // Unauthenticated visitor or offline mode will safely skip
       }
     }
   },
@@ -474,7 +407,7 @@ export const dataService = {
     }
 
     try {
-      const col = collection(db, 'vehicles');
+      const col = collection(getDb(), 'vehicles');
       const snap = await safeFirestore(getDocs(col), 3500);
       const remoteDocs = snap.docs.map((d) => d.data() as Vehicle).filter((v) => !v.isDeleted);
       const remoteIds = new Set(remoteDocs.map((d) => d.id));
@@ -499,7 +432,7 @@ export const dataService = {
       if (missingToSeed.length > 0) {
         await Promise.allSettled(
           missingToSeed.map((v) =>
-            safeFirestore(setDoc(doc(db, 'vehicles', v.id), v, { merge: true }), 2500)
+            safeFirestore(setDoc(doc(getDb(), 'vehicles', v.id), v, { merge: true }), 2500)
           )
         );
       }
@@ -524,7 +457,7 @@ export const dataService = {
     }
 
     try {
-      const col = collection(db, 'bookings');
+      const col = collection(getDb(), 'bookings');
       const snap = await safeFirestore(getDocs(col), 3500);
       const remoteDocs = snap.docs.map((d) => {
         const data = d.data();
@@ -552,60 +485,31 @@ export const dataService = {
     }
   },
 
-  async ensurePaymentsInFirestore(): Promise<{ total: number; seeded: number; remoteCount: number }> {
-    if (!isFirebaseConfigured || !db) {
-      return { total: memoryCache.payments?.data?.length || 0, seeded: 0, remoteCount: 0 };
-    }
-
-    try {
-      const col = collection(db, 'payments');
-      const snap = await safeFirestore(getDocs(col), 3500);
-      const remoteDocs = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Payment));
-      memoryCache.payments = { data: remoteDocs, timestamp: Date.now() };
-
-      return {
-        total: remoteDocs.length,
-        seeded: 0,
-        remoteCount: remoteDocs.length,
-      };
-    } catch (err) {
-      console.warn('ensurePaymentsInFirestore note:', err);
-      return { total: memoryCache.payments?.data?.length || 0, seeded: 0, remoteCount: 0 };
-    }
-  },
-
   async syncAllSystemData(): Promise<{
     vehicles: { total: number; seeded: number; remoteCount: number };
     bookings: { total: number; seeded: number; remoteCount: number };
-    payments: { total: number; seeded: number; remoteCount: number };
     isCloudConnected: boolean;
   }> {
     const isCloudConnected = Boolean(isFirebaseConfigured && db);
-    // تم تعطيل مزامنة/زرع السيارات الافتراضية عمداً لمنع إضافة سيارات تجريبية
-    // فوق الأسطول الحقيقي القائم فعلياً. السيارات الحالية بقاعدة البيانات هي الحقيقية ويجب عدم المساس بها.
     const currentVehicles = await this.getVehicles(true).catch(() => []);
-    const [bookResult, payResult] = await Promise.all([
-      this.ensureBookingsInFirestore(),
-      this.ensurePaymentsInFirestore(),
-    ]);
+    const bookResult = await this.ensureBookingsInFirestore();
     return {
       vehicles: { total: currentVehicles.length, seeded: 0, remoteCount: currentVehicles.length },
       bookings: bookResult,
-      payments: payResult,
       isCloudConnected,
     };
   },
 
   /**
-   * Fetches sensitive vehicle internal details (plateNumber, mileage, maintenance)
+   * Fetches sensitive vehicle internal details (plateNumber, mileage)
    * stored in vehicles/{id}/internal/details subcollection. Restricted by security rules to staff/admin.
    */
-  async fetchVehicleInternalDetails(vehicleId: string): Promise<{ plateNumber?: string; currentMileage?: number; lastOilChangeMileage?: number } | null> {
+  async fetchVehicleInternalDetails(vehicleId: string): Promise<{ plateNumber?: string; currentMileage?: number } | null> {
     if (!isFirebaseConfigured || !db || !isStaffOrAdmin()) return null;
     try {
       const cleanId = (vehicleId || '').trim();
       if (!cleanId) return null;
-      const internalDocRef = doc(db, 'vehicles', cleanId, 'internal', 'details');
+      const internalDocRef = doc(getDb(), 'vehicles', cleanId, 'internal', 'details');
       const snap = await safeFirestore(getDoc(internalDocRef), 2000);
       if (snap.exists()) {
         return snap.data() as any;
@@ -626,7 +530,6 @@ export const dataService = {
         ...v,
         plateNumber: '',
         currentMileage: 0,
-        lastOilChangeMileage: 0,
       }));
     }
 
@@ -639,7 +542,6 @@ export const dataService = {
               ...v,
               plateNumber: internal.plateNumber ?? v.plateNumber ?? '',
               currentMileage: internal.currentMileage ?? v.currentMileage ?? 0,
-              lastOilChangeMileage: internal.lastOilChangeMileage ?? v.lastOilChangeMileage ?? 0,
             };
           }
           return v;
@@ -661,7 +563,7 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        const col = collection(db, 'vehicles');
+        const col = collection(getDb(), 'vehicles');
         const snap = await safeFirestore(getDocs(col), 2500);
         const docs = snap.docs
           .map((d) => {
@@ -744,7 +646,7 @@ export const dataService = {
     }
 
     try {
-      const col = collection(db, 'vehicles');
+      const col = collection(getDb(), 'vehicles');
       const unsubscribe = onSnapshot(
         col,
         (snap) => {
@@ -827,7 +729,7 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        const docRef = doc(db, 'vehicles', cleanId);
+        const docRef = doc(getDb(), 'vehicles', cleanId);
         const snap = await safeFirestore(getDoc(docRef), 2000);
         if (snap.exists()) {
           const v = { ...snap.data(), id: snap.id } as Vehicle;
@@ -838,7 +740,6 @@ export const dataService = {
                 ...v,
                 plateNumber: internal.plateNumber ?? v.plateNumber ?? '',
                 currentMileage: internal.currentMileage ?? v.currentMileage ?? 0,
-                lastOilChangeMileage: internal.lastOilChangeMileage ?? v.lastOilChangeMileage ?? 0,
               };
             }
             return v;
@@ -847,7 +748,6 @@ export const dataService = {
               ...v,
               plateNumber: '',
               currentMileage: 0,
-              lastOilChangeMileage: 0,
             };
           }
         }
@@ -865,12 +765,11 @@ export const dataService = {
 
   async addVehicle(vehicleData: Omit<Vehicle, 'id'>): Promise<Vehicle> {
     const id = `veh-${Date.now()}`;
-    const { plateNumber, currentMileage, lastOilChangeMileage, ...publicVehicleFields } = vehicleData;
+    const { plateNumber, currentMileage, ...publicVehicleFields } = vehicleData;
     const newVehicle: Vehicle = {
       ...publicVehicleFields,
       plateNumber: plateNumber || '',
       currentMileage: currentMileage || 0,
-      lastOilChangeMileage: lastOilChangeMileage || 0,
       id,
       isDeleted: false,
       createdAt: new Date().toISOString(),
@@ -887,16 +786,15 @@ export const dataService = {
           createdAt: newVehicle.createdAt,
           updatedAt: newVehicle.updatedAt,
         };
-        await safeFirestore(setDoc(doc(db, 'vehicles', id), publicDoc, { merge: true }), 2500);
+        await safeFirestore(setDoc(doc(getDb(), 'vehicles', id), publicDoc, { merge: true }), 2500);
 
         // Save sensitive plate and mileage fields to vehicles/{id}/internal/details subcollection
         await safeFirestore(
           setDoc(
-            doc(db, 'vehicles', id, 'internal', 'details'),
+            doc(getDb(), 'vehicles', id, 'internal', 'details'),
             {
               plateNumber: plateNumber || '',
               currentMileage: currentMileage || 0,
-              lastOilChangeMileage: lastOilChangeMileage || 0,
               updatedAt: new Date().toISOString(),
             },
             { merge: true }
@@ -937,7 +835,7 @@ export const dataService = {
     if (index === -1) {
       if (isFirebaseConfigured && db) {
         try {
-          const snap = await safeFirestore(getDoc(doc(db, 'vehicles', cleanId)), 2000);
+          const snap = await safeFirestore(getDoc(doc(getDb(), 'vehicles', cleanId)), 2000);
           if (snap.exists()) {
             const v = snap.data() as Vehicle;
             current = [v, ...current];
@@ -959,28 +857,27 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        const { plateNumber, currentMileage, lastOilChangeMileage, ...publicUpdates } = updates;
+        const { plateNumber, currentMileage, ...publicUpdates } = updates;
 
         // Update public vehicle document
         if (Object.keys(publicUpdates).length > 0) {
           await safeFirestore(
-            setDoc(doc(db, 'vehicles', updated.id), { ...publicUpdates, updatedAt: updated.updatedAt }, { merge: true }),
+            setDoc(doc(getDb(), 'vehicles', updated.id), { ...publicUpdates, updatedAt: updated.updatedAt }, { merge: true }),
             3000
           );
         }
 
         // Update sensitive fields in vehicles/{id}/internal/details subcollection
         const hasInternalUpdates =
-          plateNumber !== undefined || currentMileage !== undefined || lastOilChangeMileage !== undefined;
+          plateNumber !== undefined || currentMileage !== undefined;
 
         if (hasInternalUpdates) {
           const internalUpdates: Record<string, any> = { updatedAt: updated.updatedAt };
           if (plateNumber !== undefined) internalUpdates.plateNumber = plateNumber;
           if (currentMileage !== undefined) internalUpdates.currentMileage = currentMileage;
-          if (lastOilChangeMileage !== undefined) internalUpdates.lastOilChangeMileage = lastOilChangeMileage;
 
           await safeFirestore(
-            setDoc(doc(db, 'vehicles', updated.id, 'internal', 'details'), internalUpdates, { merge: true }),
+            setDoc(doc(getDb(), 'vehicles', updated.id, 'internal', 'details'), internalUpdates, { merge: true }),
             3000
           );
         }
@@ -1043,7 +940,7 @@ export const dataService = {
 
     if (isFirebaseConfigured && db && isStaffOrAdmin()) {
       try {
-        const col = collection(db, 'bookings');
+        const col = collection(getDb(), 'bookings');
         const snap = await safeFirestore(getDocs(col), 2500);
         const remoteDocs = snap.docs.map((d) => {
           const data = d.data();
@@ -1093,7 +990,7 @@ export const dataService = {
     }
 
     try {
-      const col = collection(db, 'bookings');
+      const col = collection(getDb(), 'bookings');
       const unsubscribe = onSnapshot(
         col,
         (snap) => {
@@ -1160,7 +1057,7 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       try {
         const q = query(
-          collection(db, 'bookings'),
+          collection(getDb(), 'bookings'),
           where('customerId', '==', cleanId)
         );
         const snap = await safeFirestore(getDocs(q), 2500);
@@ -1224,7 +1121,7 @@ export const dataService = {
 
     try {
       const q = query(
-        collection(db, 'bookings'),
+        collection(getDb(), 'bookings'),
         where('customerId', '==', cleanId)
       );
       const unsubscribe = onSnapshot(
@@ -1296,7 +1193,7 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        const docRef = doc(db, 'bookings', cleanId);
+        const docRef = doc(getDb(), 'bookings', cleanId);
         const snap = await safeFirestore(getDoc(docRef), 2500);
         if (snap.exists()) {
           const b = { ...snap.data(), id: snap.id } as Booking;
@@ -1307,7 +1204,7 @@ export const dataService = {
           return b;
         }
 
-        const q = query(collection(db, 'bookings'), where('bookingNumber', '==', cleanId));
+        const q = query(collection(getDb(), 'bookings'), where('bookingNumber', '==', cleanId));
         const qSnap = await safeFirestore(getDocs(q), 2500);
         if (!qSnap.empty) {
           const docItem = qSnap.docs[0];
@@ -1539,8 +1436,6 @@ export const dataService = {
       discountAmount: verifiedPricing.discountAmount,
       insuranceAmount: verifiedPricing.insuranceAmount,
       totalPrice: verifiedPricing.totalPrice,
-      paidAmount: 0,
-      remainingAmount: verifiedPricing.totalPrice,
       status: 'new',
       isDeleted: false,
       createdAt: new Date().toISOString(),
@@ -1606,7 +1501,7 @@ export const dataService = {
     }
     if (isFirebaseConfigured && db) {
       await safeFirestore(
-        updateDoc(doc(db, 'bookings', cleanId), {
+        updateDoc(doc(getDb(), 'bookings', cleanId), {
           hiddenFromCustomer: true,
           updatedAt: serverTimestamp(),
         }),
@@ -1634,12 +1529,11 @@ export const dataService = {
     }
 
     if (isFirebaseConfigured && db) {
-      try {
-        const docRef = doc(db, 'bookings', cleanId);
-        await safeFirestore(deleteDoc(docRef), 8000);
-      } catch (err: any) {
-        console.error('Firestore deleteBooking error:', err);
-        throw new Error(err?.message || 'تعذر حذف الحجز من قاعدة البيانات السحابية.');
+      // Firestore rules forbid client-side booking deletes; go through the secure Cloud Function.
+      const res = await functionsService.deleteBookingSecure({ bookingId: cleanId });
+      if (!res.success) {
+        console.error('deleteBookingSecure error:', res.error);
+        throw new Error(res.error || 'تعذر حذف الحجز من قاعدة البيانات السحابية.');
       }
     }
 
@@ -1655,152 +1549,7 @@ export const dataService = {
     return true;
   },
 
-  // -------------------------------------------------------------
-  // Payments
-  // -------------------------------------------------------------
-  async recordPayment(
-    paymentData: Omit<Payment, 'id' | 'createdAt'> & { allowOverpayment?: boolean }
-  ): Promise<Payment> {
-    // 1. Validate amount
-    if (typeof paymentData.amount !== 'number' || isNaN(paymentData.amount) || paymentData.amount <= 0) {
-      throw new Error('مبلغ الدفعة يجب أن يكون أكبر من صفر');
-    }
 
-    const cleanBookingId = (paymentData.bookingId || '').trim();
-    let memBookings = memoryCache.bookings?.data || [];
-    let booking = memBookings.find(b =>
-      b.id === cleanBookingId ||
-      b.bookingNumber === cleanBookingId ||
-      b.id?.toLowerCase() === cleanBookingId.toLowerCase() ||
-      b.bookingNumber?.toLowerCase() === cleanBookingId.toLowerCase()
-    ) || null;
-
-    // Fallback: If not found in memory cache, try fetching from Firestore directly
-    if (!booking && isFirebaseConfigured && db) {
-      try {
-        const bRef = doc(db, 'bookings', cleanBookingId);
-        const bSnap = await safeFirestore(getDoc(bRef), 2000);
-        if (bSnap.exists()) {
-          const remoteB = bSnap.data() as Booking;
-          const currentB = memoryCache.bookings?.data || [];
-          memoryCache.bookings = {
-            data: [remoteB, ...currentB.filter(item => item.id !== remoteB.id)],
-            timestamp: Date.now()
-          };
-          booking = remoteB;
-        }
-      } catch (lookupErr) {
-        console.warn('Booking lookup in recordPayment note:', lookupErr);
-      }
-    }
-
-    // 2. Validate remaining amount if booking exists
-    if (booking) {
-      const currentRemaining =
-        booking.remainingAmount ?? (booking.totalPrice - (booking.paidAmount || 0));
-
-      if (paymentData.amount > currentRemaining && !paymentData.allowOverpayment) {
-        throw new Error(
-          `مبلغ الدفعة ($${paymentData.amount}) يتجاوز المبلغ المتبقي على الحجز ($${currentRemaining}).`
-        );
-      }
-
-      booking.paidAmount = (booking.paidAmount || 0) + paymentData.amount;
-      booking.remainingAmount = Math.max(0, (booking.totalPrice || 0) - booking.paidAmount);
-      booking.updatedAt = new Date().toISOString();
-
-      if (memoryCache.bookings?.data) {
-        memoryCache.bookings.data = [booking, ...memoryCache.bookings.data.filter(b => b.id !== booking.id)];
-        memoryCache.bookings.timestamp = Date.now();
-      }
-    }
-
-    const id = `pay-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const receiptNumber = paymentData.receiptNumber || `REC-2026-${Date.now().toString().slice(-6)}`;
-    const newPayment: Payment = {
-      id,
-      bookingId: cleanBookingId,
-      customerId: paymentData.customerId || (booking ? (booking.customerId || booking.customerPhone) : undefined),
-      amount: paymentData.amount,
-      method: paymentData.method,
-      paymentDate: paymentData.paymentDate || todayLocalISO(),
-      receiptNumber,
-      notes: paymentData.notes || '',
-      createdAt: new Date().toISOString(),
-    };
-
-    // 3. Write directly to Firestore with comprehensive error handling (No silent failures)
-    if (isFirebaseConfigured && db) {
-      try {
-        // A. Persist payment document to /payments/{id}
-        await safeFirestore(setDoc(doc(db, 'payments', id), newPayment), 3500);
-
-        // B. Update booking paidAmount and remainingAmount in /bookings/{bookingId}
-        if (booking) {
-          await safeFirestore(
-            setDoc(doc(db, 'bookings', booking.id), booking, { merge: true }),
-            3500
-          );
-        }
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
-          handleFirestoreError('payments', id, 'write', err, auth?.currentUser?.uid);
-          throw new Error('فشل تسجيل وحفظ الدفعة في قاعدة البيانات السحابية (صلاحيات غير كافية أو خطأ في الاتصال بالخادم).');
-        }
-      }
-    }
-
-    // 4. Update memory cache ONLY (never localStorage)
-    const currentPayments = memoryCache.payments?.data || [];
-    const updatedPayments = [newPayment, ...currentPayments.filter(p => p.id !== id)];
-    memoryCache.payments = { data: updatedPayments, timestamp: Date.now() };
-
-    // Update customer spending in memory
-    if (booking && memoryCache.customers?.data) {
-      const customer = memoryCache.customers.data.find(c => c.phone === booking.customerPhone || c.id === booking.customerId);
-      if (customer) {
-        customer.totalSpending = (customer.totalSpending || 0) + paymentData.amount;
-      }
-    }
-
-    this.logAudit(
-      `تسجيل سند قبض مالي بقيمة $${newPayment.amount} برقم ${receiptNumber} للحجز ${cleanBookingId}`,
-      'payments',
-      id
-    );
-
-    return newPayment;
-  },
-
-  async getPayments(forceRefresh = false): Promise<Payment[]> {
-    if (!forceRefresh && memoryCache.payments && Date.now() - memoryCache.payments.timestamp < CACHE_TTL_MS) {
-      return memoryCache.payments.data;
-    }
-
-    if (isFirebaseConfigured && db && isStaffOrAdmin()) {
-      try {
-        const col = collection(db, 'payments');
-        const snap = await safeFirestore(getDocs(col), 3000);
-        if (!snap.empty) {
-          const remoteDocs = snap.docs.map(d => ({ ...d.data(), id: d.id } as Payment));
-          remoteDocs.sort(
-            (a, b) =>
-              new Date(b.createdAt || b.paymentDate || 0).getTime() -
-              new Date(a.createdAt || a.paymentDate || 0).getTime()
-          );
-
-          memoryCache.payments = { data: remoteDocs, timestamp: Date.now() };
-          return remoteDocs;
-        }
-      } catch (err: any) {
-        if (err?.code !== 'unavailable') {
-          console.warn('Firestore getPayments note:', err);
-        }
-      }
-    }
-
-    return memoryCache.payments?.data || [];
-  },
 
   // -------------------------------------------------------------
   // Customers CRM
@@ -1813,7 +1562,7 @@ export const dataService = {
     // Only query Firestore customers if user is signed in as staff or admin
     if (isFirebaseConfigured && db && isStaffOrAdmin()) {
       try {
-        const col = collection(db, 'customers');
+        const col = collection(getDb(), 'customers');
         const snap = await safeFirestore(getDocs(col), 2500);
         const remoteDocs = snap.docs.map(d => d.data() as Customer);
 
@@ -1835,6 +1584,7 @@ export const dataService = {
 
     if (!customer) {
       const isAuthUid = booking.customerId && !booking.customerId.startsWith('cust-') && !booking.customerId.startsWith('guest-');
+      const bookingSpending = ['confirmed', 'rented', 'completed'].includes(booking.status) ? (booking.totalPrice || 0) : 0;
       customer = {
         id: isAuthUid ? booking.customerId! : `cust-${Date.now()}`,
         fullName: booking.customerName,
@@ -1844,13 +1594,14 @@ export const dataService = {
         drivingLicense: booking.customerLicenseNumber || '',
         address: booking.customerAddress || '',
         totalRentals: 1,
-        totalSpending: booking.paidAmount || 0,
+        totalSpending: bookingSpending,
         createdAt: new Date().toISOString(),
       };
       customers.push(customer);
     } else {
+      const bookingSpending = ['confirmed', 'rented', 'completed'].includes(booking.status) ? (booking.totalPrice || 0) : 0;
       customer.totalRentals = (customer.totalRentals || 0) + 1;
-      customer.totalSpending = (customer.totalSpending || 0) + (booking.paidAmount || 0);
+      customer.totalSpending = (customer.totalSpending || 0) + bookingSpending;
       if (booking.customerNationalId && !customer.nationalId) customer.nationalId = booking.customerNationalId;
       if (booking.customerLicenseNumber && !customer.drivingLicense) customer.drivingLicense = booking.customerLicenseNumber;
       if (booking.customerAddress && !customer.address) customer.address = booking.customerAddress;
@@ -1868,7 +1619,7 @@ export const dataService = {
       if (isMatchingAuthUser || isStaff) {
         const targetDocId = isMatchingAuthUser ? currentUid : customer.id;
         try {
-          await safeFirestore(setDoc(doc(db, 'customers', targetDocId), { ...customer, id: targetDocId }, { merge: true }), 8000);
+          await safeFirestore(setDoc(doc(getDb(), 'customers', targetDocId), { ...customer, id: targetDocId }, { merge: true }), 8000);
         } catch (err) {
           console.warn('Firestore syncCustomerFromBooking note:', err);
         }
@@ -1893,7 +1644,7 @@ export const dataService = {
     // In production, update Firestore first and throw on failure
     if (isFirebaseConfigured && db) {
       try {
-        await safeFirestore(setDoc(doc(db, 'customers', id), updated, { merge: true }), 2500);
+        await safeFirestore(setDoc(doc(getDb(), 'customers', id), updated, { merge: true }), 2500);
       } catch (err: any) {
         if (err?.code !== 'unavailable') {
           handleFirestoreError('customers', id, 'write', err, auth?.currentUser?.uid);
@@ -1929,7 +1680,7 @@ export const dataService = {
     // 1. Check Firestore
     if (isFirebaseConfigured && db) {
       try {
-        const cSnap = await safeFirestore(getDocs(collection(db, 'customers')), 3000);
+        const cSnap = await safeFirestore(getDocs(collection(getDb(), 'customers')), 3000);
         cSnap.docs.forEach(d => {
           const c = d.data() as Customer;
           const isSeed = seedCustomerIdentifiers.has(c.id) || seedCustomerIdentifiers.has(c.fullName) || c.id?.startsWith('cust-10');
@@ -1940,7 +1691,7 @@ export const dataService = {
           }
         });
 
-        const bSnap = await safeFirestore(getDocs(collection(db, 'bookings')), 3000);
+        const bSnap = await safeFirestore(getDocs(collection(getDb(), 'bookings')), 3000);
         bSnap.docs.forEach(d => {
           const b = d.data() as Booking;
           const isSeed = seedBookingIdentifiers.has(b.id) || seedBookingIdentifiers.has(b.bookingNumber) || seedCustomerIdentifiers.has(b.customerName) || b.id === 'book-2026-001' || b.id === 'book-2026-002';
@@ -1995,7 +1746,7 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       for (const cId of targetIds.customerIds) {
         try {
-          await safeFirestore(deleteDoc(doc(db, 'customers', cId)), 2500);
+          await safeFirestore(deleteDoc(doc(getDb(), 'customers', cId)), 2500);
           deletedCustomers++;
         } catch (err) {
           console.warn(`Could not delete customer doc ${cId}:`, err);
@@ -2004,7 +1755,7 @@ export const dataService = {
 
       for (const bId of targetIds.bookingIds) {
         try {
-          await safeFirestore(deleteDoc(doc(db, 'bookings', bId)), 2500);
+          await safeFirestore(deleteDoc(doc(getDb(), 'bookings', bId)), 2500);
           deletedBookings++;
         } catch (err) {
           console.warn(`Could not delete booking doc ${bId}:`, err);
@@ -2032,51 +1783,7 @@ export const dataService = {
     return { deletedCustomers, deletedBookings };
   },
 
-  // -------------------------------------------------------------
-  // Maintenance System (Oil change every 5,000 km rule)
-  // -------------------------------------------------------------
-  async getMaintenanceRecords(): Promise<MaintenanceRecord[]> {
-    return getLocalItem<MaintenanceRecord[]>(STORAGE_KEYS.MAINTENANCE, INITIAL_MAINTENANCE_RECORDS);
-  },
 
-  async addMaintenanceRecord(record: Omit<MaintenanceRecord, 'id' | 'createdAt'>): Promise<MaintenanceRecord> {
-    const id = `maint-${Date.now()}`;
-    const newRecord: MaintenanceRecord = {
-      ...record,
-      id,
-      createdAt: new Date().toISOString(),
-    };
-
-    // If oil change, update vehicle mileage stats
-    if (record.serviceType === 'oil_change') {
-      const nextKm = record.mileage + 5000;
-      newRecord.nextDueMileage = nextKm;
-      await this.updateVehicle(record.vehicleId, {
-        currentMileage: Math.max(record.mileage, record.mileage),
-        lastOilChangeMileage: record.mileage,
-      });
-    }
-
-    const records = getLocalItem<MaintenanceRecord[]>(STORAGE_KEYS.MAINTENANCE, INITIAL_MAINTENANCE_RECORDS);
-    setLocalItem(STORAGE_KEYS.MAINTENANCE, [newRecord, ...records]);
-    this.logAudit(`تسجيل عملية صيانة: ${record.serviceType} للسيارة ${record.vehicleId}`, 'maintenance', id);
-    return newRecord;
-  },
-
-  async getVehiclesNeedingMaintenance(): Promise<Array<{ vehicle: Vehicle; kmSinceOil: number; isUrgent: boolean }>> {
-    const vehicles = await this.getVehicles();
-    const settings = await this.getSettings();
-    const interval = settings.oilChangeIntervalKm || 5000;
-
-    return vehicles
-      .map(v => {
-        const kmSinceOil = (v.currentMileage || 0) - (v.lastOilChangeMileage || 0);
-        const isUrgent = kmSinceOil >= interval;
-        const needsAttention = kmSinceOil >= interval - 500;
-        return { vehicle: v, kmSinceOil, isUrgent, needsAttention };
-      })
-      .filter(item => item.needsAttention);
-  },
 
   // -------------------------------------------------------------
   // Vehicle Inspection
@@ -2132,7 +1839,7 @@ export const dataService = {
     setLocalItem(STORAGE_KEYS.NOTIFICATIONS, updated);
     if (isFirebaseConfigured && db) {
       try {
-        updateDoc(doc(db, 'notifications', id), { read: true }).catch(() => {});
+        updateDoc(doc(getDb(), 'notifications', id), { read: true }).catch(() => {});
       } catch {}
     }
   },
@@ -2144,7 +1851,7 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       current.filter(n => !n.read).forEach(n => {
         try {
-          updateDoc(doc(db, 'notifications', n.id), { read: true }).catch(() => {});
+          updateDoc(doc(getDb(), 'notifications', n.id), { read: true }).catch(() => {});
         } catch {}
       });
     }
@@ -2156,7 +1863,7 @@ export const dataService = {
     setLocalItem(STORAGE_KEYS.NOTIFICATIONS, updated);
     if (isFirebaseConfigured && db) {
       try {
-        deleteDoc(doc(db, 'notifications', id)).catch(() => {});
+        deleteDoc(doc(getDb(), 'notifications', id)).catch(() => {});
       } catch {}
     }
   },
@@ -2173,7 +1880,7 @@ export const dataService = {
     }
 
     try {
-      const col = collection(db, 'notifications');
+      const col = collection(getDb(), 'notifications');
       const unsubscribe = onSnapshot(
         col,
         (snap) => {
@@ -2307,8 +2014,8 @@ export const dataService = {
 
     try {
       // Test read on users collection and files collection
-      const usersSnap = await safeFirestore(getDocs(collection(db, 'users')), 6000);
-      const filesSnap = await safeFirestore(getDocs(collection(db, 'files')), 6000).catch(() => null);
+      const usersSnap = await safeFirestore(getDocs(collection(getDb(), 'users')), 6000);
+      const filesSnap = await safeFirestore(getDocs(collection(getDb(), 'files')), 6000).catch(() => null);
       const latencyMs = Date.now() - startTime;
 
       const usersCount = usersSnap.size;
@@ -2358,7 +2065,7 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        await safeFirestore(setDoc(doc(db, 'users', id), newUser), 5000);
+        await safeFirestore(setDoc(doc(getDb(), 'users', id), newUser), 5000);
       } catch (err) {
         console.warn('Could not write new user to Firestore:', err);
       }
@@ -2381,10 +2088,10 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        const usersCol = collection(db, 'users');
+        const usersCol = collection(getDb(), 'users');
         const [snap, filesSnap] = await Promise.all([
           safeFirestore(getDocs(usersCol), 2500),
-          safeFirestore(getDocs(collection(db, 'files')), 2000).catch(() => null),
+          safeFirestore(getDocs(collection(getDb(), 'files')), 2000).catch(() => null),
         ]);
 
         // Fetch all files count from Firestore files collection to ensure 100% precision
@@ -2449,7 +2156,7 @@ export const dataService = {
   async getUserProfile(userId: string): Promise<FirestoreUser | null> {
     if (isFirebaseConfigured && db) {
       try {
-        const userDocRef = doc(db, 'users', userId);
+        const userDocRef = doc(getDb(), 'users', userId);
         const snap = await safeFirestore(getDoc(userDocRef), 2000);
         if (snap.exists()) {
           const data = snap.data() as Partial<FirestoreUser>;
@@ -2549,7 +2256,7 @@ export const dataService = {
       try {
         // 1. Fetch from subcollection: /users/{userId}/files
         try {
-          const filesSubCol = collection(db, 'users', cleanUserId, 'files');
+          const filesSubCol = collection(getDb(), 'users', cleanUserId, 'files');
           const subSnap = await safeFirestore(getDocs(filesSubCol), 3500);
           subSnap.docs.forEach((d) => {
             const fileData = d.data() as UploadedFile;
@@ -2559,13 +2266,13 @@ export const dataService = {
               userId: fileData.userId || cleanUserId,
             });
           });
-        } catch (subErr) {
+        } catch {
           // Subcollection query failed or offline
         }
 
         // 2. Fetch from root files collection: /files where userId == cleanUserId
         try {
-          const rootFilesCol = collection(db, 'files');
+          const rootFilesCol = collection(getDb(), 'files');
           const q = query(rootFilesCol, where('userId', '==', cleanUserId));
           const rootSnap = await safeFirestore(getDocs(q), 3500);
           rootSnap.docs.forEach((d) => {
@@ -2578,10 +2285,10 @@ export const dataService = {
               });
             }
           });
-        } catch (rootErr) {
+        } catch {
           // Root query fallback: scan root files collection if filtered query has issue
           try {
-            const allFilesSnap = await safeFirestore(getDocs(collection(db, 'files')), 3500);
+            const allFilesSnap = await safeFirestore(getDocs(collection(getDb(), 'files')), 3500);
             allFilesSnap.docs.forEach((d) => {
               const fileData = d.data() as UploadedFile;
               if (fileData.userId === cleanUserId || (fileData as any).uid === cleanUserId) {
@@ -2604,7 +2311,7 @@ export const dataService = {
           );
           return filesArray;
         }
-      } catch (err) {
+      } catch {
         // Ignore offline error
       }
     }
@@ -2635,14 +2342,13 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        // Store in subcollection
-        safeFirestore(setDoc(doc(db, 'users', fileData.userId, 'files', fileId), newFile), 2500).catch(() => {});
-        // Store in root files collection for index access
-        safeFirestore(setDoc(doc(db, 'files', fileId), newFile), 2500).catch(() => {});
+        // Store in subcollection and root files collection
+        await safeFirestore(setDoc(doc(getDb(), 'users', fileData.userId, 'files', fileId), newFile), 2500);
+        await safeFirestore(setDoc(doc(getDb(), 'files', fileId), newFile), 2500);
 
         // Update uploadedFilesCount on user doc
         try {
-          const userDocRef = doc(db, 'users', fileData.userId);
+          const userDocRef = doc(getDb(), 'users', fileData.userId);
           const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
           if (userSnap.exists()) {
             const userData = userSnap.data();
@@ -2652,13 +2358,15 @@ export const dataService = {
               updatePayload.verificationStatus = 'manual_review';
               updatePayload.verified = false;
             }
-            safeFirestore(updateDoc(userDocRef, updatePayload), 1500).catch(() => {});
+            await safeFirestore(updateDoc(userDocRef, updatePayload), 1500);
           }
-        } catch {
-          // Ignore offline error
+        } catch (cntErr) {
+          console.warn('Non-fatal error updating user uploadedFilesCount:', cntErr);
         }
-      } catch {
-        // Fallback
+      } catch (err: any) {
+        console.error('Error in uploadUserFile:', err);
+        const friendlyMsg = handleFirestoreError('users', `${fileData.userId}/files/${fileId}`, 'write', err, auth?.currentUser?.uid);
+        throw new Error(friendlyMsg || 'فشل حفظ بيانات الوثيقة في قاعدة البيانات.');
       }
     }
 
@@ -2685,13 +2393,13 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       try {
         // Delete from subcollection
-        safeFirestore(deleteDoc(doc(db, 'users', userId, 'files', fileId)), 2500).catch(() => {});
+        safeFirestore(deleteDoc(doc(getDb(), 'users', userId, 'files', fileId)), 2500).catch(() => {});
         // Delete from root files collection
-        safeFirestore(deleteDoc(doc(db, 'files', fileId)), 2500).catch(() => {});
+        safeFirestore(deleteDoc(doc(getDb(), 'files', fileId)), 2500).catch(() => {});
 
         // Decrement user uploadedFilesCount
         try {
-          const userDocRef = doc(db, 'users', userId);
+          const userDocRef = doc(getDb(), 'users', userId);
           const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
           if (userSnap.exists()) {
             const currentCount = Math.max(0, (userSnap.data().uploadedFilesCount || 1) - 1);
@@ -2742,7 +2450,7 @@ export const dataService = {
 
     if (isFirebaseConfigured && db) {
       try {
-        const userDocRef = doc(db, 'users', authUser.uid);
+        const userDocRef = doc(getDb(), 'users', authUser.uid);
         const snap = await safeFirestore(getDoc(userDocRef), 1500);
         if (!snap.exists()) {
           safeFirestore(setDoc(userDocRef, firestoreUser), 2000).catch(() => {});

@@ -1,8 +1,10 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import type { DocumentReference, DocumentSnapshot } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
-import { isCallerStaff, isCallerAdmin } from './authz';
+import { isCallerStaff, isCallerAdmin, assertNotRevoked } from './authz';
 import {
   calculateRentalDaysDamascus,
   calculateRentalPriceServer,
@@ -15,7 +17,7 @@ import {
   ALLOWED_TRANSITIONS,
 } from './bookingHelpers';
 
-const db = getFirestore(admin.app(), DATABASE_ID);
+const db = getFirestore(getApp(), DATABASE_ID);
 
 function getIpRateLimitKey(ip: string): string {
   const clean = (ip || 'unknown-ip').trim().replace(/[\.:]/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -53,10 +55,10 @@ export const createBookingSecure = onCall(
     let customerId: string = callerUid;
     let customerEmail: string = (request.auth.token?.email || '').toLowerCase().trim();
 
-    // 1. Password provider email verification requirement (Requirement 1)
+    // 1. Password provider email verification requirement (Requirement 1 - fail-closed)
     if (!isStaff) {
       try {
-        const userRecord = await admin.auth().getUser(callerUid);
+        const userRecord = await getAuth().getUser(callerUid);
         const isPasswordAuth = userRecord.providerData.some((p) => p.providerId === 'password');
         if (isPasswordAuth && !userRecord.emailVerified) {
           throw new HttpsError(
@@ -66,7 +68,8 @@ export const createBookingSecure = onCall(
         }
       } catch (authErr: any) {
         if (authErr instanceof HttpsError) throw authErr;
-        console.warn('[createBookingSecure] Error checking email verification:', authErr);
+        console.error('[createBookingSecure] Error checking email verification:', authErr);
+        throw new HttpsError('internal', 'تعذر التحقق من حالة تأكيد البريد الإلكتروني للحساب. يرجى إعادة المحاولة.');
       }
     }
 
@@ -98,61 +101,13 @@ export const createBookingSecure = onCall(
       }
     }
 
-    // 3. IP Rate Limiting (Requirement 1: max 5 bookings per 10 minutes per IP)
-    if (!isStaff) {
-      const callerIp = String(request.rawRequest?.ip || 'unknown-ip');
-      const ipKey = getIpRateLimitKey(callerIp);
-      const rateLimitTargetId = ipKey;
-      const rateLimitDocRef = db.collection('rateLimits').doc(`booking_ip_${rateLimitTargetId}`);
-      const BOOKING_RATE_WINDOW_MS = 10 * 60 * 1000;
-      const nowMs = Date.now();
-
-      await db.runTransaction(async (transaction) => {
-        const rlSnap = await transaction.get(rateLimitDocRef);
-        let count = 1;
-        let firstAttemptAt = nowMs;
-
-        if (rlSnap.exists) {
-          const rlData = rlSnap.data();
-          const prevFirst = Number(rlData?.firstAttemptAt || nowMs);
-          if (nowMs - prevFirst < BOOKING_RATE_WINDOW_MS) {
-            count = Number(rlData?.count || rlData?.attempts || 0) + 1;
-            firstAttemptAt = prevFirst;
-          } else {
-            count = 1;
-            firstAttemptAt = nowMs;
-          }
-        }
-
-        if (count > 5) {
-          throw new HttpsError(
-            'resource-exhausted',
-            'تم تجاوز الحد المسموح به لإنشاء الحجوزات مؤقتاً (الحد الأقصى 5 حجوزات خلال 10 دقائق من نفس العنوان). يرجى الانتظار قليلاً.'
-          );
-        }
-
-        transaction.set(
-          rateLimitDocRef,
-          {
-            target: rateLimitTargetId,
-            ip: callerIp,
-            count,
-            firstAttemptAt,
-            lastAttemptAt: nowMs,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      });
-    }
-
-    // 4. Vehicle ID Validation
+    // 3. Vehicle ID Validation
     const vehicleId = String(data.vehicleId || '').trim();
     if (!vehicleId) {
       throw new HttpsError('invalid-argument', 'يرجى تحديد السيارة المطلوبة للحجز.');
     }
 
-    // 5. Damascus Timezone Date & Time Validation (Requirement 1: Asia/Damascus)
+    // 4. Damascus Timezone Date & Time Validation (Requirement 1: Asia/Damascus)
     const rawPickup = String(data.pickupDate || data.startDate || '').trim();
     const rawReturn = String(data.returnDate || data.endDate || '').trim();
     const pickupTime = String(data.pickupTime || '10:00').trim();
@@ -218,8 +173,59 @@ export const createBookingSecure = onCall(
     if (!resolvedVehicle) {
       throw new HttpsError('not-found', 'السيارة المطلوبة غير موجودة في أسطول الشركة.');
     }
+    const resolvedDailyPrice = Number(resolvedVehicle.data.dailyPrice);
+    if (isNaN(resolvedDailyPrice) || resolvedDailyPrice <= 0) {
+      throw new HttpsError('failed-precondition', 'سعر تأجير السيارة اليومي غير محدد أو غير صالح (يجب أن يكون أكبر من صفر).');
+    }
     const vehicleRef = resolvedVehicle.ref;
     const canonicalVehicleId = resolvedVehicle.data.id || vehicleRef.id;
+
+    // 5. IP Rate Limiting - Only incremented after all input validations have successfully passed!
+    if (!isStaff) {
+      const callerIp = String(request.rawRequest?.ip || 'unknown-ip');
+      const ipKey = getIpRateLimitKey(callerIp);
+      const rateLimitTargetId = ipKey;
+      const rateLimitDocRef = db.collection('rateLimits').doc(`booking_ip_${rateLimitTargetId}`);
+      const BOOKING_RATE_WINDOW_MS = 10 * 60 * 1000;
+
+      await db.runTransaction(async (transaction) => {
+        const rlSnap = await transaction.get(rateLimitDocRef);
+        let count = 1;
+        let firstAttemptAt = nowMs;
+
+        if (rlSnap.exists) {
+          const rlData = rlSnap.data();
+          const prevFirst = Number(rlData?.firstAttemptAt || nowMs);
+          if (nowMs - prevFirst < BOOKING_RATE_WINDOW_MS) {
+            count = Number(rlData?.count || rlData?.attempts || 0) + 1;
+            firstAttemptAt = prevFirst;
+          } else {
+            count = 1;
+            firstAttemptAt = nowMs;
+          }
+        }
+
+        if (count > 5) {
+          throw new HttpsError(
+            'resource-exhausted',
+            'تم تجاوز الحد المسموح به لإنشاء الحجوزات مؤقتاً (الحد الأقصى 5 حجوزات خلال 10 دقائق من نفس العنوان). يرجى الانتظار قليلاً.'
+          );
+        }
+
+        transaction.set(
+          rateLimitDocRef,
+          {
+            target: rateLimitTargetId,
+            ip: callerIp,
+            count,
+            firstAttemptAt,
+            lastAttemptAt: nowMs,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      });
+    }
 
     // 6. Atomic Transaction
     try {
@@ -283,7 +289,10 @@ export const createBookingSecure = onCall(
         }
 
         const settingsData = settingsDoc.exists ? settingsDoc.data() : null;
-        const officialDailyPrice = Number(vehicleData.dailyPrice) || 0;
+        const officialDailyPrice = Number(vehicleData.dailyPrice);
+        if (isNaN(officialDailyPrice) || officialDailyPrice <= 0) {
+          throw new HttpsError('failed-precondition', 'سعر تأجير السيارة اليومي غير محدد أو غير صالح (يجب أن يكون أكبر من صفر).');
+        }
         const isUserLoggedIn = Boolean(request.auth && request.auth.uid);
 
         const calculatedPricing = calculateRentalPriceServer(
@@ -307,9 +316,9 @@ export const createBookingSecure = onCall(
         transaction.set(
           lockRef,
           {
-            lockedAt: admin.firestore.FieldValue.serverTimestamp(),
+            lockedAt: FieldValue.serverTimestamp(),
             lastBookingBy: customerId,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true }
         );
@@ -318,7 +327,7 @@ export const createBookingSecure = onCall(
           counterRef,
           {
             lastNumber: nextCount,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true }
         );
@@ -350,14 +359,11 @@ export const createBookingSecure = onCall(
           withDriver,
           deliveryLocation,
           totalPrice: calculatedPricing.totalPrice,
-          paidAmount: 0,
-          remainingAmount: calculatedPricing.totalPrice,
           status: 'new',
-          paymentStatus: 'unpaid',
           notes,
           isDeleted: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         };
 
         transaction.set(newBookingRef, bookingPayload);
@@ -371,7 +377,7 @@ export const createBookingSecure = onCall(
           bookingId: newBookingRef.id,
           vehicleId: canonicalVehicleId,
           read: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
         });
 
         const auditRef = db.collection('auditLogs').doc();
@@ -389,7 +395,7 @@ export const createBookingSecure = onCall(
           entityId: newBookingRef.id,
           details: `حجز مؤمن ${formattedNumber} لـ ${vehicleData.brand} ${vehicleData.model} (${rawPickup} إلى ${rawReturn}) بمبلغ ${calculatedPricing.totalPrice}$`,
           timestamp: new Date().toISOString(),
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
         });
 
         return {
@@ -428,6 +434,9 @@ export const updateBookingStatusSecure = onCall(
 
     const callerUid = request.auth.uid;
     const isStaff = isCallerStaff(request.auth.token);
+    if (isStaff) {
+      await assertNotRevoked(request);
+    }
     const data = request.data || {};
     const bookingId = String(data.bookingId || '').trim();
     const newStatus = String(data.status || '').trim();
@@ -583,7 +592,7 @@ export const sendBookingNotification = onCall(
               lastSentMs: nowMs,
               count: count + 1,
               lastCallerUid: callerUid,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
             });
           } else {
             t.set(rateLimitRef, {
@@ -591,7 +600,7 @@ export const sendBookingNotification = onCall(
               lastSentMs: nowMs,
               count: 1,
               lastCallerUid: callerUid,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
             });
           }
         } else {
@@ -600,7 +609,7 @@ export const sendBookingNotification = onCall(
             lastSentMs: nowMs,
             count: 1,
             lastCallerUid: callerUid,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           });
         }
       });
@@ -630,7 +639,7 @@ export const sendBookingNotification = onCall(
       triggeredBy: callerUid,
       triggeredByRole: isStaff ? 'staff' : 'customer',
       read: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     const auditRef = db.collection('auditLogs').doc();
@@ -646,7 +655,7 @@ export const sendBookingNotification = onCall(
       entityId: bookingRef.id,
       details: `إرسال إشعار موثق من السيرفر للحجز ${authoritativeBookingNumber}`,
       timestamp: new Date().toISOString(),
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     return {
@@ -735,5 +744,85 @@ export const getVehicleAvailability = onCall(
       bookedRanges, // Safe booked intervals without customer names, IDs, phones, or prices
       message: isAvailable ? 'السيارة متاحة للحجز في التواريخ المحددة.' : 'السيارة محجوزة في هذه الفترة.',
     };
+  }
+);
+
+/**
+ * Cloud Function: deleteBookingSecure (region: asia-south1)
+ * Hard delete of a booking. Restricted to Admin / Super Admin.
+ * Firestore rules forbid client-side deletes (allow delete: if false),
+ * so deletion is performed here with the Admin SDK and fully audited.
+ */
+export const deleteBookingSecure = onCall(
+  {
+    region: FUNCTION_REGION,
+    enforceAppCheck: true,
+  },
+  async (request) => {
+    await assertNotRevoked(request);
+
+    if (!isCallerAdmin(request.auth!.token)) {
+      throw new HttpsError('permission-denied', 'حذف الحجوزات نهائياً مقتصر على مدراء النظام (Admin/Super Admin).');
+    }
+
+    const bookingId = String(request.data?.bookingId || '').trim();
+    if (!bookingId) {
+      throw new HttpsError('invalid-argument', 'معرف الحجز مطلوب.');
+    }
+
+    const bookingRef = await resolveBookingDocument(db, bookingId, request.data?.bookingNumber);
+    if (!bookingRef) {
+      throw new HttpsError('not-found', 'الحجز المطلوب غير موجود.');
+    }
+
+    const callerUid = request.auth!.uid;
+    const callerEmail = request.auth!.token?.email || null;
+
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(bookingRef);
+      if (!snap.exists) {
+        throw new HttpsError('not-found', 'الحجز المطلوب غير موجود.');
+      }
+      const b = snap.data()!;
+
+      // If the booking was holding the vehicle (rented), release it when nothing else is active.
+      let vehicleRef: DocumentReference | null = null;
+      let vehicleSnap: DocumentSnapshot | null = null;
+      let othersActive = true;
+      if (b.status === 'rented' && b.vehicleId) {
+        vehicleRef = db.collection('vehicles').doc(String(b.vehicleId));
+        vehicleSnap = await transaction.get(vehicleRef);
+        const activeSnap = await transaction.get(
+          db.collection('bookings')
+            .where('vehicleId', '==', b.vehicleId)
+            .where('status', '==', 'rented')
+        );
+        othersActive = activeSnap.docs.some((d) => d.id !== bookingRef.id);
+      }
+
+      if (vehicleRef && vehicleSnap?.exists && !othersActive && vehicleSnap.data()?.status === 'rented') {
+        transaction.update(vehicleRef, { status: 'available', updatedAt: FieldValue.serverTimestamp() });
+      }
+
+      transaction.delete(bookingRef);
+
+      const auditRef = db.collection('auditLogs').doc();
+      transaction.set(auditRef, {
+        id: auditRef.id,
+        user: callerEmail || callerUid,
+        userId: callerUid,
+        actorUid: callerUid,
+        actorEmail: callerEmail,
+        actorType: 'staff',
+        action: 'BOOKING_DELETED',
+        entity: 'bookings',
+        entityId: bookingRef.id,
+        details: `حذف الحجز ${b.bookingNumber || bookingRef.id} (الحالة: ${b.status}، العميل: ${b.customerName || '-'}، المبلغ: ${b.totalPrice ?? 0}$)`,
+        timestamp: new Date().toISOString(),
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return { success: true, bookingId: bookingRef.id, message: 'تم حذف الحجز نهائياً.' };
   }
 );

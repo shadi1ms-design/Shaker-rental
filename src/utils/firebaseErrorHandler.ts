@@ -115,6 +115,10 @@ export function getArabicErrorMessage(error: any): string {
     return 'تم تجاوز حد الاستعلامات المسموح به مؤقتاً. يرجى الانتظار قليلاً.';
   }
 
+  if (code.includes('failed-precondition')) {
+    return 'لم يتم استيفاء الشروط اللازمة لإتمام العملية (مثل تفعيل البريد أو توفر الرصيد).';
+  }
+
   if (code.includes('cancelled')) {
     return 'تم إلغاء العملية.';
   }
@@ -131,6 +135,9 @@ export function getArabicErrorMessage(error: any): string {
   // Default fallback
   return error.message || 'حدث خطأ أثناء تحميل البيانات.';
 }
+
+export const getErrorMessage = getArabicErrorMessage;
+export const getFriendlyErrorMessage = getArabicErrorMessage;
 
 /**
  * Diagnostic logger & error handler:

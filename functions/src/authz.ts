@@ -15,6 +15,9 @@
  * - Super admin designation is protected and cannot be assigned via standard setUserRole.
  */
 
+import { getAuth } from 'firebase-admin/auth';
+import type { UserRecord } from 'firebase-admin/auth';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { DESIGNATED_SUPER_ADMIN_UID } from './constants';
 
 export type UserRoleName = 'customer' | 'employee' | 'admin' | 'super_admin';
@@ -103,7 +106,7 @@ export function getUserRoleFromClaims(claims?: Record<string, any> | null): User
   if (claims.super_admin === true || claims.superAdmin === true || claims.owner === true) return 'super_admin';
 
   if (role === 'admin' || claims.admin === true) return 'admin';
-  if (['employee', 'staff', 'manager'].includes(role) || claims.employee === true || claims.staff === true) return 'employee';
+  if (['employee', 'staff', 'manager'].includes(role) || claims.employee === true || claims.staff === true || claims.manager === true) return 'employee';
 
   return 'customer';
 }
@@ -263,4 +266,42 @@ export function canManageAccountLifecycle(
   }
 
   return { allowed: true };
+}
+
+/**
+ * Asserts that the caller account is active, not disabled, and that the ID token
+ * was issued after tokensValidAfterTime (session not revoked).
+ */
+export async function assertNotRevoked(request: any): Promise<UserRecord> {
+  const uid = request?.auth?.uid;
+  if (!uid || typeof uid !== 'string') {
+    throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب للتحقق من هوية وحالة الحساب.');
+  }
+
+  let userRecord: UserRecord;
+  try {
+    userRecord = await getAuth().getUser(uid);
+  } catch (err: any) {
+    if (err?.code === 'auth/user-not-found') {
+      throw new HttpsError('unauthenticated', 'حساب المستخدم غير موجود في نظام التوثيق.');
+    }
+    throw new HttpsError('internal', 'حدث خطأ أثناء التحقق من حالة حساب المستخدم.');
+  }
+
+  if (userRecord.disabled) {
+    throw new HttpsError('permission-denied', 'تم تعطيل هذا الحساب من قِبل إدارة النظام.');
+  }
+
+  const tokenIat = request.auth?.token?.iat;
+  if (userRecord.tokensValidAfterTime && typeof tokenIat === 'number') {
+    const validAfterMs = Date.parse(userRecord.tokensValidAfterTime);
+    if (!isNaN(validAfterMs) && tokenIat * 1000 < validAfterMs) {
+      throw new HttpsError(
+        'unauthenticated',
+        'انتهت صلاحية جلسة تسجيل الدخول أو تم إلغاؤها (Token Revoked). يرجى تسجيل الدخول مجدداً.'
+      );
+    }
+  }
+
+  return userRecord;
 }

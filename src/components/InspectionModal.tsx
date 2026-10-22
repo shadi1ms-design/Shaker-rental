@@ -3,18 +3,16 @@ import { Vehicle, VehicleInspection } from '../types';
 import { dataService } from '../services/dataService';
 import { storageService } from '../services/storageService';
 import { validateUploadedFile } from '../utils/security';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   X,
   ClipboardCheck,
   CheckCircle2,
-  AlertTriangle,
   Car,
   Fuel,
   Gauge,
   Sparkles,
   Save,
-  Printer,
-  Upload,
   RefreshCw,
   Camera,
   Trash2,
@@ -34,8 +32,7 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
   onClose,
   onSaved,
 }) => {
-  if (!vehicle) return null;
-
+  const modalRef = useFocusTrap({ isOpen: Boolean(vehicle), onClose });
   const [inspectionType, setInspectionType] = useState<'pickup' | 'return'>('pickup');
   const [fuelLevel, setFuelLevel] = useState<'full' | 'three_quarters' | 'half' | 'quarter'>('full');
   const [mileage, setMileage] = useState<number>(vehicle?.currentMileage || 0);
@@ -64,6 +61,8 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
   const [mediaUploadProgress, setMediaUploadProgress] = useState(0);
   const mediaInputRef = useRef<HTMLInputElement>(null);
+
+  if (!vehicle) return null;
 
   const togglePartCondition = (part: string) => {
     setBodyChecks((prev) => {
@@ -183,9 +182,13 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6 text-slate-100">
+    <div className="min-h-[60vh] flex items-start justify-center py-2 text-slate-100">
       <div 
-        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl my-auto animate-in zoom-in-95 duration-200 max-h-[90vh] max-h-[90dvh] flex flex-col overflow-hidden"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="inspection-modal-title"
+        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl animate-in fade-in duration-200 overflow-clip"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         {/* Header */}
@@ -193,7 +196,7 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
           <div className="flex items-center gap-2">
             <ClipboardCheck className="w-5 h-5 text-amber-400" />
             <div>
-              <h3 className="font-bold text-sm sm:text-base text-white">
+              <h3 id="inspection-modal-title" className="font-bold text-sm sm:text-base text-white">
                 نموذج فحص وتسليم السيارة (Inspection Sheet)
               </h3>
               <span className="text-xs text-slate-400">
@@ -203,15 +206,17 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            aria-label="إغلاق نموذج الفحص"
+            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {savedSuccess ? (
-          <div className="p-8 sm:p-12 text-center space-y-3 overflow-y-auto flex-1 overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
+          <div className="p-8 sm:p-12 text-center space-y-3" style={{ WebkitOverflowScrolling: 'touch' }}>
             <CheckCircle2 className="w-16 h-16 text-emerald-400 mx-auto animate-bounce" />
             <h4 className="text-xl font-bold text-white">تم حفظ تقرير الفحص بنجاح!</h4>
             <p className="text-xs text-slate-400">تم تسجيل العداد ومستوى الوقود وحالة الهيكل في سجل المركبة.</p>
@@ -219,7 +224,7 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
         ) : (
           <form 
             onSubmit={handleSaveInspection} 
-            className="overflow-y-auto flex-1 p-4 sm:p-6 space-y-5 sm:space-y-6 overscroll-contain"
+            className="p-4 sm:p-6 space-y-5 sm:space-y-6"
             style={{ WebkitOverflowScrolling: 'touch' }}
           >
             {/* Type & Inspector */}
@@ -458,13 +463,15 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
                       className="relative group rounded-lg overflow-hidden border border-slate-700 bg-slate-900 w-20 h-16 flex items-center justify-center"
                     >
                       {file.type.startsWith('video/') ? (
-                        <div className="text-[10px] text-amber-400 font-bold text-center px-1">
+                        <div className="text-xs text-amber-400 font-bold text-center px-1">
                           🎬 فيديو
                         </div>
                       ) : (
                         <img
                           src={file.url}
                           alt={file.name}
+                          loading="lazy"
+                          decoding="async"
                           className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"
                         />
@@ -472,10 +479,11 @@ export const InspectionModal: React.FC<InspectionModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRemoveMedia(idx)}
-                        className="absolute top-1 right-1 p-1 rounded-full bg-black/70 text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-1 right-1 p-1 rounded-full bg-black/70 text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                         title="حذف"
+                        aria-label="حذف الملف"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ))}

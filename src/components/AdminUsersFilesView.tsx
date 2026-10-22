@@ -24,20 +24,18 @@ import {
   Plus,
   X,
   ExternalLink,
-  Filter,
   Trash2
 } from 'lucide-react';
 import { storageService } from '../services/storageService';
 import { functionsService } from '../services/functionsService';
 import { validateUploadedFile } from '../utils/security';
+import { StatusBadge } from './common/StatusBadge';
 
 interface AdminUsersFilesViewProps {
   onBackToOverview?: () => void;
 }
 
-export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
-  onBackToOverview
-}) => {
+export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = () => {
   const { user, isSuperAdmin, isAdmin, isEmployee } = useAuth();
   const [users, setUsers] = useState<FirestoreUser[]>(() => dataService.getCachedUsers());
   const [isLoading, setIsLoading] = useState(() => dataService.getCachedUsers().length === 0);
@@ -68,10 +66,17 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
   const [adminFileToDelete, setAdminFileToDelete] = useState<UploadedFile | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Fetch users on mount
-  useEffect(() => {
-    loadUsers();
-  }, []);
+  const loadUserFiles = async (userId: string) => {
+    setIsLoadingFiles(true);
+    try {
+      const files = await dataService.getFilesForUser(userId);
+      setUserFiles(files);
+    } catch (err) {
+      console.error(`Error fetching files for user ${userId}:`, err);
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  };
 
   const loadUsers = async (forceRefresh = false) => {
     try {
@@ -93,21 +98,14 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
     }
   };
 
+  // Fetch users on mount
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
   const handleSelectUser = async (u: FirestoreUser) => {
     setSelectedUser(u);
     loadUserFiles(u.id || u.uid);
-  };
-
-  const loadUserFiles = async (userId: string) => {
-    setIsLoadingFiles(true);
-    try {
-      const files = await dataService.getFilesForUser(userId);
-      setUserFiles(files);
-    } catch (err) {
-      console.error(`Error fetching files for user ${userId}:`, err);
-    } finally {
-      setIsLoadingFiles(false);
-    }
   };
 
   const handleUpdateVerificationStatus = async (
@@ -206,7 +204,6 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
         userId,
         userEmail: selectedUser.email,
         fileName: cleanDocName,
-        fileUrl: uploadResult.downloadUrl,
         storagePath: uploadResult.storagePath,
         fileType: uploadResult.fileType,
         fileSize: uploadResult.fileSize,
@@ -639,21 +636,6 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                         </div>
                       </div>
 
-                      {/* Thumbnail Preview if Image */}
-                      {file.fileUrl && !file.fileUrl.includes('.pdf') && (
-                        <div className="mt-3 rounded-xl overflow-hidden h-28 bg-slate-900 border border-slate-800 relative group/thumb cursor-pointer" onClick={() => setPreviewFile(file)}>
-                          <img
-                            src={file.fileUrl}
-                            alt={file.fileName}
-                            className="w-full h-full object-cover group-hover/thumb:scale-105 transition-transform duration-300"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="absolute inset-0 bg-slate-950/50 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white text-xs font-bold">
-                            <Eye className="w-4 h-4" />
-                            <span>معاينة</span>
-                          </div>
-                        </div>
-                      )}
                     </div>
 
                     {/* Actions */}
@@ -666,15 +648,17 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
                         <span>معاينة</span>
                       </button>
 
-                      <a
-                        href={file.fileUrl}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const url = await storageService.getFileDownloadUrl(file.storagePath);
+                          if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                        }}
                         className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 transition-colors border border-slate-700"
                         title="فتح الرابط المباشر"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
+                      </button>
 
                       <button
                         onClick={() => handleDeleteUserFile(file)}
@@ -869,26 +853,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
 
                         {/* Verification Status */}
                         <td className="py-3.5 px-4 text-center">
-                          {u.verificationStatus === 'verified' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                              <CheckCircle2 className="w-3 h-3" />
-                              <span>موثق</span>
-                            </span>
-                          ) : u.verificationStatus === 'manual_review' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              <Clock className="w-3 h-3" />
-                              <span>تدقيق يدوي</span>
-                            </span>
-                          ) : u.verificationStatus === 'rejected' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                              <AlertCircle className="w-3 h-3" />
-                              <span>مرفوض</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] text-slate-500 bg-slate-950 border border-slate-800">
-                              بانتظار الوثائق
-                            </span>
-                          )}
+                          <StatusBadge status={u.verificationStatus || 'pending'} type="verification" />
                         </td>
 
                         {/* Uploaded Files Count */}
@@ -951,43 +916,38 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto py-4 flex items-center justify-center">
-              {previewFile.fileUrl && !previewFile.fileUrl.includes('.pdf') ? (
-                <img
-                  src={previewFile.fileUrl}
-                  alt={previewFile.fileName}
-                  className="max-h-[60vh] rounded-xl object-contain border border-slate-800 shadow-md"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="text-center p-8 bg-slate-950 rounded-2xl border border-slate-800 w-full space-y-4">
-                  <FileText className="w-16 h-16 text-amber-400 mx-auto" />
-                  <p className="text-xs text-slate-300">مستند PDF رقمي جاهز للعرض والتحميل</p>
-                  <a
-                    href={previewFile.fileUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-md hover:bg-amber-400 transition-colors"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>فتح المستند في نافذة كاملة</span>
-                  </a>
-                </div>
-              )}
+              <div className="text-center p-8 bg-slate-950 rounded-2xl border border-slate-800 w-full space-y-4">
+                <FileText className="w-16 h-16 text-amber-400 mx-auto" />
+                <p className="text-xs text-slate-300">مستند رقمي محفوظ في Storage</p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const url = await storageService.getFileDownloadUrl(previewFile.storagePath);
+                    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-md hover:bg-amber-400 transition-colors"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>فتح المستند في نافذة جديدة</span>
+                </button>
+              </div>
             </div>
 
             <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
               <span className="text-xs text-slate-400">
                 تاريخ الرفع: {formatDate(previewFile.uploadedAt)}
               </span>
-              <a
-                href={previewFile.fileUrl}
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
+                onClick={async () => {
+                  const url = await storageService.getFileDownloadUrl(previewFile.storagePath);
+                  if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                }}
                 className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors border border-slate-700"
               >
                 <Download className="w-3.5 h-3.5 text-amber-400" />
                 <span>تحميل الملف</span>
-              </a>
+              </button>
             </div>
           </div>
         </div>

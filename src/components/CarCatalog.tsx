@@ -8,22 +8,20 @@ import {
   SearchFilters,
   SortField
 } from '../types';
-import { calculateRentalPrice, DEFAULT_SETTINGS } from '../services/pricing';
+import { DEFAULT_SETTINGS } from '../services/pricing';
 import { VEHICLE_CATEGORY_LABELS, getVehicleCategoryLabel } from '../constants/vehicleCategories';
 import {
   Users,
   Fuel,
   Settings,
-  Calendar,
   Sparkles,
   Search,
   Filter,
   ArrowUpDown,
-  Tag,
-  CheckCircle,
   AlertCircle,
   Clock,
   Info,
+  Calendar,
   Image as ImageIcon,
 } from 'lucide-react';
 
@@ -101,10 +99,6 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
 
   const uniqueBrands = useMemo(() => {
     return Array.from(new Set(safeVehicles.map(v => v.brand)));
-  }, [safeVehicles]);
-
-  const uniqueYears = useMemo(() => {
-    return Array.from(new Set(safeVehicles.map(v => v.year))).sort((a: number, b: number) => b - a);
   }, [safeVehicles]);
 
   // Filter and sort logic
@@ -442,9 +436,6 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {filteredVehicles.map((vehicle) => {
-                  // Calculate live weekly and monthly prices using pricing engine
-                  const weeklyCalc = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 7, DEFAULT_SETTINGS);
-                  const monthlyCalc = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 30, DEFAULT_SETTINGS);
                   const isAvailable = vehicle.status === 'available';
                   const isRented = vehicle.status === 'rented';
                   const isMaintenance = vehicle.status === 'maintenance';
@@ -462,8 +453,11 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                           <img
                             src={vehicle.imageUrl || (vehicle.images && vehicle.images[0])}
                             alt={`${vehicle.brand} ${vehicle.model}`}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            width={400}
+                            height={250}
                             loading="lazy"
+                            decoding="async"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                             onError={() => setFailedImages((prev) => ({ ...prev, [vehicle.id]: true }))}
                           />
                         )}
@@ -502,8 +496,8 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
 
                         {/* Multi-image indicator */}
                         {vehicle.images && vehicle.images.length > 1 && (
-                          <div className="absolute bottom-3 left-3 text-[11px] text-slate-300 bg-slate-950/80 px-2 py-0.5 rounded-lg backdrop-blur-sm border border-slate-700/50 flex items-center gap-1">
-                            <ImageIcon className="w-3 h-3 text-amber-400" />
+                          <div className="absolute bottom-3 left-3 text-xs text-slate-300 bg-slate-950/80 px-2 py-0.5 rounded-lg backdrop-blur-sm border border-slate-700/50 flex items-center gap-1">
+                            <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
                             <span>{vehicle.images.length} صور</span>
                           </div>
                         )}
@@ -564,8 +558,9 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                         {/* Actions */}
                         <div className="flex items-center gap-2 pt-2">
                           <button
+                            type="button"
                             onClick={() => handleDetails(vehicle)}
-                            className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors flex items-center justify-center gap-1"
+                            className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors flex items-center justify-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                           >
                             <Info className="w-3.5 h-3.5 text-slate-400" />
                             <span>التفاصيل</span>
@@ -573,8 +568,9 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
 
                           {isAvailable ? (
                             <button
+                              type="button"
                               onClick={() => handleBooking(vehicle)}
-                              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1 cursor-pointer"
+                              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                             >
                               <Calendar className="w-3.5 h-3.5" />
                               <span>احجز الآن</span>

@@ -3,6 +3,7 @@ import { Vehicle } from '../types';
 import { calculateRentalPrice, DEFAULT_SETTINGS } from '../services/pricing';
 import { openWhatsAppChat } from '../services/whatsapp';
 import { useAuth } from '../contexts/AuthContext';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { VehicleImagePlaceholder } from './VehicleImagePlaceholder';
 import {
   X,
@@ -34,23 +35,22 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
   onBook,
   onBookNow,
 }) => {
-  if (!vehicle) return null;
-
+  const modalRef = useFocusTrap({ isOpen: Boolean(vehicle), onClose });
   const { isAdmin, isSuperAdmin } = useAuth();
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [imageError, setImageError] = useState(false);
 
   const imagesList =
-    vehicle.images && vehicle.images.length > 0
+    vehicle?.images && vehicle.images.length > 0
       ? vehicle.images
-      : (vehicle.imageUrl ? [vehicle.imageUrl] : []);
+      : (vehicle?.imageUrl ? [vehicle.imageUrl] : []);
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const currentImage = imagesList[activeImageIndex] || imagesList[0];
 
   useEffect(() => {
     setImageError(false);
-  }, [vehicle.id, activeImageIndex]);
+  }, [vehicle?.id, activeImageIndex]);
 
   const handleNextImage = () => {
     setActiveImageIndex((prev) => (prev + 1) % imagesList.length);
@@ -76,13 +76,19 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isLightboxOpen, imagesList.length]);
 
+  if (!vehicle) return null;
+
   const weekly = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 7, DEFAULT_SETTINGS);
   const monthly = calculateRentalPrice(vehicle.category, vehicle.dailyPrice, 30, DEFAULT_SETTINGS);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2.5 sm:p-4 md:p-6 bg-black/80 backdrop-blur-sm overflow-y-auto pt-4 sm:pt-6 pb-6 sm:pb-6">
+    <div className="min-h-[calc(100vh-4rem)] flex items-start justify-center p-3 sm:p-6 bg-slate-950">
       <div 
-        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl my-auto animate-in zoom-in-95 duration-200 max-h-[90vh] max-h-[90dvh] flex flex-col overflow-hidden"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="car-details-title"
+        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl animate-in fade-in duration-200 overflow-clip"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         {/* Close Button */}
@@ -91,16 +97,16 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
             e.stopPropagation();
             onClose();
           }}
-          className="absolute top-4 left-4 z-20 p-2 rounded-full bg-slate-950/70 text-slate-300 hover:text-white hover:bg-slate-950 transition-colors shadow-md cursor-pointer"
-          title="إغلاق النافذة"
-          aria-label="إغلاق"
+          className="absolute top-4 left-4 z-20 p-2 rounded-full bg-slate-950/70 text-slate-300 hover:text-white hover:bg-slate-950 transition-colors shadow-md cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          title="العودة للأسطول"
+          aria-label="إغلاق تفاصيل السيارة"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Scrollable Modal Body */}
         <div 
-          className="overflow-y-auto flex-1 overscroll-contain"
+          className=""
           style={{ WebkitOverflowScrolling: 'touch' }}
         >
           {/* Hero Image & Gallery Controls */}
@@ -115,14 +121,16 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
               <img
                 src={currentImage}
                 alt={`${vehicle.brand} ${vehicle.model} - صورة ${activeImageIndex + 1}`}
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover transition-all duration-300 group-hover:scale-[1.01]"
                 onError={() => setImageError(true)}
               />
             )}
 
             {/* Subtle Zoom Badge in Corner */}
-            <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-full bg-slate-950/75 hover:bg-slate-950/95 backdrop-blur-md text-[11px] font-semibold text-slate-200 border border-slate-700/60 flex items-center gap-1.5 opacity-90 group-hover:opacity-100 transition-opacity">
-              <Maximize2 className="w-3 h-3 text-amber-400" />
+            <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-full bg-slate-950/75 hover:bg-slate-950/95 backdrop-blur-md text-xs font-semibold text-slate-200 border border-slate-700/60 flex items-center gap-1.5 opacity-90 group-hover:opacity-100 transition-opacity">
+              <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
               <span>انقر للتكبير</span>
             </div>
 
@@ -130,32 +138,36 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
             {imagesList.length > 1 && (
               <>
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     handlePrevImage();
                   }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-slate-950/60 hover:bg-slate-950/90 text-white backdrop-blur-sm border border-slate-700/50 transition-all z-10 cursor-pointer shadow-md"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-slate-950/60 hover:bg-slate-950/90 text-white backdrop-blur-sm border border-slate-700/50 transition-all z-10 cursor-pointer shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                   title="الصورة السابقة"
+                  aria-label="الصورة السابقة"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleNextImage();
                   }}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-slate-950/60 hover:bg-slate-950/90 text-white backdrop-blur-sm border border-slate-700/50 transition-all z-10 cursor-pointer shadow-md"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-slate-950/60 hover:bg-slate-950/90 text-white backdrop-blur-sm border border-slate-700/50 transition-all z-10 cursor-pointer shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                   title="الصورة التالية"
+                  aria-label="الصورة التالية"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
 
                 {/* Photo Indicator Counter */}
                 <div 
-                  className="absolute top-4 right-4 z-10 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md text-[11px] font-mono text-slate-200 border border-slate-700/60 flex items-center gap-1.5"
+                  className="absolute top-4 right-4 z-10 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md text-xs font-mono text-slate-200 border border-slate-700/60 flex items-center gap-1.5"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <ImageIcon className="w-3 h-3 text-amber-400" />
+                  <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
                   <span>{activeImageIndex + 1} / {imagesList.length}</span>
                 </div>
               </>
@@ -168,14 +180,16 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
               {imagesList.map((img, idx) => (
                 <button
                   key={`${img}-${idx}`}
+                  type="button"
                   onClick={() => setActiveImageIndex(idx)}
-                  className={`relative w-16 h-12 rounded-xl overflow-hidden flex-shrink-0 border-2 transition-all ${
+                  aria-label={`عرض الصورة رقم ${idx + 1}`}
+                  className={`relative w-16 h-12 rounded-xl overflow-hidden flex-shrink-0 border-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                     activeImageIndex === idx
                       ? 'border-amber-500 ring-2 ring-amber-500/30 scale-105'
                       : 'border-slate-800 opacity-60 hover:opacity-100'
                   }`}
                 >
-                  <img src={img} alt={`مصغرة ${idx + 1}`} className="w-full h-full object-cover" />
+                  <img src={img} alt={`مصغرة ${idx + 1}`} loading="lazy" decoding="async" width={64} height={48} className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
@@ -209,7 +223,7 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
               </span>
             </div>
 
-            <h2 className="text-2xl sm:text-3xl font-black text-white">
+            <h2 id="car-details-title" className="text-2xl sm:text-3xl font-black text-white">
               {vehicle.brand} {vehicle.model}
             </h2>
 
@@ -363,10 +377,11 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
         >
           {/* Close Button */}
           <button
+            type="button"
             onClick={() => setIsLightboxOpen(false)}
-            className="absolute top-4 left-4 sm:top-6 sm:left-6 z-20 p-2.5 sm:p-3 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 transition-all cursor-pointer shadow-lg"
+            className="absolute top-4 left-4 sm:top-6 sm:left-6 z-20 p-2.5 sm:p-3 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 transition-all cursor-pointer shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             title="إغلاق التكبير (ESC)"
-            aria-label="إغلاق"
+            aria-label="إغلاق العرض المكبر"
           >
             <X className="w-6 h-6" />
           </button>
@@ -386,22 +401,26 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
           {imagesList.length > 1 && (
             <>
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   handlePrevImage();
                 }}
-                className="absolute right-3 sm:right-6 top-1/2 -translate-y-1/2 p-2.5 sm:p-3 rounded-full bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700/60 transition-all z-20 shadow-xl cursor-pointer"
+                className="absolute right-3 sm:right-6 top-1/2 -translate-y-1/2 p-2.5 sm:p-3 rounded-full bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700/60 transition-all z-20 shadow-xl cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 title="الصورة السابقة"
+                aria-label="الصورة السابقة"
               >
                 <ChevronRight className="w-6 h-6" />
               </button>
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleNextImage();
                 }}
-                className="absolute left-3 sm:left-6 top-1/2 -translate-y-1/2 p-2.5 sm:p-3 rounded-full bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700/60 transition-all z-20 shadow-xl cursor-pointer"
+                className="absolute left-3 sm:left-6 top-1/2 -translate-y-1/2 p-2.5 sm:p-3 rounded-full bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700/60 transition-all z-20 shadow-xl cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 title="الصورة التالية"
+                aria-label="الصورة التالية"
               >
                 <ChevronLeft className="w-6 h-6" />
               </button>

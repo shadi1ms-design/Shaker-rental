@@ -9,12 +9,13 @@
  */
 
 import { onRequest } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import * as crypto from 'crypto';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
 import { applyBookingStatusChange } from './bookingHelpers';
 
-const db = getFirestore(admin.app(), DATABASE_ID);
+const db = getFirestore(getApp(), DATABASE_ID);
 
 /**
  * Escapes characters for Telegram HTML mode.
@@ -29,6 +30,19 @@ function escapeHtml(text: unknown): string {
 }
 
 /**
+ * Helper to fetch with an 8-second AbortController timeout
+ */
+async function fetchWithTimeout(url: string, options: any, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Answers a Telegram callback query to dismiss loading state or display alerts.
  */
 async function answerCallbackQuery(
@@ -38,7 +52,7 @@ async function answerCallbackQuery(
 ): Promise<void> {
   try {
     const url = `https://api.telegram.org/bot${botToken}/answerCallbackQuery`;
-    await fetch(url, {
+    await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -63,7 +77,7 @@ async function editMessageText(
 ): Promise<void> {
   try {
     const url = `https://api.telegram.org/bot${botToken}/editMessageText`;
-    await fetch(url, {
+    await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -88,11 +102,20 @@ export const telegramWebhook = onRequest(
   },
   async (req, res) => {
     try {
-      // 1. Webhook secret header check
-      const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
-      const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+      // 1. Webhook secret header check using constant-time comparison (crypto.timingSafeEqual)
+      const secretHeader = String(req.headers['x-telegram-bot-api-secret-token'] || '');
+      const expectedSecret = String(process.env.TELEGRAM_WEBHOOK_SECRET || '');
 
-      if (!expectedSecret || secretHeader !== expectedSecret) {
+      let isValidSecret = false;
+      if (secretHeader && expectedSecret) {
+        const bufA = Buffer.from(secretHeader);
+        const bufB = Buffer.from(expectedSecret);
+        if (bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB)) {
+          isValidSecret = true;
+        }
+      }
+
+      if (!isValidSecret) {
         console.warn('[telegramWebhook] Unauthorized webhook request. Secret mismatch.');
         res.status(401).end();
         return;
@@ -117,21 +140,20 @@ export const telegramWebhook = onRequest(
       const senderUserId = callbackQuery.from?.id;
       const messageChatId = callbackQuery.message?.chat?.id;
 
-      // 2. Sender Authorization: TELEGRAM_ALLOWED_USER_IDS (Requirement 4)
-      const allowedUserIdsRaw = process.env.TELEGRAM_ALLOWED_USER_IDS;
-      if (allowedUserIdsRaw) {
-        const allowedIds = allowedUserIdsRaw.split(',').map((id) => id.trim()).filter(Boolean);
-        if (!senderUserId || !allowedIds.includes(String(senderUserId))) {
-          console.warn(`[telegramWebhook] Unauthorized Telegram user rejected: ${senderUserId}`);
-          if (callbackQueryId) {
-            await answerCallbackQuery(botToken, callbackQueryId, {
-              text: 'عذراً، معرف حسابك غير مصرح له بتنفيذ عمليات على هذا النظام.',
-              show_alert: true,
-            });
-          }
-          res.status(200).send('ok');
-          return;
+      // 2. Sender Authorization: TELEGRAM_ALLOWED_USER_IDS (Fail-closed if empty)
+      const allowedUserIdsRaw = process.env.TELEGRAM_ALLOWED_USER_IDS || '';
+      const allowedIds = allowedUserIdsRaw.split(',').map((id) => id.trim()).filter(Boolean);
+
+      if (allowedIds.length === 0 || !senderUserId || !allowedIds.includes(String(senderUserId))) {
+        console.warn(`[telegramWebhook] Unauthorized Telegram user rejected (fail-closed): ${senderUserId}`);
+        if (callbackQueryId) {
+          await answerCallbackQuery(botToken, callbackQueryId, {
+            text: 'عذراً، لم يتم ضبط المستخدمين المصرحين أو معرف حسابك غير مصرح له بتنفيذ عمليات على هذا النظام.',
+            show_alert: true,
+          });
         }
+        res.status(200).send('ok');
+        return;
       }
 
       // 3. Chat ID Verification: TELEGRAM_CHAT_ID (Requirement 4)
@@ -168,7 +190,7 @@ export const telegramWebhook = onRequest(
           id: callbackQueryId,
           callbackData,
           senderUserId: senderUserId || null,
-          handledAt: admin.firestore.FieldValue.serverTimestamp(),
+          handledAt: FieldValue.serverTimestamp(),
         });
       }
 

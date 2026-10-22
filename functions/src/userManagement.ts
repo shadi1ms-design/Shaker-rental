@@ -1,14 +1,18 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+import type { UserRecord } from 'firebase-admin/auth';
+import { getStorage } from 'firebase-admin/storage';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
 import {
   canManageUserRole,
   canManageAccountLifecycle,
   getUserRoleFromClaims,
+  assertNotRevoked,
 } from './authz';
 
-const db = getFirestore(admin.app(), DATABASE_ID);
+const db = getFirestore(getApp(), DATABASE_ID);
 
 /**
  * Cloud Function: setUserRole (region: asia-south1)
@@ -20,9 +24,7 @@ export const setUserRole = onCall(
     enforceAppCheck: true,
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لإجراء هذا الطلب.');
-    }
+    await assertNotRevoked(request);
 
     const { targetUid, newRole } = request.data || {};
     if (!targetUid || typeof targetUid !== 'string' || !targetUid.trim()) {
@@ -30,13 +32,13 @@ export const setUserRole = onCall(
     }
 
     const cleanTargetUid = targetUid.trim();
-    const callerUid = request.auth.uid;
-    const callerToken = request.auth.token;
+    const callerUid = request.auth!.uid;
+    const callerToken = request.auth!.token;
 
     // 1. Verify target user exists in Firebase Authentication
-    let targetUserRecord: admin.auth.UserRecord;
+    let targetUserRecord: UserRecord;
     try {
-      targetUserRecord = await admin.auth().getUser(cleanTargetUid);
+      targetUserRecord = await getAuth().getUser(cleanTargetUid);
     } catch (err: any) {
       if (err.code === 'auth/user-not-found') {
         throw new HttpsError('not-found', 'المستخدم المستهدف غير موجود في نظام التوثيق.');
@@ -71,12 +73,17 @@ export const setUserRole = onCall(
       admin: normalizedRole === 'admin',
       employee: normalizedRole === 'employee' || normalizedRole === 'admin',
       super_admin: false,
+      // Clear legacy boolean claims that Firestore/Storage rules would still honor
+      staff: false,
+      manager: false,
+      superAdmin: false,
+      owner: false,
     };
 
     try {
-      await admin.auth().setCustomUserClaims(cleanTargetUid, mergedClaims);
+      await getAuth().setCustomUserClaims(cleanTargetUid, mergedClaims);
       // Revoke refresh tokens to force client re-authentication and immediate claim adoption
-      await admin.auth().revokeRefreshTokens(cleanTargetUid);
+      await getAuth().revokeRefreshTokens(cleanTargetUid);
     } catch (authErr: any) {
       console.error('[setUserRole] Failed setting custom claims:', authErr);
       throw new HttpsError('internal', 'فشل تعيين مطالبات التوثيق للمستخدم في خادم المصادقة.');
@@ -87,7 +94,7 @@ export const setUserRole = onCall(
       await db.collection('users').doc(cleanTargetUid).set(
         {
           role: normalizedRole,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
@@ -106,8 +113,8 @@ export const setUserRole = onCall(
         targetUser: cleanTargetUid,
         oldRole: getUserRoleFromClaims(targetExistingClaims),
         newRole: normalizedRole,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
         details: `تعديل صلاحيات المستخدم ${cleanTargetUid} إلى ${normalizedRole} مع إبطال الجلسات السابقة`,
       });
     } catch (auditErr) {
@@ -133,9 +140,7 @@ export const toggleUserAccountStatus = onCall(
     enforceAppCheck: true,
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لإجراء هذا الطلب.');
-    }
+    await assertNotRevoked(request);
 
     const { targetUid, disabled } = request.data || {};
     if (!targetUid || typeof targetUid !== 'string' || !targetUid.trim()) {
@@ -143,13 +148,13 @@ export const toggleUserAccountStatus = onCall(
     }
 
     const cleanTargetUid = targetUid.trim();
-    const callerUid = request.auth.uid;
-    const callerToken = request.auth.token;
+    const callerUid = request.auth!.uid;
+    const callerToken = request.auth!.token;
 
     // 1. Verify target user exists
-    let targetUserRecord: admin.auth.UserRecord;
+    let targetUserRecord: UserRecord;
     try {
-      targetUserRecord = await admin.auth().getUser(cleanTargetUid);
+      targetUserRecord = await getAuth().getUser(cleanTargetUid);
     } catch (err: any) {
       if (err.code === 'auth/user-not-found') {
         throw new HttpsError('not-found', 'المستخدم المستهدف غير موجود في نظام التوثيق.');
@@ -174,8 +179,8 @@ export const toggleUserAccountStatus = onCall(
 
     // 3. Update status in Auth and revoke tokens
     try {
-      await admin.auth().updateUser(cleanTargetUid, { disabled: isDisabled });
-      await admin.auth().revokeRefreshTokens(cleanTargetUid);
+      await getAuth().updateUser(cleanTargetUid, { disabled: isDisabled });
+      await getAuth().revokeRefreshTokens(cleanTargetUid);
     } catch (authErr: any) {
       console.error('[toggleUserAccountStatus] Auth update failed:', authErr);
       throw new HttpsError('internal', 'فشل تحديث حالة الحساب في خادم المصادقة.');
@@ -188,7 +193,7 @@ export const toggleUserAccountStatus = onCall(
           accountDisabled: isDisabled,
           disabled: isDisabled,
           active: !isDisabled,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
@@ -205,8 +210,8 @@ export const toggleUserAccountStatus = onCall(
         actorType: 'staff',
         performedBy: callerUid,
         targetUser: cleanTargetUid,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
     } catch (auditErr) {
       console.warn('[toggleUserAccountStatus] Audit write failed:', auditErr);
@@ -231,9 +236,7 @@ export const deleteUserAccount = onCall(
     enforceAppCheck: true,
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لإجراء هذا الطلب.');
-    }
+    await assertNotRevoked(request);
 
     const { targetUid } = request.data || {};
     if (!targetUid || typeof targetUid !== 'string' || !targetUid.trim()) {
@@ -241,13 +244,13 @@ export const deleteUserAccount = onCall(
     }
 
     const cleanTargetUid = targetUid.trim();
-    const callerUid = request.auth.uid;
-    const callerToken = request.auth.token;
+    const callerUid = request.auth!.uid;
+    const callerToken = request.auth!.token;
 
     // 1. Verify target user exists
-    let targetUserRecord: admin.auth.UserRecord;
+    let targetUserRecord: UserRecord;
     try {
-      targetUserRecord = await admin.auth().getUser(cleanTargetUid);
+      targetUserRecord = await getAuth().getUser(cleanTargetUid);
     } catch (err: any) {
       if (err.code === 'auth/user-not-found') {
         throw new HttpsError('not-found', 'المستخدم المستهدف غير موجود في نظام التوثيق.');
@@ -268,38 +271,87 @@ export const deleteUserAccount = onCall(
       throw new HttpsError('permission-denied', authzCheck.reason || 'غير مصرح بحذف هذا الحساب.');
     }
 
-    // 3. Purge user files from Storage
-    try {
-      const bucket = admin.storage().bucket();
-      await bucket.deleteFiles({ prefix: `users/${cleanTargetUid}/`, force: true }).catch(() => {});
-      await bucket.deleteFiles({ prefix: `uploads/${cleanTargetUid}/`, force: true }).catch(() => {});
-    } catch (storageErr) {
-      console.warn('[deleteUserAccount] Storage purge warning:', storageErr);
+    // 2.5. Prevent deleting the last Super Admin
+    const targetRole = getUserRoleFromClaims(targetUserRecord.customClaims);
+    if (targetRole === 'super_admin') {
+      const superAdminsSnap = await db.collection('users')
+        .where('role', '==', 'super_admin')
+        .limit(2)
+        .get();
+      
+      if (superAdminsSnap.size <= 1) {
+        throw new HttpsError('failed-precondition', 'لا يمكن حذف آخر مدير عام (Super Admin) في النظام.');
+      }
     }
 
-    // 4. Anonymize customer identity in bookings instead of deleting bookings (Financial & Legal audit history preservation)
+    // 3. Purge user files from Storage
+    try {
+      const bucket = getStorage().bucket();
+      await bucket.deleteFiles({ prefix: `users/${cleanTargetUid}/`, force: true });
+      await bucket.deleteFiles({ prefix: `uploads/${cleanTargetUid}/`, force: true });
+    } catch (storageErr) {
+      console.error('[deleteUserAccount] Storage purge failed:', storageErr);
+      throw new HttpsError(
+        'internal',
+        'فشل تنظيف ملفات المستخدم في مساحة التخزين السحابية (Storage). تم إيقاف عملية الحذف لمنع وجود بيانات يتيمة.'
+      );
+    }
+
+    // Delete Firestore user-related files and rate limits
+    try {
+      // 1. Delete top-level files docs
+      const filesSnap = await db.collection('files').where('userId', '==', cleanTargetUid).get();
+      const filesBatch = db.batch();
+      filesSnap.docs.forEach(doc => filesBatch.delete(doc.ref));
+      await filesBatch.commit();
+
+      // 2. Delete user-subcollection files
+      const userFilesSnap = await db.collection('users').doc(cleanTargetUid).collection('files').get();
+      const userFilesBatch = db.batch();
+      userFilesSnap.docs.forEach(doc => userFilesBatch.delete(doc.ref));
+      await userFilesBatch.commit();
+
+      const rlRef = db.collection('rateLimits').doc(`booking_ip_${cleanTargetUid}`);
+      await rlRef.delete().catch(() => {});
+    } catch (dbErr) {
+      console.error('[deleteUserAccount] Firestore files cleanup failed:', dbErr);
+      throw new HttpsError(
+        'internal',
+        'فشل تنظيف سجلات الوثائق التابعة للمستخدم في قاعدة البيانات. تم إيقاف عملية الحذف.'
+      );
+    }
+
+    // 4. Anonymize customer identity in bookings (Batched 400)
     try {
       const bookingsSnap = await db.collection('bookings')
         .where('customerId', '==', cleanTargetUid)
         .get();
 
-      const batch = db.batch();
-      for (const bDoc of bookingsSnap.docs) {
-        batch.update(bDoc.ref, {
-          customerName: 'عميل محذوف (حساب ملغى)',
-          customerEmail: 'deleted-user@shakercars.com',
-          customerPhone: '',
-          customerWhatsApp: '',
-          customerNationalId: '',
-          customerLicenseNumber: '',
-          customerAddress: '',
-          isAnonymized: true,
-          anonymizedAt: admin.firestore.FieldValue.serverTimestamp(),
+      const batchSize = 400;
+      for (let i = 0; i < bookingsSnap.docs.length; i += batchSize) {
+        const batch = db.batch();
+        const chunk = bookingsSnap.docs.slice(i, i + batchSize);
+        chunk.forEach(bDoc => {
+          batch.update(bDoc.ref, {
+            customerName: 'عميل محذوف (حساب ملغى)',
+            customerEmail: 'deleted-user@shakercars.com',
+            customerPhone: '',
+            customerWhatsApp: '',
+            customerNationalId: '',
+            customerLicenseNumber: '',
+            customerAddress: '',
+            isAnonymized: true,
+            anonymizedAt: FieldValue.serverTimestamp(),
+          });
         });
+        await batch.commit();
       }
-      await batch.commit();
     } catch (bkErr) {
-      console.warn('[deleteUserAccount] Failed to anonymize bookings:', bkErr);
+      console.error('[deleteUserAccount] Failed to anonymize bookings:', bkErr);
+      throw new HttpsError(
+        'internal',
+        'فشل إخفاء هوية المستخدم في سجلات الحجوزات. تم إيقاف عملية الحذف.'
+      );
     }
 
     // 5. Delete Firestore documents (users, customers)
@@ -307,13 +359,17 @@ export const deleteUserAccount = onCall(
       await db.collection('users').doc(cleanTargetUid).delete();
       await db.collection('customers').doc(cleanTargetUid).delete();
     } catch (dbErr) {
-      console.warn('[deleteUserAccount] Firestore deletion warning:', dbErr);
+      console.error('[deleteUserAccount] Firestore user document deletion failed:', dbErr);
+      throw new HttpsError(
+        'internal',
+        'فشل حذف سجل المستخدم الرئيسي من قاعدة البيانات. تم إيقاف عملية الحذف.'
+      );
     }
 
     // 6. Delete user from Firebase Authentication
     try {
-      await admin.auth().revokeRefreshTokens(cleanTargetUid);
-      await admin.auth().deleteUser(cleanTargetUid);
+      await getAuth().revokeRefreshTokens(cleanTargetUid);
+      await getAuth().deleteUser(cleanTargetUid);
     } catch (authErr: any) {
       console.error('[deleteUserAccount] Auth user deletion failed:', authErr);
       if (authErr.code !== 'auth/user-not-found') {
@@ -330,9 +386,9 @@ export const deleteUserAccount = onCall(
         actorType: 'staff',
         performedBy: callerUid,
         targetUser: cleanTargetUid,
-        details: `حذف الحساب نهائياً، مسح ملفات التخزين، وإخفاء هوية العميل في الحجوزات السابقة بنجاح`,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        details: 'حذف الحساب نهائياً، مسح ملفات التخزين، وإخفاء هوية العميل في الحجوزات السابقة بنجاح.',
+        timestamp: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
     } catch (auditErr) {
       console.warn('[deleteUserAccount] Audit write failed:', auditErr);
@@ -363,7 +419,7 @@ export const syncMyRole = onCall(
     const uid = request.auth.uid;
 
     try {
-      const userRecord = await admin.auth().getUser(uid);
+      const userRecord = await getAuth().getUser(uid);
       const claims = userRecord.customClaims || {};
 
       if (claims.role || claims.admin || claims.employee || claims.super_admin) {
@@ -384,7 +440,7 @@ export const syncMyRole = onCall(
         super_admin: false,
       };
 
-      await admin.auth().setCustomUserClaims(uid, defaultClaims);
+      await getAuth().setCustomUserClaims(uid, defaultClaims);
 
       return {
         success: true,

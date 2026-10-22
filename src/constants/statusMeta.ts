@@ -1,4 +1,4 @@
-import { BookingStatus, VehicleStatus } from '../types';
+import { VehicleStatus } from '../types';
 
 export interface StatusMeta {
   label: string;
@@ -71,3 +71,27 @@ export const VEHICLE_STATUS_META: Record<VehicleStatus, StatusMeta> = {
     dotClass: 'bg-slate-500',
   },
 };
+
+export const USER_VERIFICATION_STATUS_META: Record<string, StatusMeta> = {
+  verified: {
+    label: 'موثق',
+    badgeClass: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
+    dotClass: 'bg-emerald-400',
+  },
+  manual_review: {
+    label: 'تدقيق يدوي',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+    dotClass: 'bg-amber-400',
+  },
+  rejected: {
+    label: 'مرفوض',
+    badgeClass: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+    dotClass: 'bg-rose-400',
+  },
+  pending: {
+    label: 'بانتظار الوثائق',
+    badgeClass: 'bg-slate-800 text-slate-400 border border-slate-700',
+    dotClass: 'bg-slate-500',
+  },
+};
+
