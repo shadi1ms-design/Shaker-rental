@@ -1,1143 +1,882 @@
-import React, { useState, useEffect } from 'react';
-import { FirestoreUser, UserFileRecord } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { FirestoreUser, VerificationRequest } from '../types';
 import { dataService } from '../services/dataService';
+import { functionsService } from '../services/functionsService';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Users,
-  FileText,
-  Calendar,
-  Mail,
   Shield,
   ShieldCheck,
+  ShieldAlert,
   Search,
   RefreshCw,
-  FolderOpen,
   Eye,
-  Download,
-  Upload,
-  ChevronLeft,
   CheckCircle2,
   AlertCircle,
   Clock,
-  HardDrive,
   User,
-  Plus,
   X,
-  ExternalLink,
-  Trash2
+  Lock,
+  FileText,
 } from 'lucide-react';
-import { storageService } from '../services/storageService';
-import { functionsService } from '../services/functionsService';
-import { validateUploadedFile } from '../utils/security';
-import { StatusBadge } from './common/StatusBadge';
 
 interface AdminUsersFilesViewProps {
   onBackToOverview?: () => void;
 }
 
-export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = () => {
-  const { user, isSuperAdmin, isAdmin, isEmployee } = useAuth();
+export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBackToOverview }) => {
+  const { user, isSuperAdmin, isAdmin } = useAuth();
+
+  // Active view: verification queue or all accounts
+  const [subTab, setSubTab] = useState<'verification_queue' | 'all_users'>('verification_queue');
+
+  // Verification Requests State
+  const [verificationRequests, setVerificationRequests] = useState<VerificationRequest[]>([]);
+  const [isLoadingRequests, setIsLoadingRequests] = useState(true);
+  const [requestFilter, setRequestFilter] = useState<'pending_review' | 'verified' | 'rejected' | 'all'>('pending_review');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Users State
   const [users, setUsers] = useState<FirestoreUser[]>(() => dataService.getCachedUsers());
-  const [isLoading, setIsLoading] = useState(() => dataService.getCachedUsers().length === 0);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterMode, setFilterMode] = useState<'all' | 'with_files' | 'manual_review' | 'verified' | 'rejected' | 'no_files'>('all');
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [userRoleUpdating, setUserRoleUpdating] = useState<string | null>(null);
 
-  // Verification status update state
-  const [isUpdatingVerification, setIsUpdatingVerification] = useState(false);
-  const [verificationFeedback, setVerificationFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  // Secure Document Viewer State (60s signed URL + watermark)
+  const [viewingDoc, setViewingDoc] = useState<{
+    targetUid: string;
+    docKey: 'driver_license' | 'identity';
+    docLabel: string;
+    url: string | null;
+    expiresAt?: string;
+    isLoading: boolean;
+    error?: string | null;
+  } | null>(null);
 
-  // Selected User Drill-down state
-  const [selectedUser, setSelectedUser] = useState<FirestoreUser | null>(null);
-  const [userFiles, setUserFiles] = useState<UserFileRecord[]>([]);
-  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  // Review Actions State
+  const [decisionAction, setDecisionAction] = useState<{
+    targetUid: string;
+    action: 'approve' | 'reject' | 'revoke';
+    userName?: string;
+  } | null>(null);
+  const [actionReason, setActionReason] = useState('');
+  const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // File Preview Modal
-  const [previewFile, setPreviewFile] = useState<UserFileRecord | null>(null);
-
-  // Upload Modal for User
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploadFileName, setUploadFileName] = useState('');
-  const [uploadFileCategory, setUploadFileCategory] = useState<UserFileRecord['category']>('driver_license');
-  const [adminSelectedFile, setAdminSelectedFile] = useState<File | null>(null);
-  const [adminUploadProgress, setAdminUploadProgress] = useState(0);
-  const [adminUploadError, setAdminUploadError] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
-  const [adminFileToDelete, setAdminFileToDelete] = useState<UserFileRecord | null>(null);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  const loadUserFiles = async (userId: string) => {
-    setIsLoadingFiles(true);
-    try {
-      const files = await dataService.getFilesForUser(userId);
-      setUserFiles(files);
-    } catch (err) {
-      console.error(`Error fetching files for user ${userId}:`, err);
-    } finally {
-      setIsLoadingFiles(false);
-    }
-  };
-
-  const loadUsers = async (forceRefresh = false) => {
-    try {
-      const fetchedUsers = await dataService.getAllUsers(forceRefresh);
-      setUsers(fetchedUsers);
-      
-      // If a user is already selected, update their data
-      if (selectedUser) {
-        const updated = fetchedUsers.find(u => u.id === selectedUser.id || u.uid === selectedUser.uid);
-        if (updated) {
-          setSelectedUser(updated);
-          loadUserFiles(updated.id || updated.uid);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching Firestore users:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Fetch users on mount
+  // Real-time subscription to verification requests
   useEffect(() => {
-    loadUsers();
-  }, []);
+    if (!isAdmin && !isSuperAdmin) return;
+    setIsLoadingRequests(true);
+    const unsubscribe = dataService.subscribeToAllVerificationRequests((reqs) => {
+      setVerificationRequests(reqs);
+      setIsLoadingRequests(false);
+    });
+    return () => unsubscribe();
+  }, [isAdmin, isSuperAdmin]);
 
-  const handleSelectUser = async (u: FirestoreUser) => {
-    setSelectedUser(u);
-    loadUserFiles(u.id || u.uid);
-  };
-
-  const handleUpdateVerificationStatus = async (
-    targetUserId: string,
-    newStatus: 'pending' | 'manual_review' | 'verified' | 'rejected',
-    notes?: string
-  ) => {
-    setIsUpdatingVerification(true);
-    setVerificationFeedback(null);
+  // Load all users for the "All Users" sub-tab
+  const loadUsers = async (forceRefresh = false) => {
+    setIsLoadingUsers(true);
     try {
-      const res = await functionsService.verifyCustomerIdentity({
-        action: 'set_status',
-        targetUserId,
-        status: newStatus,
-        notes: notes || `تم تحديث الحالة إلى ${newStatus} بواسطة المشرف ${user?.displayName || user?.email}`
-      });
-
-      if (res.success) {
-        setVerificationFeedback({
-          type: 'success',
-          message: (res.data as { message?: string })?.message || 'تم تحديث حالة توثيق العميل بنجاح في Firestore.'
-        });
-        // Update local state for immediate feedback
-        setUsers(prev => prev.map(u => u.id === targetUserId ? { ...u, verificationStatus: newStatus } : u));
-        if (selectedUser && selectedUser.id === targetUserId) {
-          setSelectedUser(prev => prev ? { ...prev, verificationStatus: newStatus } : null);
-        }
-      } else {
-        throw new Error(res.error || 'فشل تحديث حالة توثيق العميل.');
-      }
-    } catch (err: unknown) {
-      console.error('Error updating verification status:', err);
-      setVerificationFeedback({
-        type: 'error',
-        message: err instanceof Error ? err.message : 'تعذر الاتصال بالخادم لتحديث حالة التوثيق.'
-      });
-    } finally {
-      setIsUpdatingVerification(false);
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const validation = validateUploadedFile(file.name, file.size, file.type, 'document');
-      if (!validation.valid) {
-        setAdminUploadError(validation.error || 'الملف غير صالح للرفع.');
-        setAdminSelectedFile(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        return;
-      }
-
-      setAdminSelectedFile(file);
-      setAdminUploadError(null);
-      if (!uploadFileName.trim()) {
-        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
-        setUploadFileName(nameWithoutExt);
-      }
-    }
-  };
-
-  const handleUploadFileForUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser) return;
-
-    if (!adminSelectedFile) {
-      setAdminUploadError('يرجى اختيار ملف حقيقي لرفعه، لا يمكن حفظ مستند بدون ملف.');
-      return;
-    }
-
-    const validation = validateUploadedFile(adminSelectedFile.name, adminSelectedFile.size, adminSelectedFile.type, 'document');
-    if (!validation.valid) {
-      setAdminUploadError(validation.error || 'الملف غير صالح للرفع.');
-      return;
-    }
-
-    setIsUploading(true);
-    setAdminUploadProgress(0);
-    setAdminUploadError(null);
-
-    try {
-      const userId = selectedUser.id || selectedUser.uid;
-      const cleanDocName = uploadFileName.trim() || adminSelectedFile.name;
-
-      // Upload to Firebase Storage with progress tracking
-      const uploadResult = await storageService.uploadUserDocument(
-        adminSelectedFile,
-        userId,
-        uploadFileCategory || 'other',
-        (percent) => {
-          setAdminUploadProgress(percent);
-        }
-      );
-
-      await dataService.uploadUserFile({
-        userId,
-        userEmail: selectedUser.email,
-        fileName: cleanDocName,
-        storagePath: uploadResult.storagePath,
-        fileType: uploadResult.fileType,
-        fileSize: uploadResult.fileSize,
-        category: uploadFileCategory,
-      });
-
-      // Reload files & users
-      await loadUserFiles(userId);
-      await loadUsers();
-
-      // Reset form
-      setUploadFileName('');
-      setAdminSelectedFile(null);
-      setAdminUploadProgress(0);
-      setShowUploadModal(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    } catch (err: unknown) {
-      console.error('Error uploading file for user:', err);
-      setAdminUploadError(err instanceof Error ? err.message : 'حدث خطأ أثناء رفع الملف.');
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleDeleteUserFile = (file: UserFileRecord) => {
-    if (!selectedUser) return;
-    setAdminFileToDelete(file);
-  };
-
-  const confirmDeleteAdminUserFile = async () => {
-    if (!selectedUser || !adminFileToDelete) return;
-    setDeletingFileId(adminFileToDelete.id);
-    try {
-      const userId = selectedUser.id || selectedUser.uid;
-      await dataService.deleteUserFile(userId, adminFileToDelete.id, adminFileToDelete.storagePath);
-      await loadUserFiles(userId);
-      await loadUsers();
-      setAdminFileToDelete(null);
+      const fetched = await dataService.getAllUsers(forceRefresh);
+      setUsers(fetched);
     } catch (err) {
-      console.error('Error deleting file:', err);
+      console.error('Error fetching users:', err);
     } finally {
-      setDeletingFileId(null);
+      setIsLoadingUsers(false);
     }
   };
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return 'غير محدد';
+  useEffect(() => {
+    if (subTab === 'all_users') {
+      loadUsers();
+    }
+  }, [subTab]);
+
+  // Filter verification requests (Must be before any early return to satisfy React Hook rules)
+  const filteredRequests = useMemo(() => {
+    return verificationRequests.filter((r) => {
+      if (requestFilter !== 'all' && r.status !== requestFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchUid = r.userId.toLowerCase().includes(q);
+        const matchUser = users.find((u) => u.uid === r.userId || u.id === r.userId);
+        const matchName = matchUser?.displayName?.toLowerCase().includes(q);
+        const matchEmail = matchUser?.email?.toLowerCase().includes(q);
+        const matchPhone = matchUser?.phone?.includes(q);
+        return matchUid || matchName || matchEmail || matchPhone;
+      }
+      return true;
+    });
+  }, [verificationRequests, requestFilter, searchQuery, users]);
+
+  // Filter all users
+  const filteredUsers = useMemo(() => {
+    return users.filter((u) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          u.displayName?.toLowerCase().includes(q) ||
+          u.email?.toLowerCase().includes(q) ||
+          u.phone?.includes(q) ||
+          u.uid.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [users, searchQuery]);
+
+  const pendingCount = verificationRequests.filter((r) => r.status === 'pending_review').length;
+
+  // Access guard: ordinary employees cannot access verification documents
+  if (!isAdmin && !isSuperAdmin) {
+    return (
+      <div className="p-8 max-w-lg mx-auto bg-slate-900 border border-rose-500/30 rounded-3xl text-center space-y-4">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center mx-auto">
+          <Lock className="w-8 h-8" />
+        </div>
+        <h3 className="text-lg font-black text-white">صلاحية المشرف مطلوبة</h3>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          يتطلب الوصول إلى وثائق الهوية وتوثيق الحسابات صلاحية مدير النظام (Admin) أو المدير العام (Super Admin) لضمان حماية وسرية البيانات الشخصية.
+        </p>
+        {onBackToOverview && (
+          <button
+            type="button"
+            onClick={onBackToOverview}
+            className="px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs"
+          >
+            العودة
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Open secure 60s signed document viewer
+  const handleInspectDocument = async (targetUid: string, docKey: 'driver_license' | 'identity', docLabel: string) => {
+    setViewingDoc({
+      targetUid,
+      docKey,
+      docLabel,
+      url: null,
+      isLoading: true,
+      error: null,
+    });
+
     try {
-      const d = new Date(dateStr);
-      return d.toLocaleDateString('ar-SY', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
+      const res = await functionsService.getVerificationDocumentUrl({ targetUid, docKey });
+      if (!res.success || !res.data?.url) {
+        throw new Error(res.error || 'تعذر استخراج رابط المعاينة الآمن.');
+      }
+      setViewingDoc({
+        targetUid,
+        docKey,
+        docLabel,
+        url: res.data.url,
+        expiresAt: res.data.expiresAt,
+        isLoading: false,
       });
-    } catch {
-      return dateStr;
+    } catch (err: unknown) {
+      console.error('Error fetching document url:', err);
+      setViewingDoc({
+        targetUid,
+        docKey,
+        docLabel,
+        url: null,
+        isLoading: false,
+        error: err instanceof Error ? err.message : 'تعذر تحميل الوثيقة.',
+      });
     }
   };
 
-  const formatFileSize = (bytes?: number) => {
-    if (!bytes) return 'غير متوفر';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  };
+  // Submit review decision (Approve, Reject, Revoke)
+  const handleConfirmDecision = async () => {
+    if (!decisionAction) return;
+    const { targetUid, action } = decisionAction;
 
-  const getCategoryLabel = (category: UserFileRecord['category']) => {
-    switch (category) {
-      case 'driver_license':
-        return 'شهادة القيادة';
-      case 'national_id':
-        return 'الهوية الشخصية';
-      case 'passport':
-        return 'جواز السفر';
-      case 'contract':
-        return 'عقد إيجار / وثيقة رسمية';
-      default:
-        return 'مستند إضافي';
+    if ((action === 'reject' || action === 'revoke') && !actionReason.trim()) {
+      setActionFeedback({ type: 'error', message: 'يرجى كتابة سبب الإجراء، فهو إلزامي لإعلام المستخدم وحفظه في سجل التدقيق.' });
+      return;
+    }
+
+    setIsSubmittingDecision(true);
+    setActionFeedback(null);
+
+    try {
+      if (action === 'approve') {
+        const res = await functionsService.reviewVerification({
+          targetUid,
+          decision: 'approve',
+        });
+        if (!res.success) throw new Error(res.error || 'فشل اعتماد التوثيق.');
+        setActionFeedback({ type: 'success', message: 'تم اعتماد وتوثيق الحساب بنجاح، ونُقلت الوثائق إلى الخزنة المشفرة.' });
+      } else if (action === 'reject') {
+        const res = await functionsService.reviewVerification({
+          targetUid,
+          decision: 'reject',
+          reason: actionReason.trim(),
+        });
+        if (!res.success) throw new Error(res.error || 'فشل رفض التوثيق.');
+        setActionFeedback({ type: 'success', message: 'تم رفض طلب التوثيق وحذف الوثائق المؤقتة وتسجيل السبب.' });
+      } else if (action === 'revoke') {
+        const res = await functionsService.revokeVerification({
+          targetUid,
+          reason: actionReason.trim(),
+        });
+        if (!res.success) throw new Error(res.error || 'فشل إلغاء التوثيق.');
+        setActionFeedback({ type: 'success', message: 'تم إلغاء توثيق الحساب وتسجيل السبب في سجل التدقيق.' });
+      }
+
+      setDecisionAction(null);
+      setActionReason('');
+    } catch (err: unknown) {
+      console.error('Review decision error:', err);
+      setActionFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'تعذر تنفيذ الإجراء.',
+      });
+    } finally {
+      setIsSubmittingDecision(false);
     }
   };
 
-  // Filter users
-  const filteredUsers = users.filter((u) => {
-    const matchSearch =
-      u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      u.displayName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (u.phone && u.phone.includes(searchTerm)) ||
-      u.id.toLowerCase().includes(searchTerm.toLowerCase());
-
-    if (!matchSearch) return false;
-
-    if (filterMode === 'with_files') return (u.uploadedFilesCount || 0) > 0;
-    if (filterMode === 'no_files') return (u.uploadedFilesCount || 0) === 0;
-    if (filterMode === 'manual_review') return u.verificationStatus === 'manual_review';
-    if (filterMode === 'verified') return u.verificationStatus === 'verified';
-    if (filterMode === 'rejected') return u.verificationStatus === 'rejected';
-    return true;
-  });
-
-  const totalFilesCount = users.reduce((acc, u) => acc + (u.uploadedFilesCount || 0), 0);
-  const usersWithFilesCount = users.filter((u) => (u.uploadedFilesCount || 0) > 0).length;
-  const manualReviewCount = users.filter((u) => u.verificationStatus === 'manual_review').length;
-  const verifiedCount = users.filter((u) => u.verificationStatus === 'verified').length;
+  // Change user role (Admin only)
+  const handleChangeRole = async (targetUid: string, newRole: 'customer' | 'employee' | 'admin') => {
+    setUserRoleUpdating(targetUid);
+    try {
+      await dataService.updateUserRole(targetUid, newRole);
+      await loadUsers(true);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'تعذر تعديل الصلاحية');
+    } finally {
+      setUserRoleUpdating(null);
+    }
+  };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300" id="admin-firestore-users-view">
-      {/* Prominent Admin View Badge / Indicator */}
-      <div className="bg-gradient-to-r from-amber-500/20 via-amber-600/10 to-slate-900 border border-amber-500/40 rounded-3xl p-6 sm:p-7 relative overflow-hidden shadow-xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-amber-500/30 flex-shrink-0">
-              <Shield className="w-8 h-8" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                <span className="px-3 py-0.5 rounded-full text-xs font-black bg-amber-500 text-slate-950 uppercase tracking-wide flex items-center gap-1 shadow-sm">
-                  <Shield className="w-3 h-3" />
-                  Admin View
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" />
-                  Firestore Full Access Granted
-                </span>
-              </div>
-              <h1 className="text-xl sm:text-2xl font-black text-white">
-                لوحة تحكم المشرف المعتمد (Admin Dashboard)
-              </h1>
-              <div className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span>المعرف الخاص بك (Current UID):</span>
-                <code className="bg-slate-950/80 px-2.5 py-1 rounded-lg text-amber-300 font-mono text-[11px] border border-amber-500/30">
-                  {user?.uid || '—'}
-                </code>
-                <span className="text-emerald-400 font-bold text-[11px]">
-                  ✓ الصلاحية النشطة: {isSuperAdmin || isAdmin ? 'مدير نظام (Admin)' : isEmployee ? 'موظف (Staff)' : 'عميل'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 self-start md:self-center">
-            <button
-              onClick={() => loadUsers(true)}
-              disabled={isLoading}
-              className="px-4 py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-2 border border-slate-700 transition-colors shadow-sm disabled:opacity-50"
-              id="refresh-firestore-users-btn"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-amber-400' : ''}`} />
-              <span>تحديث البيانات</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Security Rule Notice */}
-        <div className="mt-4 pt-4 border-t border-amber-500/20 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
-          <div className="flex items-center gap-1.5">
-            <Shield className="w-3.5 h-3.5 text-amber-400" />
-            <span>قواعد الأمان (Firestore Rules): يمتلك هذا الحساب صلاحية القراءة الشاملة لكافة بيانات المستخدمين والملفات المرفوعة.</span>
-          </div>
-          <span className="text-amber-400/80 font-medium">قاعدة البيانات: Cloud Firestore • collection('users')</span>
-        </div>
-      </div>
-
-      {/* KPI Stats Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
-          <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
-            <Users className="w-6 h-6" />
+    <div className="space-y-6 text-slate-100" dir="rtl">
+      {/* Header Banner */}
+      <div className="p-5 sm:p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center">
+            <ShieldCheck className="w-6 h-6" />
           </div>
           <div>
-            <span className="text-xs text-slate-400 block font-medium">إجمالي المستخدمين المسجلين</span>
-            <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-2xl font-black text-white font-mono">{users.length}</span>
-              <span className="text-xs text-slate-400">مستخدم في Firestore</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
-          <div className="w-12 h-12 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex items-center justify-center flex-shrink-0">
-            <FileText className="w-6 h-6" />
-          </div>
-          <div>
-            <span className="text-xs text-slate-400 block font-medium">إجمالي الملفات والوثائق المرفوعة</span>
-            <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-2xl font-black text-cyan-400 font-mono">{totalFilesCount}</span>
-              <span className="text-xs text-slate-400">ملف ومستند</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
-          <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
-            <HardDrive className="w-6 h-6" />
-          </div>
-          <div>
-            <span className="text-xs text-slate-400 block font-medium">مستخدمون أرفقوا وثائق</span>
-            <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-2xl font-black text-emerald-400 font-mono">{usersWithFilesCount}</span>
-              <span className="text-xs text-slate-400">من أصل {users.length}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Split Layout or Drill-down View */}
-      {selectedUser ? (
-        /* ================= USER DRILL DOWN (SHOW USER'S UPLOADED FILES) ================= */
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl animate-in fade-in">
-          {/* Drill-down Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setSelectedUser(null)}
-                className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-colors border border-slate-700"
-                title="العودة لقائمة المستخدمين"
-                id="back-to-users-list-btn"
-              >
-                <ChevronLeft className="w-5 h-5 rotate-180" />
-              </button>
-
-              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center font-black text-xl">
-                {selectedUser.displayName.charAt(0) || <User className="w-6 h-6" />}
-              </div>
-
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg sm:text-xl font-black text-white">
-                    ملفات المستخدم: {selectedUser.displayName}
-                  </h2>
-                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700 font-semibold">
-                    {selectedUser.role === 'super_admin' ? 'المدير العام' : selectedUser.role === 'admin' ? 'إدارة' : 'عميل'}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mt-1">
-                  <span className="flex items-center gap-1 text-slate-300">
-                    <Mail className="w-3.5 h-3.5 text-amber-400" />
-                    {selectedUser.email}
-                  </span>
-                  <span>•</span>
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                    تاريخ التسجيل: {formatDate(selectedUser.createdAt)}
-                  </span>
-                  <span>•</span>
-                  <span className="font-mono text-[11px] text-slate-500">
-                    UID: {selectedUser.id}
-                  </span>
-                </div>
-              </div>
-            </div>
-
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowUploadModal(true)}
-                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/20"
-                id="upload-user-file-btn"
-              >
-                <Upload className="w-4 h-4" />
-                <span>رفع وثيقة لهذا المستخدم</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Identity Verification Control Panel (Server Authoritative) */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4 shadow-md">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">إدارة توثيق هوية العميل (Customer Identity Verification)</h3>
-                  <p className="text-[11px] text-slate-400">
-                    التحقق المعتمد Server-Authoritative عبر Cloud Function لمنع تلاعب العميل بحالة التوثيق
-                  </p>
-                </div>
-              </div>
-
-              {/* Current Status Badge */}
-              <div>
-                {selectedUser.verificationStatus === 'verified' ? (
-                  <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>الهوية موثقة ومعتمدة (Verified)</span>
-                  </span>
-                ) : selectedUser.verificationStatus === 'manual_review' ? (
-                  <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-amber-400" />
-                    <span>قيد التدقيق الإداري اليدوي (Manual Review)</span>
-                  </span>
-                ) : selectedUser.verificationStatus === 'rejected' ? (
-                  <span className="px-3 py-1 rounded-full text-xs font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1.5">
-                    <AlertCircle className="w-4 h-4 text-rose-400" />
-                    <span>مرفوض التدقيق (Rejected)</span>
-                  </span>
-                ) : (
-                  <span className="px-3 py-1 rounded-full text-xs font-black bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-slate-500" />
-                    <span>بانتظار الوثائق (Pending)</span>
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Verification Actions for Staff */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="text-xs text-slate-400 font-bold ml-1">قرار المشرف المعتمد:</span>
-
-              <button
-                type="button"
-                disabled={isUpdatingVerification || selectedUser.verificationStatus === 'verified'}
-                onClick={() => handleUpdateVerificationStatus(selectedUser.id, 'verified')}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all disabled:opacity-40 shadow-sm"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>اعتماد وتوثيق الهوية (Approve)</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={isUpdatingVerification || selectedUser.verificationStatus === 'manual_review'}
-                onClick={() => handleUpdateVerificationStatus(selectedUser.id, 'manual_review')}
-                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all disabled:opacity-40 shadow-sm"
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>تحويل للتدقيق اليدوي (Manual Review)</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={isUpdatingVerification || selectedUser.verificationStatus === 'rejected'}
-                onClick={() => handleUpdateVerificationStatus(selectedUser.id, 'rejected')}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all disabled:opacity-40 shadow-sm"
-              >
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span>رفض الوثائق (Reject)</span>
-              </button>
-
-              {isUpdatingVerification && (
-                <div className="flex items-center gap-1.5 text-xs text-amber-400 font-bold mr-auto">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>جاري تطبيق القرار وتحديث Firestore بأمان...</span>
-                </div>
+              <h2 className="text-lg sm:text-xl font-black text-white">توثيق الحسابات والمستخدمين</h2>
+              {pendingCount > 0 && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500 text-slate-950 animate-pulse">
+                  {pendingCount} بانتظار المراجعة
+                </span>
               )}
             </div>
-
-            {verificationFeedback && (
-              <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in ${
-                verificationFeedback.type === 'success'
-                  ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
-                  : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
-              }`}>
-                {verificationFeedback.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-400" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-400" />
-                )}
-                <span>{verificationFeedback.message}</span>
-              </div>
-            )}
-          </div>
-
-          {/* User's Uploaded Files Content */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <FolderOpen className="w-4 h-4 text-amber-400" />
-                <span>الملفات والوثائق المرفوعة ({userFiles.length})</span>
-              </h3>
-              <span className="text-xs text-slate-400">
-                مخزنة في مسار: <code className="text-slate-300 bg-slate-950 px-2 py-0.5 rounded font-mono">/users/{selectedUser.id}/files</code>
-              </span>
-            </div>
-
-            {isLoadingFiles ? (
-              <div className="py-16 text-center space-y-3">
-                <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto" />
-                <p className="text-xs text-slate-400">جاري تحميل وثائق المستخدم من Firestore...</p>
-              </div>
-            ) : userFiles.length === 0 ? (
-              <div className="py-16 text-center bg-slate-950/50 rounded-2xl border border-slate-800/80 space-y-3 p-6">
-                <div className="w-12 h-12 rounded-2xl bg-slate-800 text-slate-500 flex items-center justify-center mx-auto">
-                  <FileText className="w-6 h-6" />
-                </div>
-                <h4 className="text-sm font-bold text-slate-300">لا توجد وثائق مرفوعة لهذا المستخدم بعد</h4>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  لم يقم هذا المستخدم برفع أي ملفات بعد، أو يمكنك كمشرف رفع وثيقة جديدة لحسابه مباشرة.
-                </p>
-                <button
-                  onClick={() => setShowUploadModal(true)}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 text-xs font-bold border border-slate-700 transition-colors inline-flex items-center gap-1.5"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>إرفاق وثيقة الآن</span>
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {userFiles.map((file) => (
-                  <div
-                    key={file.id}
-                    className="bg-slate-950/70 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 space-y-3 transition-all group flex flex-col justify-between"
-                  >
-                    <div>
-                      {/* Category & Date Header */}
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                          {getCategoryLabel(file.category)}
-                        </span>
-                        <span className="text-[11px] text-slate-500 flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {formatDate(file.uploadedAt)}
-                        </span>
-                      </div>
-
-                      {/* File Info */}
-                      <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-amber-400 flex-shrink-0 group-hover:bg-amber-500/10 group-hover:border-amber-500/30 transition-colors">
-                          <FileText className="w-5 h-5" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <h4 className="text-xs font-bold text-white truncate" title={file.fileName}>
-                            {file.fileName}
-                          </h4>
-                          <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5">
-                            <span>{file.fileType || 'مستند'}</span>
-                            <span>•</span>
-                            <span>{formatFileSize(file.fileSize)}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                    </div>
-
-                    {/* Actions */}
-                    <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => setPreviewFile(file)}
-                        className="flex-1 py-1.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
-                      >
-                        <Eye className="w-3.5 h-3.5 text-amber-400" />
-                        <span>معاينة</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const url = await storageService.getFileDownloadUrl(file.storagePath);
-                          if (url) window.open(url, '_blank', 'noopener,noreferrer');
-                        }}
-                        className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 transition-colors border border-slate-700"
-                        title="فتح الرابط المباشر"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={() => handleDeleteUserFile(file)}
-                        disabled={deletingFileId === file.id}
-                        className="p-2 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors border border-slate-700 disabled:opacity-50"
-                        title="حذف الملف نهائياً"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <p className="text-xs text-slate-400 mt-0.5">
+              إدارة طلبات توثيق الهوية، فحص رخص القيادة، وضبط صلاحيات المستخدمين بأمان وخوادم موثوقة.
+            </p>
           </div>
         </div>
-      ) : (
-        /* ================= ALL USERS LIST VIEW ================= */
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl">
-          {/* Header & Controls */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg sm:text-xl font-black text-white flex items-center gap-2">
-                <Users className="w-5 h-5 text-amber-400" />
-                <span>سجل مستخدمي قاعدة بيانات Firestore</span>
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 font-mono font-bold border border-slate-700">
-                  {filteredUsers.length} مستخدم
-                </span>
-              </h2>
-              <p className="text-xs text-slate-400 mt-1">
-                انقر على أي مستخدم للاطلاع على ملفاته ووثائقه المرفوعة من خلال صلاحيات المشرف.
-              </p>
+
+        {/* Sub-tab Navigation */}
+        <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-slate-800 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={() => setSubTab('verification_queue')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+              subTab === 'verification_queue'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Shield className="w-4 h-4" />
+            <span>طلبات التوثيق</span>
+            {pendingCount > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                subTab === 'verification_queue' ? 'bg-slate-950 text-amber-400' : 'bg-amber-500 text-slate-950'
+              }`}>
+                {pendingCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab('all_users')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+              subTab === 'all_users'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>كل المستخدمين ({users.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Global feedback banner */}
+      {actionFeedback && (
+        <div className={`p-4 rounded-2xl text-xs font-bold flex items-center justify-between gap-3 ${
+          actionFeedback.type === 'success'
+            ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
+            : 'bg-rose-500/10 border border-rose-500/30 text-rose-300'
+        }`}>
+          <div className="flex items-center gap-2">
+            {actionFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span>{actionFeedback.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionFeedback(null)}
+            className="p-1 rounded-lg hover:bg-white/10"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* SUB-TAB 1: VERIFICATION REQUESTS QUEUE */}
+      {subTab === 'verification_queue' && (
+        <div className="space-y-4">
+          {/* Controls: Filter buttons + Search bar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-2xl">
+              {[
+                { key: 'pending_review' as const, label: 'قيد المراجعة', count: pendingCount },
+                { key: 'verified' as const, label: 'موثق', count: verificationRequests.filter((r) => r.status === 'verified').length },
+                { key: 'rejected' as const, label: 'مرفوض', count: verificationRequests.filter((r) => r.status === 'rejected').length },
+                { key: 'all' as const, label: 'الكل', count: verificationRequests.length },
+              ].map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setRequestFilter(f.key)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                    requestFilter === f.key
+                      ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>{f.label}</span>
+                  <span className="text-[10px] opacity-75 font-mono">({f.count})</span>
+                </button>
+              ))}
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Search Bar */}
-              <div className="relative min-w-[240px] flex-1 sm:flex-initial">
-                <Search className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchTerm || ''}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="بحث بالبريد، الاسم، أو الهاتف..."
-                  className="w-full pl-3 pr-9 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
-                />
-                {searchTerm && (
-                  <button
-                    onClick={() => setSearchTerm('')}
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Filter mode */}
-              <div className="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-                <button
-                  onClick={() => setFilterMode('all')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
-                    filterMode === 'all'
-                      ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  الكل ({users.length})
-                </button>
-                <button
-                  onClick={() => setFilterMode('manual_review')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
-                    filterMode === 'manual_review'
-                      ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  تدقيق يدوي ({manualReviewCount})
-                </button>
-                <button
-                  onClick={() => setFilterMode('verified')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
-                    filterMode === 'verified'
-                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  موثق ({verifiedCount})
-                </button>
-                <button
-                  onClick={() => setFilterMode('with_files')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
-                    filterMode === 'with_files'
-                      ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  لديهم ملفات ({usersWithFilesCount})
-                </button>
-                <button
-                  onClick={() => setFilterMode('no_files')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
-                    filterMode === 'no_files'
-                      ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  بدون ملفات ({users.length - usersWithFilesCount})
-                </button>
-              </div>
+            {/* Search Input */}
+            <div className="relative min-w-[240px]">
+              <Search className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="ابحث بالاسم، البريد أو المعرف..."
+                className="w-full bg-slate-900 border border-slate-800 rounded-2xl pr-9 pl-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500 transition"
+              />
             </div>
           </div>
 
-          {/* Users Table / List */}
-          {isLoading ? (
-            <div className="py-20 text-center space-y-3">
-              <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto" />
-              <p className="text-xs text-slate-400">جاري قراءة المستخدمين من Cloud Firestore...</p>
+          {/* Queue List */}
+          {isLoadingRequests ? (
+            <div className="py-16 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-3">
+              <RefreshCw className="w-6 h-6 text-amber-400 animate-spin" />
+              <span>جاري تحميل طلبات التوثيق...</span>
             </div>
-          ) : filteredUsers.length === 0 ? (
-            <div className="py-16 text-center bg-slate-950/40 rounded-2xl border border-slate-800 space-y-2 p-6">
-              <Users className="w-8 h-8 text-slate-600 mx-auto" />
-              <h4 className="text-sm font-bold text-slate-300">لم يتم العثور على أي مستخدمين</h4>
-              <p className="text-xs text-slate-500">جرب تغيير عبارة البحث أو الفلتر أعلاه.</p>
+          ) : filteredRequests.length === 0 ? (
+            <div className="py-16 text-center bg-slate-900/60 border border-slate-800 rounded-3xl p-6">
+              <ShieldCheck className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+              <h4 className="text-base font-bold text-white mb-1">لا توجد طلبات توثيق مطابقة</h4>
+              <p className="text-xs text-slate-400">
+                {requestFilter === 'pending_review'
+                  ? 'رائع! لا توجد طلبات معلقة بانتظار المراجعة حالياً.'
+                  : 'لم يتم العثور على أي نتائج وفق معايير البحث المحددة.'}
+              </p>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-2xl border border-slate-800">
-              <table className="w-full text-right text-xs">
-                <thead className="bg-slate-950 text-slate-400 font-bold border-b border-slate-800">
-                  <tr>
-                    <th className="py-3.5 px-4">المستخدم</th>
-                    <th className="py-3.5 px-4">البريد الإلكتروني</th>
-                    <th className="py-3.5 px-4">تاريخ إنشاء الحساب</th>
-                    <th className="py-3.5 px-4 text-center">حالة توثيق الهوية</th>
-                    <th className="py-3.5 px-4 text-center">عدد الملفات المرفوعة</th>
-                    <th className="py-3.5 px-4 text-center">الإجراء</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
-                  {filteredUsers.map((u) => {
-                    const isSelfAdmin = u.role === 'admin' || u.role === 'superAdmin' || u.role === 'super_admin';
-                    const fileCount = u.uploadedFilesCount || 0;
+            <div className="grid grid-cols-1 gap-4">
+              {filteredRequests.map((req) => {
+                const targetUser = users.find((u) => u.uid === req.userId || u.id === req.userId);
+                const isPending = req.status === 'pending_review';
+                const isVerified = req.status === 'verified';
+                const isRejected = req.status === 'rejected';
 
-                    return (
-                      <tr
-                        key={u.id}
-                        onClick={() => handleSelectUser(u)}
-                        className="hover:bg-slate-800/60 cursor-pointer transition-colors group"
-                      >
-                        {/* User Name & Role */}
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 text-amber-400 flex items-center justify-center font-bold text-sm group-hover:bg-amber-500/20 group-hover:border-amber-500/40 transition-colors">
-                              {u.displayName.charAt(0) || <User className="w-4 h-4" />}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-white group-hover:text-amber-300 transition-colors">
-                                  {u.displayName}
-                                </span>
-                                {isSelfAdmin && (
-                                  <span className="px-2 py-0.2 rounded text-[10px] font-black bg-amber-500 text-slate-950">
-                                    Admin UID
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[11px] text-slate-500 font-mono">
-                                UID: {u.id.substring(0, 12)}...
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* User Email */}
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-1.5 text-slate-200 font-medium">
-                            <Mail className="w-3.5 h-3.5 text-amber-400/80 flex-shrink-0" />
-                            <span className="font-mono text-[11px]">{u.email}</span>
-                          </div>
-                          {u.phone && (
-                            <span className="text-[10px] text-slate-500 block mt-0.5" dir="ltr">
-                              {u.phone}
+                return (
+                  <div
+                    key={req.userId}
+                    className={`p-5 rounded-3xl border transition-all space-y-4 ${
+                      isPending
+                        ? 'bg-slate-900/90 border-amber-500/40 shadow-lg shadow-amber-500/5'
+                        : isVerified
+                        ? 'bg-slate-900/70 border-emerald-500/30'
+                        : 'bg-slate-900/50 border-rose-500/20'
+                    }`}
+                  >
+                    {/* User Info Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center font-bold">
+                          {targetUser?.displayName?.charAt(0) || <User className="w-5 h-5" />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-white text-sm">
+                              {targetUser?.displayName || 'مستخدم غير معروف'}
                             </span>
-                          )}
-                        </td>
-
-                        {/* Account Creation Date */}
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-1.5 text-slate-300">
-                            <Calendar className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-                            <span>{formatDate(u.createdAt)}</span>
-                          </div>
-                        </td>
-
-                        {/* Verification Status */}
-                        <td className="py-3.5 px-4 text-center">
-                          <StatusBadge status={u.verificationStatus || 'pending'} type="verification" />
-                        </td>
-
-                        {/* Uploaded Files Count */}
-                        <td className="py-3.5 px-4 text-center">
-                          {fileCount > 0 ? (
-                            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                              <FileText className="w-3 h-3" />
-                              <span>{fileCount} ملفات</span>
+                            <span className="font-mono text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full">
+                              {req.userId.substring(0, 10)}...
                             </span>
+                          </div>
+                          <div className="text-xs text-slate-400 flex items-center gap-3 mt-0.5">
+                            <span className="font-mono">{targetUser?.email || 'لا يوجد بريد'}</span>
+                            {targetUser?.phone && <span className="font-mono">📱 {targetUser.phone}</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Status Badge */}
+                      <div>
+                        {isPending && (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 animate-pulse">
+                            <Clock className="w-3.5 h-3.5 text-amber-400" />
+                            <span>بانتظار المراجعة الإدارية</span>
+                          </span>
+                        )}
+                        {isVerified && (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>موثق ومعتمد</span>
+                          </span>
+                        )}
+                        {isRejected && (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1.5">
+                            <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                            <span>مرفوض التوثيق</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Metadata & Quality Check */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Slot 1: Driver License */}
+                      <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <FileText className="w-3.5 h-3.5 text-amber-400" />
+                            <span>شهادة القيادة (الوجه الأمامي)</span>
+                          </span>
+                          {req.docs?.driver_license ? (
+                            <button
+                              type="button"
+                              onClick={() => handleInspectDocument(req.userId, 'driver_license', 'شهادة القيادة')}
+                              className="px-2.5 py-1 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-xs font-bold transition flex items-center gap-1"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>معاينة آمنة</span>
+                            </button>
                           ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] text-slate-500 bg-slate-950 border border-slate-800">
-                              لا توجد ملفات
-                            </span>
+                            <span className="text-[11px] text-slate-500">غير متوفرة</span>
                           )}
-                        </td>
+                        </div>
 
-                        {/* Action Button */}
-                        <td className="py-3.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        {req.docs?.driver_license && (
+                          <div className="text-[11px] text-slate-400 flex flex-wrap gap-2 pt-1 border-t border-slate-800/80">
+                            {req.docs.driver_license.quality ? (
+                              <>
+                                <span>الدقة: {req.docs.driver_license.quality.width}×{req.docs.driver_license.quality.height}</span>
+                                <span>حدة المعالم: {req.docs.driver_license.quality.blurScore}</span>
+                              </>
+                            ) : (
+                              <span>وثيقة معتمدة</span>
+                            )}
+                            <span>الحجم: {Math.round(req.docs.driver_license.sizeBytes / 1024)}KB</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Slot 2: Identity Doc */}
+                      <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <FileText className="w-3.5 h-3.5 text-amber-400" />
+                            <span>
+                              {req.identityDocType === 'passport' ? 'جواز السفر' : 'الهوية الشخصية'}
+                            </span>
+                          </span>
+                          {req.docs?.identity ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleInspectDocument(
+                                  req.userId,
+                                  'identity',
+                                  req.identityDocType === 'passport' ? 'جواز السفر' : 'الهوية الشخصية'
+                                )
+                              }
+                              className="px-2.5 py-1 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-xs font-bold transition flex items-center gap-1"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>معاينة آمنة</span>
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-500">غير متوفرة</span>
+                          )}
+                        </div>
+
+                        {req.docs?.identity && (
+                          <div className="text-[11px] text-slate-400 flex flex-wrap gap-2 pt-1 border-t border-slate-800/80">
+                            {req.docs.identity.quality ? (
+                              <>
+                                <span>الدقة: {req.docs.identity.quality.width}×{req.docs.identity.quality.height}</span>
+                                <span>حدة المعالم: {req.docs.identity.quality.blurScore}</span>
+                              </>
+                            ) : (
+                              <span>وثيقة معتمدة</span>
+                            )}
+                            <span>الحجم: {Math.round(req.docs.identity.sizeBytes / 1024)}KB</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Rejection reason notice if rejected */}
+                    {isRejected && req.rejectionReason && (
+                      <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/25 text-xs text-rose-300">
+                        <span className="font-bold block mb-0.5">سبب الرفض:</span>
+                        <span>{req.rejectionReason}</span>
+                      </div>
+                    )}
+
+                    {/* Admin Action Decision Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
+                      <div className="text-[11px] text-slate-400 font-mono">
+                        تاريخ التقديم: {req.submittedAt ? new Date(req.submittedAt).toLocaleString('ar-SY') : '—'}
+                        {req.attempt ? ` • المحاولة رقم ${req.attempt}` : ''}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isPending && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDecisionAction({
+                                  targetUid: req.userId,
+                                  action: 'approve',
+                                  userName: targetUser?.displayName,
+                                });
+                                setActionReason('');
+                              }}
+                              className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black transition flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>اعتماد التوثيق</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDecisionAction({
+                                  targetUid: req.userId,
+                                  action: 'reject',
+                                  userName: targetUser?.displayName,
+                                });
+                                setActionReason('');
+                              }}
+                              className="px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold transition flex items-center gap-1.5"
+                            >
+                              <X className="w-4 h-4" />
+                              <span>رفض مع تحديد السبب</span>
+                            </button>
+                          </>
+                        )}
+
+                        {isVerified && (
                           <button
-                            onClick={() => handleSelectUser(u)}
-                            className="px-3 py-1.5 rounded-xl bg-slate-800 group-hover:bg-amber-500 group-hover:text-slate-950 text-slate-300 text-xs font-bold transition-all border border-slate-700 group-hover:border-amber-500 inline-flex items-center gap-1.5"
+                            type="button"
+                            onClick={() => {
+                              setDecisionAction({
+                                targetUid: req.userId,
+                                action: 'revoke',
+                                userName: targetUser?.displayName,
+                              });
+                              setActionReason('');
+                            }}
+                            className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 border border-slate-700 text-xs font-bold transition flex items-center gap-1.5"
                           >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>عرض الملفات</span>
+                            <ShieldAlert className="w-3.5 h-3.5" />
+                            <span>إلغاء التوثيق</span>
                           </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       )}
 
-      {/* ================= PREVIEW MODAL ================= */}
-      {previewFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
-          <div
-            className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative flex flex-col max-h-[90vh]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <FileText className="w-5 h-5 text-amber-400" />
-                <div>
-                  <h3 className="text-base font-bold text-white">{previewFile.fileName}</h3>
-                  <span className="text-xs text-slate-400">
-                    {getCategoryLabel(previewFile.category)} • {formatFileSize(previewFile.fileSize)}
-                  </span>
-                </div>
+      {/* SUB-TAB 2: ALL USERS & ROLES */}
+      {subTab === 'all_users' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Users className="w-4 h-4 text-amber-400" />
+              <span>دليل الحسابات المسجلة في النظام ({filteredUsers.length})</span>
+            </h3>
+
+            <div className="relative min-w-[260px]">
+              <Search className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="ابحث بالاسم، البريد أو الهاتف..."
+                className="w-full bg-slate-900 border border-slate-800 rounded-2xl pr-9 pl-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500 transition"
+              />
+            </div>
+          </div>
+
+          {isLoadingUsers ? (
+            <div className="py-16 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-3">
+              <RefreshCw className="w-6 h-6 text-amber-400 animate-spin" />
+              <span>جاري تحميل المستخدمين...</span>
+            </div>
+          ) : (
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead className="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-bold">
+                    <tr>
+                      <th className="p-3.5">المستخدم</th>
+                      <th className="p-3.5">البريد والهاتف</th>
+                      <th className="p-3.5">حالة التوثيق</th>
+                      <th className="p-3.5">الدور والصلاحية</th>
+                      <th className="p-3.5">تاريخ التسجيل</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {filteredUsers.map((u) => {
+                      const req = verificationRequests.find((r) => r.userId === u.uid || r.userId === u.id);
+                      const isTargetSuper = u.role === 'super_admin';
+                      return (
+                        <tr key={u.id || u.uid} className="hover:bg-slate-800/40 transition">
+                          <td className="p-3.5">
+                            <div className="font-bold text-white">{u.displayName || 'مستخدم'}</div>
+                            <div className="text-[10px] text-slate-500 font-mono">{u.uid}</div>
+                          </td>
+                          <td className="p-3.5">
+                            <div className="font-mono text-slate-300">{u.email}</div>
+                            <div className="font-mono text-[11px] text-slate-400">{u.phone || '—'}</div>
+                          </td>
+                          <td className="p-3.5">
+                            {req?.status === 'verified' || u.verificationStatus === 'verified' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                موثق
+                              </span>
+                            ) : req?.status === 'pending_review' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                قيد المراجعة
+                              </span>
+                            ) : req?.status === 'rejected' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                مرفوض
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                غير موثق
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3.5">
+                            {isSuperAdmin && !isTargetSuper ? (
+                              <select
+                                value={u.role || 'customer'}
+                                disabled={userRoleUpdating === u.uid}
+                                onChange={(e) =>
+                                  handleChangeRole(u.uid, e.target.value as 'customer' | 'employee' | 'admin')
+                                }
+                                className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1 text-xs text-white outline-none focus:border-amber-500"
+                              >
+                                <option value="customer">عميل (Customer)</option>
+                                <option value="employee">موظف (Staff)</option>
+                                <option value="admin">مدير (Admin)</option>
+                              </select>
+                            ) : (
+                              <span className="font-bold text-amber-400 text-xs">
+                                {u.role === 'super_admin' ? 'المدير العام' : u.role === 'admin' ? 'مدير' : u.role === 'employee' ? 'موظف' : 'عميل'}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3.5 font-mono text-slate-400 text-[11px]">
+                            {u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-SY') : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* MODAL 1: SECURE 60-SECOND DOCUMENT VIEWER WITH WATERMARK */}
+      {viewingDoc && (
+        <div
+          className="fixed inset-0 z-[250] bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-6"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-3xl bg-slate-900 border border-slate-700 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Lock className="w-4 h-4 text-amber-400" />
+                <h4 className="text-sm font-black text-white">معاينة آمنة: {viewingDoc.docLabel}</h4>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-mono">
+                  رابط مشفر لمدة 60 ثانية
+                </span>
               </div>
               <button
-                onClick={() => setPreviewFile(null)}
-                className="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center"
+                type="button"
+                onClick={() => setViewingDoc(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto py-4 flex items-center justify-center">
-              <div className="text-center p-8 bg-slate-950 rounded-2xl border border-slate-800 w-full space-y-4">
-                <FileText className="w-16 h-16 text-amber-400 mx-auto" />
-                <p className="text-xs text-slate-300">مستند رقمي محفوظ في Storage</p>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const url = await storageService.getFileDownloadUrl(previewFile.storagePath);
-                    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-                  }}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-md hover:bg-amber-400 transition-colors"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  <span>فتح المستند في نافذة جديدة</span>
-                </button>
-              </div>
+            {/* Document Image with Watermark */}
+            <div className="relative flex-1 bg-black min-h-[350px] flex items-center justify-center overflow-hidden select-none">
+              {viewingDoc.isLoading ? (
+                <div className="flex flex-col items-center gap-2 text-slate-400 text-xs">
+                  <RefreshCw className="w-6 h-6 text-amber-400 animate-spin" />
+                  <span>جاري توليد الرابط الآمن...</span>
+                </div>
+              ) : viewingDoc.error ? (
+                <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  <span>{viewingDoc.error}</span>
+                </div>
+              ) : viewingDoc.url ? (
+                <>
+                  <img
+                    src={viewingDoc.url}
+                    alt={viewingDoc.docLabel}
+                    className="w-full h-full object-contain pointer-events-none"
+                    onContextMenu={(e) => e.preventDefault()}
+                  />
+
+                  {/* DYNAMIC SECURITY WATERMARK OVERLAY */}
+                  <div className="absolute inset-0 pointer-events-none flex flex-col justify-around items-center p-4 rotate-[-25deg] opacity-25 select-none overflow-hidden">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div key={i} className="text-center font-mono font-black text-amber-200 text-xs sm:text-sm tracking-wider">
+                        <div>🔒 سري - شاكر لتأجير السيارات</div>
+                        <div>المدقق: {user?.email} • المستخدم: {viewingDoc.targetUid.substring(0, 8)}</div>
+                        <div>{new Date().toLocaleString('ar-SY')}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </div>
 
-            <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
-              <span className="text-xs text-slate-400">
-                تاريخ الرفع: {formatDate(previewFile.uploadedAt)}
-              </span>
+            {/* Modal Footer */}
+            <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+              <span>⚠️ يُمنع نسخ أو إعادة مشاركة وثائق الهوية خارج نطاق التدقيق.</span>
               <button
                 type="button"
-                onClick={async () => {
-                  const url = await storageService.getFileDownloadUrl(previewFile.storagePath);
-                  if (url) window.open(url, '_blank', 'noopener,noreferrer');
-                }}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors border border-slate-700"
+                onClick={() => setViewingDoc(null)}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold"
               >
-                <Download className="w-3.5 h-3.5 text-amber-400" />
-                <span>تحميل الملف</span>
+                إغلاق المعاينة
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ================= UPLOAD NEW FILE MODAL FOR USER ================= */}
-      {showUploadModal && selectedUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
-          <div
-            className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-2xl relative space-y-5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <Upload className="w-5 h-5 text-amber-400" />
-                <h3 className="text-base font-bold text-white">
-                  إرفاق وثيقة للمستخدم ({selectedUser.displayName})
-                </h3>
+      {/* MODAL 2: CONFIRMATION / REASON PROMPT (Approve / Reject / Revoke) */}
+      {decisionAction && (
+        <div
+          className="fixed inset-0 z-[250] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+                decisionAction.action === 'approve'
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+              }`}>
+                {decisionAction.action === 'approve' ? <CheckCircle2 className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
               </div>
-              <button
-                onClick={() => setShowUploadModal(false)}
-                className="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div>
+                <h4 className="text-base font-black text-white">
+                  {decisionAction.action === 'approve'
+                    ? 'اعتماد توثيق الحساب'
+                    : decisionAction.action === 'reject'
+                    ? 'رفض طلب التوثيق'
+                    : 'إلغاء توثيق الحساب'}
+                </h4>
+                <p className="text-xs text-slate-400">{decisionAction.userName || decisionAction.targetUid}</p>
+              </div>
             </div>
 
-            <form onSubmit={handleUploadFileForUser} className="space-y-4 text-xs">
-              {/* File Picker or Drag & Drop */}
-              <div>
-                <label className="block text-slate-300 font-bold mb-1.5">رفع ملف من الجهاز (Firebase Storage)</label>
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-slate-700 hover:border-amber-500/60 rounded-xl p-3 text-center cursor-pointer bg-slate-950/60 hover:bg-slate-950 transition-colors"
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,application/pdf"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                  {adminSelectedFile ? (
-                    <div className="flex items-center justify-center gap-2 text-xs text-amber-300 font-bold">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      <span className="truncate max-w-[240px]">{adminSelectedFile.name}</span>
-                      <span className="text-[11px] text-slate-400 font-normal">
-                        ({(adminSelectedFile.size / 1024).toFixed(0)} KB)
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <Upload className="w-5 h-5 text-slate-400 mx-auto" />
-                      <p className="text-xs font-bold text-slate-300">
-                        انقر لاختيار ملف من جهازك (JPG, PNG, PDF)
-                      </p>
-                      <p className="text-[10px] text-slate-500">
-                        سيتم تخزين الملف السحابي في مسار <code>/users/{selectedUser.id || selectedUser.uid}/documents/</code>
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-bold mb-1.5">اسم الوثيقة أو الملف *</label>
-                <input
-                  type="text"
+            {decisionAction.action === 'approve' ? (
+              <p className="text-xs text-slate-300 leading-relaxed">
+                سيتم نقل وثائق الهوية وشهادة القيادة إلى الخزنة المشفرة واعتماد الحساب رسمياً لتمكين العميل من حجز واستلام السيارات مباشرة.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-300 block">
+                  سبب {decisionAction.action === 'reject' ? 'الرفض' : 'إلغاء التوثيق'} (إلزامي للعميل وسجل التدقيق) *
+                </label>
+                <textarea
+                  value={actionReason}
+                  onChange={(e) => setActionReason(e.target.value)}
+                  placeholder="مثال: صورة رخصة القيادة غير واضحة، انتهاء صلاحية الهوية، عدم تطابق الاسم..."
+                  rows={3}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500"
                   required
-                  placeholder="مثال: شهادة القيادة الدولية - الوجه الأمامي"
-                  value={uploadFileName || ''}
-                  onChange={(e) => setUploadFileName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                 />
               </div>
+            )}
 
-              <div>
-                <label className="block text-slate-300 font-bold mb-1.5">تصنيف الوثيقة *</label>
-                <select
-                  value={uploadFileCategory || 'driver_license'}
-                  onChange={(e) => setUploadFileCategory(e.target.value as UserFileRecord['category'])}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
-                >
-                  <option value="driver_license">شهادة القيادة (Driver License)</option>
-                  <option value="national_id">الهوية الشخصية (National ID)</option>
-                  <option value="passport">جواز السفر (Passport)</option>
-                  <option value="contract">عقد إيجار / مخالصة (Rental Contract)</option>
-                  <option value="other">مستند إضافي / سند إقامة (Other)</option>
-                </select>
-              </div>
-
-              {adminUploadError && (
-                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-1.5">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{adminUploadError}</span>
-                </div>
-              )}
-
-              {/* Progress Bar */}
-              {isUploading && adminSelectedFile && (
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px] text-amber-400 font-bold">
-                    <span>جاري الرفع إلى Firebase Storage...</span>
-                    <span>{adminUploadProgress}%</span>
-                  </div>
-                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-amber-500 h-full transition-all duration-200"
-                      style={{ width: `${adminUploadProgress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-slate-300 text-[11px] leading-relaxed">
-                سيتم حفظ هذا الملف ضمن سجل المستخدم <span className="text-amber-400 font-bold">{selectedUser.email}</span> في Firestore وتحديث عداد الملفات فوراً.
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowUploadModal(false);
-                    setAdminSelectedFile(null);
-                    setAdminUploadError(null);
-                    if (fileInputRef.current) fileInputRef.current.value = '';
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  disabled={isUploading || !adminSelectedFile || !uploadFileName.trim()}
-                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black flex items-center gap-1.5 shadow-md shadow-amber-500/20 disabled:opacity-50"
-                >
-                  {isUploading ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>جاري الرفع...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>حفظ الوثيقة في Firestore & Storage</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Confirmation Modal for Deleting User File */}
-      {adminFileToDelete && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
-            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-base font-black text-white">تأكيد حذف الملف نهائياً</h3>
-              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                هل أنت متأكد من حذف الملف &ldquo;{adminFileToDelete.fileName}&rdquo; من حساب المستخدم ومساحة التخزين؟
-              </p>
-            </div>
-            <div className="flex gap-2 pt-2">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button
                 type="button"
-                onClick={confirmDeleteAdminUserFile}
-                disabled={Boolean(deletingFileId)}
-                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/20"
+                onClick={() => setDecisionAction(null)}
+                disabled={isSubmittingDecision}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
               >
-                {deletingFileId ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>جاري الحذف...</span>
-                  </>
-                ) : (
-                  <span>حذف نهائي</span>
-                )}
+                إلغاء
               </button>
               <button
                 type="button"
-                onClick={() => setAdminFileToDelete(null)}
-                disabled={Boolean(deletingFileId)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+                onClick={handleConfirmDecision}
+                disabled={isSubmittingDecision}
+                className={`px-5 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-md ${
+                  decisionAction.action === 'approve'
+                    ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'
+                    : 'bg-rose-500 hover:bg-rose-400 text-white shadow-rose-500/20'
+                }`}
               >
-                إلغاء
+                {isSubmittingDecision ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>جاري التنفيذ...</span>
+                  </>
+                ) : (
+                  <span>تأكيد الإجراء</span>
+                )}
               </button>
             </div>
           </div>

@@ -30,7 +30,6 @@ import { AdminNotifications } from './admin/AdminNotifications';
 import { VehicleFormModal } from './VehicleFormModal';
 import { InspectionModal } from './InspectionModal';
 import { RentalContract } from './RentalContract';
-import { UserProfileModal } from './UserProfileModal';
 
 // Icons
 import { motion, AnimatePresence } from 'motion/react';
@@ -42,10 +41,10 @@ import {
   Settings,
   FolderOpen,
   Shield,
+  ShieldCheck,
   Bell,
   RefreshCw,
   Trash2,
-  ExternalLink,
   CheckCircle2,
   AlertTriangle,
   Lock,
@@ -95,11 +94,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Role-based Tab Access Policy
   const isTabAuthorized = (tabId: AdminTabType): boolean => {
-    if (tabId === 'firestore_users' || tabId === 'staff' || tabId === 'activity_log') {
+    if (tabId === 'staff' || tabId === 'activity_log') {
       return Boolean(isSuperAdmin);
     }
-    if (tabId === 'settings' || tabId === 'reports' || tabId === 'overview' || tabId === 'vehicles' || tabId === 'notifications') {
-      return Boolean(isAdmin);
+    if (tabId === 'firestore_users' || tabId === 'settings' || tabId === 'reports' || tabId === 'overview' || tabId === 'vehicles' || tabId === 'notifications') {
+      return Boolean(isAdmin || isSuperAdmin);
     }
     if (tabId === 'bookings') {
       return true; // الموظف والمدير معًا
@@ -167,6 +166,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return () => window.removeEventListener('popstate', onPopState);
   }, [isAdmin, isSuperAdmin]);
 
+  // Keep the active tab visible in the horizontally scrolling mobile tab strip
+  useEffect(() => {
+    document
+      .getElementById(`admin-tab-${activeTab}`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [activeTab]);
+
   const handleTabChange = (tab: AdminTabType) => {
     setActiveTab(tab);
     const pathMap: Record<AdminTabType, string> = {
@@ -191,7 +197,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Modals state
   const [showAccountDetails, setShowAccountDetails] = useState(false);
   const [copiedUid, setCopiedUid] = useState(false);
-  const [showMyProfile, setShowMyProfile] = useState(false);
   // Vehicle form / inspection are full pages with their own URLs
   const { pathname: currentPath, search: currentSearch } = useLocation();
   const isNewVehicleRoute = currentPath === '/admin/vehicles/new';
@@ -415,7 +420,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         }}
         onOpenBooking={() => navigate('/cars')}
         onOpenAuth={() => navigate('/login')}
-        onOpenProfile={() => setShowMyProfile(true)}
+        onOpenProfile={() => navigate('/profile')}
       />
 
       {/* Top Header Bar */}
@@ -460,12 +465,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <button
             type="button"
             onClick={() => setShowCommandPalette(true)}
-            className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-bold transition-all shadow-sm cursor-pointer"
+            className="flex items-center gap-2 px-3 py-1.5 min-h-[40px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-bold transition-all shadow-sm cursor-pointer"
+            aria-label="بحث سريع"
             title="بحث شامل في الأسطول والحجوزات والأقسام (Ctrl+K)"
           >
             <Search className="w-3.5 h-3.5 text-amber-400" />
             <span className="hidden md:inline">بحث سريع</span>
-            <kbd className="px-1.5 py-0.5 rounded-md bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-400">
+            <kbd className="hidden md:inline px-1.5 py-0.5 rounded-md bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-400">
               Ctrl K
             </kbd>
           </button>
@@ -475,7 +481,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             type="button"
             onClick={handleSyncAllWithFirestore}
             disabled={isSyncing}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-all text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+            className="px-3 py-1.5 min-h-[40px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-all text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+            aria-label="مزامنة السحابة"
             title="مزامنة فورية مع قاعدة بيانات Cloud Firestore"
           >
             <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
@@ -489,21 +496,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           <button
             type="button"
-            onClick={() => setShowMyProfile(true)}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700/80 transition-all text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
+            onClick={() => navigate('/profile')}
+            className="px-3 py-1.5 min-h-[40px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700/80 transition-all text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
+            aria-label="حسابي الشخصي"
             title="حسابي الشخصي وحجوزاتي"
           >
             <User className="w-3.5 h-3.5 text-amber-400" />
             <span className="hidden sm:inline">حسابي الشخصي</span>
-          </button>
-
-          <button
-            onClick={onBackToSite}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition-colors cursor-pointer"
-            title="عرض الموقع"
-            aria-label="عرض الموقع"
-          >
-            <ExternalLink className="w-4 h-4" />
           </button>
         </div>
       </header>
@@ -511,7 +510,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* Main Admin Layout: Right Sidebar + Content Area */}
       <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col md:flex-row gap-6">
         {/* Right Sidebar (Navigation) */}
-        <aside className={`w-full ${isSidebarCollapsed ? 'md:w-20' : 'md:w-64 lg:w-72'} shrink-0 md:sticky md:top-16 self-start z-20 transition-all duration-300`}>
+        <aside className={`w-full ${isSidebarCollapsed ? 'md:w-20' : 'md:w-64 lg:w-72'} shrink-0 md:sticky md:top-4 md:max-h-[calc(100vh-2rem)] md:overflow-y-auto self-start z-20 transition-all duration-300`}>
           <div className="bg-slate-900/95 border border-slate-800 rounded-2xl md:rounded-3xl p-2 md:p-3 shadow-xl backdrop-blur-sm">
             <div className="hidden md:flex items-center justify-between px-3 py-2 mb-2 border-b border-slate-800/80">
               {!isSidebarCollapsed && (
@@ -572,7 +571,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {
                   title: 'الإدارة والنظام',
                   items: [
-                    { id: 'firestore_users' as AdminTabType, label: 'المستخدمون والملفات', icon: FolderOpen },
+                    { id: 'firestore_users' as AdminTabType, label: 'توثيق الحسابات والمستخدمين', icon: ShieldCheck },
                     { id: 'staff' as AdminTabType, label: 'إدارة الموظفين والصلاحيات', icon: UserCheck },
                     { id: 'activity_log' as AdminTabType, label: 'سجل النشاطات', icon: Activity },
                     { id: 'settings' as AdminTabType, label: 'إعدادات النظام والأسعار', icon: Settings },
@@ -583,7 +582,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 if (authorizedItems.length === 0) return null;
 
                 return (
-                  <div key={sIdx} className="space-y-1">
+                  <div key={sIdx} className="space-y-1 shrink-0 md:shrink max-md:pe-3 max-md:border-e max-md:border-slate-800 last:max-md:border-e-0 last:max-md:pe-0">
                     {!isSidebarCollapsed && (
                       <div className="hidden md:block px-3 py-1 text-[10px] font-black uppercase text-slate-500 tracking-wider">
                         {section.title}
@@ -597,9 +596,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <button
                             key={tab.id}
                             type="button"
+                            id={`admin-tab-${tab.id}`}
+                            aria-current={isActive ? 'page' : undefined}
                             onClick={() => handleTabChange(tab.id)}
                             title={tab.label}
-                            className={`w-auto md:w-full ${
+                            className={`w-auto md:w-full min-h-[44px] ${
                               isSidebarCollapsed ? 'md:px-2 md:justify-center' : 'px-3.5 justify-between'
                             } py-2.5 rounded-xl font-bold flex items-center gap-2.5 transition-all shrink-0 md:shrink text-right cursor-pointer relative ${
                               isActive
@@ -609,7 +610,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
                               <Icon className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0" />
-                              {!isSidebarCollapsed && <span className="whitespace-nowrap">{tab.label}</span>}
+                              {!isSidebarCollapsed && <span className="whitespace-nowrap md:whitespace-normal md:leading-snug text-start">{tab.label}</span>}
                             </div>
                             {Boolean(tab.badge) && (
                               <span
@@ -761,8 +762,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </React.Suspense>
               )}
 
-              {/* TAB 7: FIRESTORE USERS & FILES (Super Admin Only) */}
-              {isSuperAdmin && activeTab === 'firestore_users' && (
+              {/* TAB 7: ACCOUNT VERIFICATION & USERS (Admin / Super Admin) */}
+              {(isAdmin || isSuperAdmin) && activeTab === 'firestore_users' && (
                 <React.Suspense fallback={<SkeletonLoader type="table" lines={5} />}>
                   <AdminUsersFilesView onBackToOverview={() => handleTabChange('bookings')} />
                 </React.Suspense>
@@ -784,7 +785,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* 3. Vehicle Deletion Confirmation Modal with Feedback */}
       {vehicleToDelete && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
             <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
               <Trash2 className="w-6 h-6" />
             </div>
@@ -827,20 +828,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       )}
 
-      {/* 5. Personal Profile & Bookings Management Modal (Admin Access) */}
-      {showMyProfile && (
-        <UserProfileModal
-          isOpen={showMyProfile}
-          bookings={bookings}
-          onClose={() => setShowMyProfile(false)}
-          onOpenBooking={() => {
-            setShowMyProfile(false);
-            onBackToSite();
-          }}
-          onOpenAdminView={() => setShowMyProfile(false)}
-        />
-      )}
-
       {/* 6. Account Details Modal (تفاصيل الحساب) */}
       {showAccountDetails && (
         <div 
@@ -851,7 +838,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           }}
         >
           <div 
-            className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-5 shadow-2xl relative"
+            className="bg-slate-900 border border-slate-800 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain p-6 max-w-md w-full space-y-5 shadow-2xl relative"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header with Close button */}

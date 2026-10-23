@@ -29,7 +29,11 @@ try {
 
   messaging.onBackgroundMessage(function(payload) {
     const notificationTitle = payload?.notification?.title || payload?.data?.title || 'شركة شاكر لتأجير السيارات';
-    const deepLinkUrl = payload?.data?.url || '/';
+    let deepLinkUrl = '/';
+    try {
+      const u = new URL(payload?.data?.url || '/', self.location.origin);
+      if (u.origin === self.location.origin) deepLinkUrl = u.pathname + u.search + u.hash;
+    } catch (e) { /* keep '/' */ }
 
     const notificationOptions = {
       body: payload?.notification?.body || payload?.data?.body || 'لديك إشعار جديد بخصوص حجزك أو حسابك.',
@@ -54,7 +58,11 @@ try {
 
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || '/';
+  let targetUrl = '/';
+  try {
+    const u = new URL(event.notification.data?.url || '/', self.location.origin);
+    if (u.origin === self.location.origin) targetUrl = u.pathname + u.search + u.hash;
+  } catch (e) { /* keep '/' */ }
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {

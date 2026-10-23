@@ -126,6 +126,54 @@ class FunctionsService {
     return this.invokeCallable('syncMyRole', {});
   }
 
+  public async initiateVerificationSession(): Promise<FunctionCallResult<{ sessionId: string; nonce: string; expiresAt: string }>> {
+    return this.invokeCallable('initiateVerificationSession', {});
+  }
+
+  public async submitVerificationDocument(params: {
+    sessionId: string;
+    nonce: string;
+    docKey: 'driver_license' | 'identity';
+    base64Data: string;
+    mimeType?: string;
+    clientQuality?: {
+      width: number;
+      height: number;
+      blurScore: number;
+      brightness: number;
+    };
+  }): Promise<FunctionCallResult<{ success: boolean; docKey: string; item: unknown }>> {
+    return this.invokeCallable('submitVerificationDocument', params);
+  }
+
+  public async submitVerificationRequest(params: {
+    identityDocType: 'national_id' | 'passport';
+  }): Promise<FunctionCallResult<{ success: boolean; request: unknown }>> {
+    return this.invokeCallable('submitVerificationRequest', params);
+  }
+
+  public async reviewVerification(params: {
+    targetUid: string;
+    decision: 'approve' | 'reject';
+    reason?: string;
+  }): Promise<FunctionCallResult<{ success: boolean; status: string }>> {
+    return this.invokeCallable('reviewVerification', params);
+  }
+
+  public async revokeVerification(params: {
+    targetUid: string;
+    reason: string;
+  }): Promise<FunctionCallResult<{ success: boolean }>> {
+    return this.invokeCallable('revokeVerification', params);
+  }
+
+  public async getVerificationDocumentUrl(params: {
+    targetUid: string;
+    docKey: 'driver_license' | 'identity';
+  }): Promise<FunctionCallResult<{ url: string; expiresAt: string; docKey: string }>> {
+    return this.invokeCallable('getVerificationDocumentUrl', params);
+  }
+
   public async verifyCustomerIdentity(params: IdentityVerificationParams): Promise<FunctionCallResult<IdentityVerificationResult>> {
     return this.invokeCallable<IdentityVerificationParams, IdentityVerificationResult>('verifyCustomerIdentity', params);
   }

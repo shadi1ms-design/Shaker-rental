@@ -117,10 +117,12 @@ export const storageService = {
     file,
     storagePath,
     onProgress,
+    customMetadata,
   }: {
     file: File | Blob;
     storagePath: string;
     onProgress?: (progressPercent: number) => void;
+    customMetadata?: Record<string, string>;
   }): Promise<{ downloadUrl: string; storagePath: string }> {
     // 1. Explicit Local / Demo Mode Fallback (ONLY when Firebase is completely unconfigured)
     if (!this.isAvailable() || !storage) {
@@ -135,6 +137,7 @@ export const storageService = {
       const storageRef = ref(storage, storagePath);
       const metadata = {
         contentType: (file as File).type || 'application/octet-stream',
+        ...(customMetadata ? { customMetadata } : {}),
       };
 
       const uploadTask = uploadBytesResumable(storageRef, file, metadata);
@@ -191,6 +194,9 @@ export const storageService = {
     if (!validation.valid) {
       throw new Error(validation.error || 'الملف غير صالح للرفع.');
     }
+    if (file.type !== 'image/jpeg') {
+      throw new Error('وثائق الحساب تُرفع بالتصوير بالكاميرا فقط.');
+    }
 
     const cleanName = sanitizeFileName(file.name);
     const timestamp = Date.now();
@@ -200,6 +206,7 @@ export const storageService = {
       file,
       storagePath,
       onProgress,
+      customMetadata: { capturedVia: 'camera' },
     });
 
     return {

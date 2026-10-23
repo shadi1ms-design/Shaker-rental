@@ -36,11 +36,16 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
   onBook,
   onBookNow,
 }) => {
-  const modalRef = useFocusTrap({ isOpen: Boolean(vehicle), onClose });
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  // Escape closes the image lightbox first; only a second press leaves the page
+  const modalRef = useFocusTrap({
+    isOpen: Boolean(vehicle),
+    onClose: () => (isLightboxOpen ? setIsLightboxOpen(false) : onClose()),
+    trapTab: false,
+  });
   const { user, isAdmin, isSuperAdmin } = useAuth();
   const isUserLoggedIn = Boolean(user);
   const [liveSettings, setLiveSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
@@ -113,7 +118,7 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
       <div 
         ref={modalRef}
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-labelledby="car-details-title"
         className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl animate-in fade-in duration-200 overflow-clip"
         style={{ WebkitOverflowScrolling: 'touch' }}
@@ -148,7 +153,7 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
               <img
                 src={currentImage}
                 alt={`${vehicle.brand} ${vehicle.model} - صورة ${activeImageIndex + 1}`}
-                loading="lazy"
+                loading="eager"
                 decoding="async"
                 className="w-full h-full object-cover transition-all duration-300 group-hover:scale-[1.01]"
                 onError={() => setImageError(true)}

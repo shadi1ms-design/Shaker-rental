@@ -3,7 +3,8 @@
  * Source of truth for designated root system identifiers and cloud environment.
  */
 
-export const DESIGNATED_SUPER_ADMIN_UID = 'qEGp4XPEsZdaPTb8sGOR06sJj4A2';
+// Set in functions/.env (not committed): DESIGNATED_SUPER_ADMIN_UID=<uid>
+export const DESIGNATED_SUPER_ADMIN_UID = (process.env.DESIGNATED_SUPER_ADMIN_UID || '').trim();
 
 export const FUNCTION_REGION = 'asia-south1';
 

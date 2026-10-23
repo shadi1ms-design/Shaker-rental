@@ -1,9 +1,31 @@
 @import "tailwindcss";
 
+@theme {
+  /* `xs:` was used in the code but never defined in Tailwind v4 */
+  --breakpoint-xs: 30rem;
+  /* Muted text on the dark slate backgrounds was below WCAG AA contrast (4.0:1) */
+  --color-slate-500: #7c8ba1;
+}
+
 @layer base {
   html, body {
     overflow-x: clip;
     max-width: 100%;
+  }
+  :root {
+    color-scheme: dark; /* dark date pickers, selects and scrollbars */
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button:not(:disabled),
+  [role="button"],
+  summary {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
   }
   body {
     font-family: 'Cairo', 'Tajawal', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -72,3 +94,31 @@
   }
 }
 
+
+/* Firefox scrollbar to match the custom WebKit one */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1e293b #090d16;
+}
+
+/* Smallest text was 9-10px, too small for Arabic script */
+.text-\[10px\],
+.text-\[9px\] {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* iOS Safari zooms the page when a focused field has font-size < 16px */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+  }
+}

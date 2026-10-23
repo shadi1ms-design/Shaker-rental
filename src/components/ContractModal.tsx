@@ -226,22 +226,22 @@ export const ContractModal: React.FC<ContractModalProps> = ({ booking, onClose }
                   <p className="text-xs text-slate-600 font-medium">
                     Shaker Car Rental Company — دمشق، سوريا
                   </p>
-                  <p className="text-[11px] text-slate-500 font-mono">
+                  <p className="text-[11px] text-slate-600 font-mono">
                     هاتف: +963 944 000 000 • العنوان: دمشق - جرمانا
                   </p>
                 </div>
 
                 <div className="text-left sm:text-left bg-slate-100 p-3.5 rounded-xl border border-slate-300 min-w-[220px]">
                   <div className="flex items-center justify-between gap-3 text-xs mb-1">
-                    <span className="text-slate-500 font-semibold">رقم العقد:</span>
+                    <span className="text-slate-600 font-semibold">رقم العقد:</span>
                     <span className="font-mono font-black text-slate-950">{contract.contractNumber}</span>
                   </div>
                   <div className="flex items-center justify-between gap-3 text-xs mb-1">
-                    <span className="text-slate-500 font-semibold">رقم الحجز:</span>
+                    <span className="text-slate-600 font-semibold">رقم الحجز:</span>
                     <span className="font-mono text-slate-800">{contract.bookingNumber}</span>
                   </div>
                   <div className="flex items-center justify-between gap-3 text-xs">
-                    <span className="text-slate-500 font-semibold">تاريخ التحرير:</span>
+                    <span className="text-slate-600 font-semibold">تاريخ التحرير:</span>
                     <span className="font-mono text-slate-800">
                       {new Date(contract.issuedAt).toLocaleDateString('ar-SY')}
                     </span>
@@ -397,7 +397,7 @@ export const ContractModal: React.FC<ContractModalProps> = ({ booking, onClose }
                 </div>
 
                 <div className="text-left font-mono">
-                  <span className="text-[10px] text-slate-500 block">Security Verification Code:</span>
+                  <span className="text-[10px] text-slate-600 block">Security Verification Code:</span>
                   <span className="text-xs font-black text-slate-950 bg-white px-2.5 py-1 rounded border border-slate-300 inline-block tracking-wider">
                     {contract.verificationCode}
                   </span>

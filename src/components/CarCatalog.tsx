@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { VehicleImagePlaceholder } from './VehicleImagePlaceholder';
+import { VehicleImageCarousel } from './common/VehicleImageCarousel';
 import {
   Vehicle,
   VehicleCategory,
@@ -22,7 +22,6 @@ import {
   Clock,
   Info,
   Calendar,
-  Image as ImageIcon,
 } from 'lucide-react';
 
 interface CarCatalogProps {
@@ -74,10 +73,10 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
   const [fuelType, setFuelType] = useState<FuelType | 'all'>('all');
   const [seats, setSeats] = useState<number | 'all'>('all');
   const [availability, setAvailability] = useState<'all' | 'available' | 'rented'>('all');
-  const [maxPrice, setMaxPrice] = useState<number>(100);
+  // null = no cap (follows the most expensive vehicle), so no vehicle is hidden by default
+  const [maxPriceCap, setMaxPriceCap] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<SortField>('price-asc');
   const [showFiltersMobile, setShowFiltersMobile] = useState(false);
-  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
 
   // Sync category or initialFilters prop if updated from Hero search
   React.useEffect(() => {
@@ -96,6 +95,16 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
 
   // Unique lists for filters
   const safeVehicles = vehicles || [];
+
+  // Slider bounds follow the real fleet prices instead of a hard-coded 35$-100$ range
+  const priceBounds = useMemo(() => {
+    const prices = safeVehicles.map((v) => Number(v.dailyPrice)).filter((n) => Number.isFinite(n));
+    if (prices.length === 0) return { min: 35, max: 100 };
+    const min = Math.floor(Math.min(...prices) / 5) * 5;
+    const max = Math.max(Math.ceil(Math.max(...prices) / 5) * 5, min + 5);
+    return { min, max };
+  }, [safeVehicles]);
+  const maxPrice = maxPriceCap === null ? priceBounds.max : Math.min(Math.max(maxPriceCap, priceBounds.min), priceBounds.max);
 
   const uniqueBrands = useMemo(() => {
     return Array.from(new Set(safeVehicles.map(v => v.brand)));
@@ -176,7 +185,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
     setFuelType('all');
     setSeats('all');
     setAvailability('all');
-    setMaxPrice(100);
+    setMaxPriceCap(null);
     setSortBy('price-asc');
   };
 
@@ -298,18 +307,18 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               </div>
               <input
                 type="range"
-                min="35"
-                max="100"
+                min={priceBounds.min}
+                max={priceBounds.max}
                 step="5"
-                value={maxPrice ?? 100}
-                onChange={(e) => setMaxPrice(Number(e.target.value) || 100)}
+                value={maxPrice}
+                onChange={(e) => setMaxPriceCap(Number(e.target.value))}
                 className="w-full accent-amber-500 bg-slate-800 h-2 rounded-lg cursor-pointer"
               />
               <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                <span>35$</span>
-                <span>55$</span>
-                <span>75$</span>
-                <span>100$</span>
+                <span>{priceBounds.min}$</span>
+                <span>{Math.round((priceBounds.min * 2 + priceBounds.max) / 3 / 5) * 5}$</span>
+                <span>{Math.round((priceBounds.min + priceBounds.max * 2) / 3 / 5) * 5}$</span>
+                <span>{priceBounds.max}$</span>
               </div>
             </div>
 
@@ -445,68 +454,39 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                       key={vehicle.id}
                       className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-black/50 hover:-translate-y-1 flex flex-col group"
                     >
-                      {/* Car Image with Badge */}
-                      <div className="relative h-48 sm:h-52 bg-slate-950 overflow-hidden">
-                        {(!vehicle.imageUrl && (!vehicle.images || vehicle.images.length === 0)) || failedImages[vehicle.id] ? (
-                          <VehicleImagePlaceholder brand={vehicle.brand} model={vehicle.model} />
-                        ) : (
-                          <img
-                            src={vehicle.imageUrl || (vehicle.images && vehicle.images[0])}
-                            alt={`${vehicle.brand} ${vehicle.model}`}
-                            width={400}
-                            height={250}
-                            loading="lazy"
-                            decoding="async"
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                            onError={() => setFailedImages((prev) => ({ ...prev, [vehicle.id]: true }))}
-                          />
-                        )}
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-black/30 pointer-events-none" />
-
+                      {/* Car Image gallery (swipe between photos) */}
+                      <VehicleImageCarousel vehicle={vehicle}>
                         {/* Category & Status Badges */}
-                        <div className="absolute top-3 right-3 flex flex-col gap-1.5">
-                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-950/80 backdrop-blur-md text-amber-400 border border-amber-500/30">
+                        <div className="absolute top-3 right-3">
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-950/85 text-amber-400 border border-amber-500/40 shadow-md">
                             {getCategoryLabel(vehicle.category)}
                           </span>
                         </div>
 
                         <div className="absolute top-3 left-3">
                           {isAvailable ? (
-                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md bg-emerald-950/90 text-emerald-300 border border-emerald-500/50">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                              <span>متاحة الآن ●</span>
+                              <span>متاحة الآن</span>
                             </span>
                           ) : isRented ? (
-                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md bg-rose-950/90 text-rose-300 border border-rose-500/50">
                               <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
                               <span>مؤجرة حالياً</span>
                             </span>
                           ) : isMaintenance ? (
-                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md bg-amber-950/90 text-amber-300 border border-amber-500/50">
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
                               <span>في الصيانة</span>
                             </span>
                           ) : (
-                            <span className="px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md flex items-center gap-1.5 shadow-sm bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md bg-blue-950/90 text-blue-300 border border-blue-500/50">
                               <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
                               <span>محجوزة</span>
                             </span>
                           )}
                         </div>
-
-                        {/* Multi-image indicator */}
-                        {vehicle.images && vehicle.images.length > 1 && (
-                          <div className="absolute bottom-3 left-3 text-xs text-slate-300 bg-slate-950/80 px-2 py-0.5 rounded-lg backdrop-blur-sm border border-slate-700/50 flex items-center gap-1">
-                            <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
-                            <span>{vehicle.images.length} صور</span>
-                          </div>
-                        )}
-
-                        {/* Year & Color Pill */}
-                        <div className="absolute bottom-3 right-3 text-xs text-slate-300 bg-slate-950/70 px-2.5 py-1 rounded-lg backdrop-blur-sm">
-                          موديل {vehicle.year} • {vehicle.color}
-                        </div>
-                      </div>
+                      </VehicleImageCarousel>
 
                       {/* Car Details Content */}
                       <div className="p-5 flex-1 flex flex-col justify-between">
@@ -518,6 +498,9 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                               <h3 className="text-lg font-bold text-white group-hover:text-amber-400 transition-colors">
                                 {vehicle.model}
                               </h3>
+                              <span className="text-xs text-slate-400 block mt-0.5">
+                                موديل {vehicle.year} • {vehicle.color}
+                              </span>
                             </div>
                             <div className="text-left">
                               <span className="text-2xl font-black text-amber-400">${vehicle.dailyPrice}</span>

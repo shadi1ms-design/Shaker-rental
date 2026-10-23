@@ -60,9 +60,9 @@ if (isFirebaseConfigured) {
     app = existingApps && existingApps.length > 0 && existingApps[0] ? existingApps[0] : initializeApp(firebaseConfig);
 
     // Firebase App Check with reCAPTCHA Enterprise
-    const recaptchaSiteKey = env.VITE_RECAPTCHA_SITE_KEY || appletConfig?.recaptchaSiteKey || '6Le-GMItAAAAAJQeoGFLzB7crB0JgnkL_eLkNYY5';
+    const recaptchaSiteKey = env.VITE_RECAPTCHA_SITE_KEY || appletConfig?.recaptchaSiteKey || '';
 
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && recaptchaSiteKey) {
       try {
         appCheckInstance = initializeAppCheck(app, {
           provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),

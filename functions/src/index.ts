@@ -52,9 +52,15 @@ export {
   syncMyRole,
 } from './userManagement';
 
-// 7. Identity Verification Function
+// 7. Identity & Account Verification Functions
 export {
   verifyCustomerIdentity,
+  initiateVerificationSession,
+  submitVerificationDocument,
+  submitVerificationRequest,
+  reviewVerification,
+  revokeVerification,
+  getVerificationDocumentUrl,
 } from './verifyCustomerIdentity';
 
 // 8. Auth Lifecycle Trigger

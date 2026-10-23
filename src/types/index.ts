@@ -253,6 +253,51 @@ export interface AppNotification {
   createdAt: string;
 }
 
+export type VerificationStatus = 'not_started' | 'pending_review' | 'verified' | 'rejected';
+export type IdentityDocChoice = 'national_id' | 'passport';
+export type VerificationDocKey = 'driver_license' | 'identity';
+
+export interface DocQualityMetric {
+  width: number;
+  height: number;
+  blurScore: number;
+  brightness?: number;
+  passed: boolean;
+  message?: string;
+}
+
+export interface VerificationDocItem {
+  storagePath: string;
+  uploadedAt: string;
+  sizeBytes: number;
+  sha256?: string;
+  quality?: DocQualityMetric;
+  docType: VerificationDocKey;
+  subType?: IdentityDocChoice;
+}
+
+export interface VerificationRequest {
+  id: string; // matches userId
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  userPhone?: string;
+  status: VerificationStatus;
+  identityDocType: IdentityDocChoice;
+  docs: {
+    driver_license?: VerificationDocItem;
+    identity?: VerificationDocItem;
+  };
+  submittedAt?: string | null;
+  reviewedAt?: string | null;
+  reviewedBy?: string | null;
+  reviewedByEmail?: string | null;
+  rejectionReason?: string | null;
+  attempt: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserFileRecord {
   id: string;
   userId: string;
@@ -263,7 +308,7 @@ export interface UserFileRecord {
   fileSize: number; // in bytes
   category?: 'national_id' | 'driver_license' | 'passport' | 'contract' | 'other';
   verified?: boolean;
-  status?: 'pending' | 'manual_review' | 'verified' | 'rejected' | 'uploaded';
+  status?: VerificationStatus | 'pending' | 'manual_review' | 'uploaded';
   uploadedAt: string; // ISO date-time string
 }
 
@@ -279,11 +324,11 @@ export interface FirestoreUser {
   createdAt: string;
   uploadedFilesCount?: number;
   files?: UserFileRecord[];
-  verificationStatus?: 'pending' | 'manual_review' | 'verified' | 'rejected';
+  verificationStatus?: VerificationStatus;
   verified?: boolean;
   identityVerified?: boolean;
-  verifiedAt?: string;
-  verifiedBy?: string;
+  verifiedAt?: string | null;
+  verifiedBy?: string | null;
   verificationNotes?: string;
 }
 
@@ -298,6 +343,8 @@ export interface AuthUser {
   createdAt?: string;
   emailVerified?: boolean;
   isPasswordProvider?: boolean;
+  verificationStatus?: VerificationStatus;
+  verified?: boolean;
 }
 
 export type UserAccount = AuthUser;
@@ -321,16 +368,35 @@ export interface SettingsPayload {
 }
 
 export interface IdentityVerificationParams {
-  action: 'set_status';
-  targetUserId: string;
-  status: 'pending' | 'manual_review' | 'verified' | 'rejected';
+  action?: 'initiate_session' | 'submit_document' | 'submit_request' | 'review' | 'revoke' | 'purge' | 'get_url' | 'set_status' | 'review_decision';
+  targetUserId?: string;
+  status?: VerificationStatus | 'pending' | 'manual_review';
   notes?: string;
+  rejectionReason?: string;
+  identityDocType?: IdentityDocChoice;
+  docType?: VerificationDocKey;
+  nonce?: string;
+  imageBase64?: string;
+  clientQuality?: {
+    width: number;
+    height: number;
+    blurScore: number;
+    brightness?: number;
+  };
+  storagePath?: string;
+  documentType?: string;
 }
 
 export interface IdentityVerificationResult {
   success: boolean;
   message?: string;
   error?: string;
+  nonce?: string;
+  expiresAt?: string;
+  signedUrl?: string;
+  verificationStatus?: VerificationStatus;
+  request?: VerificationRequest;
+  quality?: DocQualityMetric;
 }
 
 export interface AuthUserData extends Partial<FirestoreUser> {

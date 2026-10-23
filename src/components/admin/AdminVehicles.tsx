@@ -315,7 +315,7 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
       {/* Fleet Display */}
       {filteredVehicles.length === 0 ? (
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center text-xs text-slate-400 space-y-3">
-          <Car className="w-10 h-10 text-slate-600 mx-auto" />
+          <Car className="w-10 h-10 text-slate-500 mx-auto" />
           <p className="font-bold text-sm text-slate-300">لا توجد سيارات مطابقة لمعايير البحث أو الفلتر</p>
           <button
             onClick={() => {
@@ -597,7 +597,7 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
       {/* Maintenance Warning Modal (If upcoming booking exists) */}
       {maintenanceWarning && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-slate-900 border border-amber-500/30 rounded-3xl p-6 sm:p-8 max-w-lg w-full space-y-5 shadow-2xl">
+          <div className="bg-slate-900 border border-amber-500/30 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain p-6 sm:p-8 max-w-lg w-full space-y-5 shadow-2xl">
             <div className="flex items-center gap-3 text-amber-400">
               <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-6 h-6 text-amber-400" />

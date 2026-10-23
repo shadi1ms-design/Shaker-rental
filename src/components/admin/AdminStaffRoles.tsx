@@ -29,7 +29,6 @@ interface AdminStaffRolesProps {
   onBackToOverview?: () => void;
 }
 
-import { DESIGNATED_SUPER_ADMIN_UID } from '../../constants/auth';
 
 type AssignableRole = 'customer' | 'employee' | 'admin';
 
@@ -98,8 +97,6 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
 
   // Check if target is a superAdmin account
   const isSuperAdminAccount = (targetUser: FirestoreUser): boolean => {
-    const targetUid = targetUser.id || targetUser.uid;
-    if (targetUid === DESIGNATED_SUPER_ADMIN_UID) return true;
     const role = targetUser.role;
     return role === 'superAdmin' || role === 'super_admin' || (role as string) === 'owner';
   };
@@ -479,7 +476,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
           </div>
         ) : filteredUsers.length === 0 ? (
           <div className="p-12 text-center space-y-3">
-            <Users className="w-10 h-10 text-slate-600 mx-auto" />
+            <Users className="w-10 h-10 text-slate-500 mx-auto" />
             <h3 className="text-sm font-bold text-white">لم يتم العثور على مستخدمين</h3>
             <p className="text-xs text-slate-500">جرب تعديل كلمة البحث أو فلتر الأدوار المحدد أعلاه.</p>
           </div>
@@ -563,10 +560,10 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                             <span>{u.phone}</span>
                           </div>
                         ) : (
-                          <span className="text-[11px] text-slate-600">لا يوجد رقم هاتف</span>
+                          <span className="text-[11px] text-slate-500">لا يوجد رقم هاتف</span>
                         )}
                         <div className="text-[10px] text-slate-500 flex items-center gap-1 mt-1">
-                          <Calendar className="w-3 h-3 text-slate-600" />
+                          <Calendar className="w-3 h-3 text-slate-500" />
                           <span>
                             {u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-SY') : 'سجل مسبق'}
                           </span>
@@ -727,7 +724,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
       {/* 7. Modal 1: Confirmation for Role Change */}
       {pendingChange && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-amber-500/40 rounded-3xl max-w-md w-full p-6 sm:p-8 space-y-6 shadow-2xl relative">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain max-w-md w-full p-6 sm:p-8 space-y-6 shadow-2xl relative">
             {/* Header */}
             <div className="flex items-start gap-4">
               <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
@@ -826,7 +823,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
       {/* 8. Modal 2: Confirmation for Toggling Account Status */}
       {pendingToggleStatusUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain max-w-md w-full p-6 sm:p-8 space-y-5 shadow-2xl">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
               <Ban className="w-6 h-6" />
             </div>
@@ -878,7 +875,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
       {/* 9. Modal 3: Confirmation for Permanent User Account Deletion */}
       {pendingDeleteUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-rose-500/40 rounded-3xl max-w-md w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+          <div className="bg-slate-900 border border-rose-500/40 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain max-w-md w-full p-6 sm:p-8 space-y-5 shadow-2xl">
             <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 mx-auto">
               <Trash2 className="w-6 h-6" />
             </div>

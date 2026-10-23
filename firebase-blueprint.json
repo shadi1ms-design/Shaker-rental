@@ -173,12 +173,38 @@
         "uploadedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "fileName", "storagePath", "uploadedAt"]
+    },
+    "VerificationRequest": {
+      "title": "VerificationRequest",
+      "description": "Single source of truth for customer identity verification with dual documents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 150 },
+        "userName": { "type": "string", "maxLength": 150 },
+        "userPhone": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["not_started", "pending_review", "verified", "rejected"] },
+        "identityDocType": { "type": "string", "enum": ["national_id", "passport"] },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "rejectionReason": { "type": "string", "maxLength": 1000 },
+        "attempt": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "userEmail", "status", "identityDocType", "attempt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles in the Firestore database"
+    },
+    "/verificationRequests/{userId}": {
+      "schema": "VerificationRequest",
+      "description": "Customer identity verification records and document proofs"
     },
     "/users/{userId}/files/{fileId}": {
       "schema": "UploadedFile",

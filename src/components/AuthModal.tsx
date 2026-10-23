@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { isValidEmail, isValidPhone } from '../utils/security';
+import { normalizeDigits } from '../utils/phone';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   Mail,
@@ -11,7 +12,6 @@ import {
   EyeOff,
   CheckCircle2,
   AlertCircle,
-  X,
   ArrowRight,
   ShieldCheck,
   Sparkles,
@@ -24,6 +24,8 @@ interface AuthModalProps {
   initialMode?: 'login' | 'register';
   onClose: () => void;
   onSuccess?: () => void;
+  /** Called when the user switches between the login and register tabs (lets a page keep its URL in sync). */
+  onModeChange?: (mode: 'login' | 'register') => void;
   loginWithGoogle?: (preferredEmail?: string) => Promise<boolean>;
 }
 
@@ -32,9 +34,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   initialMode = 'login',
   onClose,
   onSuccess,
+  onModeChange,
   loginWithGoogle: propLoginWithGoogle,
 }) => {
-  const modalRef = useFocusTrap({ isOpen, onClose });
+  const modalRef = useFocusTrap({ isOpen, onClose, trapTab: false });
   const authContext = useAuth();
   const effectiveLoginWithGoogle = propLoginWithGoogle || authContext?.loginWithGoogle;
   const loginWithEmail = authContext?.loginWithEmail;
@@ -66,6 +69,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   }, [isOpen, initialMode]);
 
   if (!isOpen) return null;
+
+  const switchMode = (next: 'login' | 'register' | 'forgot') => {
+    setMode(next);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    if (next !== 'forgot') onModeChange?.(next);
+  };
 
   const handleGoogleAuth = async () => {
     setErrorMessage(null);
@@ -115,7 +125,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }, 600);
       } else if (mode === 'register') {
         const cleanName = displayName.trim();
-        const cleanPhone = phone.trim();
+        const cleanPhone = normalizeDigits(phone).trim();
 
         if (!cleanName.trim()) {
           throw new Error('يرجى إدخال الاسم الكامل');
@@ -173,7 +183,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       <div
         ref={modalRef}
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-labelledby="auth-modal-title"
         className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-5 sm:p-8 shadow-2xl relative text-slate-100 my-auto overscroll-contain"
         style={{ WebkitOverflowScrolling: 'touch' }}
@@ -183,19 +193,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Glow ambient background */}
         <div className="absolute -top-24 -right-24 w-52 h-52 bg-amber-500/10 blur-[90px] rounded-full pointer-events-none" />
         <div className="absolute -bottom-24 -left-24 w-52 h-52 bg-amber-600/10 blur-[90px] rounded-full pointer-events-none" />
-
-        {/* Close Button Top */}
-        <button
-          onClick={onClose}
-          type="button"
-          className="absolute top-4 left-4 sm:top-5 sm:left-5 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors text-xs font-bold shadow-md z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
-          aria-label="إغلاق نافذة تسجيل الدخول"
-          id="close-auth-modal"
-          title="إغلاق نافذة تسجيل الدخول"
-        >
-          <X className="w-4 h-4" />
-          <span>إغلاق</span>
-        </button>
 
         {/* Header Icon & Title */}
         <div className="text-center mb-6">
@@ -227,7 +224,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                setMode('login');
+                switchMode('login');
                 setErrorMessage(null);
                 setSuccessMessage(null);
               }}
@@ -243,7 +240,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                setMode('register');
+                switchMode('register');
                 setErrorMessage(null);
                 setSuccessMessage(null);
               }}
@@ -360,7 +357,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setMode('forgot');
+                      switchMode('forgot');
                       setErrorMessage(null);
                     }}
                     className="text-xs text-amber-400 hover:underline focus-visible:ring-2 focus-visible:ring-amber-400 rounded"
@@ -514,7 +511,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setMode('register');
+                  switchMode('register');
                   setErrorMessage(null);
                 }}
                 className="text-amber-400 hover:underline font-bold mr-1"
@@ -530,7 +527,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setMode('login');
+                  switchMode('login');
                   setErrorMessage(null);
                 }}
                 className="text-amber-400 hover:underline font-bold mr-1"
@@ -544,7 +541,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                setMode('login');
+                switchMode('login');
                 setErrorMessage(null);
               }}
               className="text-slate-400 hover:text-amber-400 flex items-center justify-center gap-1 mx-auto font-bold"

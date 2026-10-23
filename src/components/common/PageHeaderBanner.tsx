@@ -2,6 +2,9 @@ import React from 'react';
 import { getPageTheme, PageTheme } from '../../constants/pageThemes';
 import { motion } from 'motion/react';
 import { getItemVariants } from '../../constants/motion';
+import { MenuButton } from '../MenuButton';
+import { ArrowRight } from 'lucide-react';
+import { useBackAction } from '../../contexts/BackContext';
 
 interface PageHeaderBannerProps {
   themeKey: string;
@@ -23,13 +26,12 @@ export const PageHeaderBanner: React.FC<PageHeaderBannerProps> = ({
   customBadge,
   children,
 }) => {
+  const onBack = useBackAction();
   const theme: PageTheme = getPageTheme(themeKey, {
     title: customTitle,
     subtitle: customSubtitle,
     badge: customBadge,
   });
-
-  const IconComponent = theme.icon;
 
   return (
     <motion.div
@@ -44,11 +46,21 @@ export const PageHeaderBanner: React.FC<PageHeaderBannerProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
           <div className="flex items-start sm:items-center gap-4 sm:gap-5">
-            {/* Themed Icon Box */}
-            <div
-              className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl ${theme.iconBg} ${theme.iconBorder} border flex items-center justify-center shrink-0 shadow-lg shadow-black/40`}
-            >
-              <IconComponent className={`w-7 h-7 sm:w-8 sm:h-8 ${theme.iconText} stroke-[2.2]`} />
+            {/* ☰ menu button in the place of the page logo */}
+            <div className="flex flex-col items-center gap-2 shrink-0">
+              <MenuButton className="w-14 h-14 sm:w-16 sm:h-16" />
+              {onBack && (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  className="w-14 sm:w-16 h-9 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700 flex items-center justify-center transition-all shadow-sm active:scale-95 cursor-pointer"
+                  aria-label="رجوع إلى الصفحة السابقة"
+                  title="رجوع"
+                  id="banner-back-btn"
+                >
+                  <ArrowRight className="w-5 h-5 text-amber-400" />
+                </button>
+              )}
             </div>
 
             {/* Title & Description */}

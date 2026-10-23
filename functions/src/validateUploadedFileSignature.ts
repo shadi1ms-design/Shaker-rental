@@ -137,13 +137,14 @@ export const validateUploadedFileSignature = onObjectFinalized(
     const bucketName = object.bucket;
     const isTargetPublicPath = filePath.startsWith('vehicles/') || filePath.startsWith('public/');
     const isInspectionVideoPath = filePath.startsWith('contracts/') && filePath.includes('/videos/');
+    const isVerificationPath = filePath.startsWith('verification_pending/') || filePath.startsWith('verification_vault/');
     const isDocumentPath =
       (filePath.startsWith('users/') ||
        filePath.startsWith('uploads/') ||
        filePath.startsWith('contracts/')) &&
       !isInspectionVideoPath;
 
-    if (!isTargetPublicPath && !isDocumentPath && !isInspectionVideoPath) {
+    if (!isTargetPublicPath && !isDocumentPath && !isInspectionVideoPath && !isVerificationPath) {
       return;
     }
 
@@ -204,6 +205,64 @@ export const validateUploadedFileSignature = onObjectFinalized(
         return;
       }
 
+      // 1.5. Identity Verification Paths (verification_pending/ and verification_vault/)
+      if (isVerificationPath) {
+        const MAX_VERIFICATION_DOC_SIZE = 10 * 1024 * 1024; // 10MB
+        if (fileSize <= 0 || fileSize > MAX_VERIFICATION_DOC_SIZE) {
+          console.warn(`[Security Alert] Deleting verification doc exceeding 10MB: ${filePath} (${fileSize} bytes)`);
+          await file.delete({ ignoreNotFound: true });
+          return;
+        }
+
+        const lowerPath = filePath.toLowerCase();
+        if (!lowerPath.endsWith('.jpg') && !lowerPath.endsWith('.jpeg')) {
+          console.warn(`[Security Alert] Deleting verification doc with non-JPEG extension: ${filePath}`);
+          await file.delete({ ignoreNotFound: true });
+          return;
+        }
+
+        const [buffer] = await file.download({ start: 0, end: 11 });
+        const isJpeg = buffer && buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+        if (!isJpeg) {
+          console.warn(`[Security Alert] Deleting verification doc with invalid JPEG magic bytes: ${filePath}`);
+          await file.delete({ ignoreNotFound: true });
+          await db.collection('auditLogs').add({
+            action: 'SUSPICIOUS_VERIFICATION_DOC_SIGNATURE',
+            actorUid: null,
+            actorType: 'system',
+            filePath,
+            detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
+            timestamp: FieldValue.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
+          });
+          return;
+        }
+
+        // Cap enforcement for pending uploads: maximum 2 files per user (driver_license and identity)
+        if (filePath.startsWith('verification_pending/')) {
+          const segments = filePath.split('/');
+          const ownerUid = segments[1];
+          if (ownerUid) {
+            const prefix = `verification_pending/${ownerUid}/`;
+            const [pendingFiles] = await bucket.getFiles({ prefix, maxResults: 5 });
+            if (pendingFiles.length > 2) {
+              console.warn(`[Security Alert] Pending verification cap exceeded for ${ownerUid}, deleting excess: ${filePath}`);
+              await file.delete({ ignoreNotFound: true });
+              await db.collection('auditLogs').add({
+                action: 'VERIFICATION_QUOTA_EXCEEDED',
+                actorUid: ownerUid,
+                actorType: 'system',
+                filePath,
+                timestamp: FieldValue.serverTimestamp(),
+                createdAt: FieldValue.serverTimestamp(),
+              });
+            }
+          }
+        }
+
+        return;
+      }
+
       // 2. Document & User Image Validation (<= 25MB)
       if (isDocumentPath) {
         if (fileSize <= 0 || fileSize > MAX_DOCUMENT_SIZE_BYTES) {
@@ -238,6 +297,42 @@ export const validateUploadedFileSignature = onObjectFinalized(
             createdAt: FieldValue.serverTimestamp(),
           });
           return;
+        }
+
+        // Per-user cap on identity documents: 3 files in users/{uid}/documents/ (or uploads/{uid}/)
+        const segments = filePath.split('/');
+        const isUserDocPath =
+          (segments[0] === 'users' && segments[2] === 'documents' && Boolean(segments[1])) ||
+          (segments[0] === 'uploads' && Boolean(segments[1]));
+        if (isUserDocPath) {
+          const MAX_FILES_PER_USER = 3;
+          const ownerUid = segments[1];
+          const prefix = segments[0] === 'users' ? `users/${ownerUid}/documents/` : `uploads/${ownerUid}/`;
+          const [userFiles] = await bucket.getFiles({ prefix, maxResults: MAX_FILES_PER_USER + 2 });
+          if (userFiles.length > MAX_FILES_PER_USER) {
+            console.warn(`[Security Alert] Document cap exceeded for ${ownerUid}, deleting ${filePath}`);
+            await file.delete({ ignoreNotFound: true });
+            // Remove any Firestore index records that point at the deleted object
+            try {
+              const orphanSnap = await db.collection('files').where('storagePath', '==', filePath).get();
+              const batch = db.batch();
+              orphanSnap.docs.forEach((d) => batch.delete(d.ref));
+              const subSnap = await db.collection('users').doc(ownerUid).collection('files')
+                .where('storagePath', '==', filePath).get();
+              subSnap.docs.forEach((d) => batch.delete(d.ref));
+              await batch.commit();
+            } catch (cleanupErr) {
+              console.warn('[validateUploadedFileSignature] Orphan record cleanup failed:', cleanupErr);
+            }
+            await db.collection('auditLogs').add({
+              action: 'UPLOAD_QUOTA_EXCEEDED',
+              actorUid: ownerUid,
+              actorType: 'system',
+              filePath,
+              timestamp: FieldValue.serverTimestamp(),
+              createdAt: FieldValue.serverTimestamp(),
+            });
+          }
         }
 
         return;

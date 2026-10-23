@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
 import { isCallerStaff, assertNotRevoked } from './authz';
 import { resolveBookingDocument } from './bookingHelpers';
+import { consumeRateLimit, sanitizeRateLimitKey } from './rateLimit';
 
 const db = getFirestore(getApp(), DATABASE_ID);
 
@@ -250,6 +251,16 @@ export const verifyContractCode = onCall(
     const cleanContractNumber = contractNumber.trim();
     const cleanCode = verificationCode.trim().toUpperCase();
 
+    // Brute-force protection: 10 attempts / 10 min per caller IP (or uid when signed in)
+    const callerKey = request.auth?.uid || String(request.rawRequest?.ip || 'unknown-ip');
+    await consumeRateLimit(
+      db,
+      `verify_contract_${sanitizeRateLimitKey(callerKey)}`,
+      10,
+      10 * 60 * 1000,
+      'عدد محاولات التحقق كبير جداً. يرجى المحاولة بعد عدة دقائق.'
+    );
+
     // HMAC secret validation
     const hmacSecret = process.env.CONTRACT_HMAC_SECRET;
     if (!hmacSecret || !hmacSecret.trim()) {
@@ -269,7 +280,8 @@ export const verifyContractCode = onCall(
     if (contractsQuery.empty) {
       return {
         isValid: false,
-        message: 'رقم العقد غير مسجل في منظومة شركة شاكر لتأجير السيارات.',
+        contractNumber: cleanContractNumber,
+        message: 'رمز التحقق الرقمي غير مطابق لبيانات هذا العقد، أو العقد غير مسجل لدينا.',
       };
     }
 
@@ -308,7 +320,7 @@ export const verifyContractCode = onCall(
       return {
         isValid: false,
         contractNumber: cleanContractNumber,
-        message: 'رمز التحقق الرقمي غير مطابق لبيانات هذا العقد. قد تكون الوثيقة معدلة أو غير صالحة.',
+        message: 'رمز التحقق الرقمي غير مطابق لبيانات هذا العقد، أو العقد غير مسجل لدينا.',
       };
     }
 

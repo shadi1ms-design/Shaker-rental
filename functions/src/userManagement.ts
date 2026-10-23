@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import type { DocumentReference } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import type { UserRecord } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
@@ -284,6 +285,26 @@ export const deleteUserAccount = onCall(
       }
     }
 
+    // 2.6. Never delete an account that still holds a live reservation or a rented vehicle:
+    //      the booking would be anonymised while the car is still out, and staff could not trace the renter.
+    try {
+      const liveSnap = await db.collection('bookings')
+        .where('customerId', '==', cleanTargetUid)
+        .where('status', 'in', ['confirmed', 'rented'])
+        .limit(1)
+        .get();
+      if (!liveSnap.empty) {
+        throw new HttpsError(
+          'failed-precondition',
+          'لا يمكن حذف هذا الحساب لوجود حجز مؤكد أو سيارة مؤجرة قيد الاستخدام. أنهِ الحجوزات النشطة أو ألغها أولاً.'
+        );
+      }
+    } catch (liveErr) {
+      if (liveErr instanceof HttpsError) throw liveErr;
+      console.error('[deleteUserAccount] Active bookings check failed:', liveErr);
+      throw new HttpsError('internal', 'تعذر التحقق من الحجوزات النشطة للمستخدم. تم إيقاف عملية الحذف.');
+    }
+
     // 3. Purge user files from Storage
     try {
       const bucket = getStorage().bucket();
@@ -300,19 +321,21 @@ export const deleteUserAccount = onCall(
     // Delete Firestore user-related files and rate limits
     try {
       // 1. Delete top-level files docs
+      // (Firestore batches are capped at 500 operations, so delete in chunks.)
+      const deleteInChunks = async (refs: DocumentReference[]) => {
+        for (let i = 0; i < refs.length; i += 400) {
+          const batch = db.batch();
+          refs.slice(i, i + 400).forEach((r) => batch.delete(r));
+          await batch.commit();
+        }
+      };
+
       const filesSnap = await db.collection('files').where('userId', '==', cleanTargetUid).get();
-      const filesBatch = db.batch();
-      filesSnap.docs.forEach(doc => filesBatch.delete(doc.ref));
-      await filesBatch.commit();
+      await deleteInChunks(filesSnap.docs.map((d) => d.ref));
 
       // 2. Delete user-subcollection files
       const userFilesSnap = await db.collection('users').doc(cleanTargetUid).collection('files').get();
-      const userFilesBatch = db.batch();
-      userFilesSnap.docs.forEach(doc => userFilesBatch.delete(doc.ref));
-      await userFilesBatch.commit();
-
-      const rlRef = db.collection('rateLimits').doc(`booking_ip_${cleanTargetUid}`);
-      await rlRef.delete().catch(() => {});
+      await deleteInChunks(userFilesSnap.docs.map((d) => d.ref));
     } catch (dbErr) {
       console.error('[deleteUserAccount] Firestore files cleanup failed:', dbErr);
       throw new HttpsError(

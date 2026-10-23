@@ -61,3 +61,11 @@ export function formatArabicDate(date: Date = new Date()): string {
     return date.toLocaleDateString('ar-SY');
   }
 }
+
+/**
+ * Adds whole days to a 'YYYY-MM-DD' date string without any timezone drift.
+ */
+export function addDaysISO(isoDate: string, days: number): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().split('T')[0];
+}

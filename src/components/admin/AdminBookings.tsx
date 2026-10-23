@@ -669,7 +669,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
       <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
         {filteredBookings.length === 0 ? (
           <div className="p-12 text-center text-xs text-slate-400 space-y-3">
-            <Calendar className="w-10 h-10 text-slate-600 mx-auto" />
+            <Calendar className="w-10 h-10 text-slate-500 mx-auto" />
             <p className="font-bold text-sm text-slate-300">لا توجد حجوزات مطابقة للبحث أو الفلتر المحدد</p>
             <p className="text-slate-500 text-[11px]">جرب تغيير حالة الفلتر أو مسح نص البحث أو تعديل نطاق التاريخ</p>
             {(filterStatus !== 'all' || searchInput || startDate || endDate) && (
@@ -727,7 +727,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                         {sortField === 'date' ? (
                           sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-amber-400" /> : <ArrowDown className="w-3 h-3 text-amber-400" />
                         ) : (
-                          <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
                         )}
                       </button>
                     </th>
@@ -748,7 +748,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                         {sortField === 'total' ? (
                           sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-amber-400" /> : <ArrowDown className="w-3 h-3 text-amber-400" />
                         ) : (
-                          <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
                         )}
                       </button>
                     </th>
@@ -769,7 +769,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                         {sortField === 'remaining' ? (
                           sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-amber-400" /> : <ArrowDown className="w-3 h-3 text-amber-400" />
                         ) : (
-                          <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
                         )}
                       </button>
                     </th>
@@ -880,7 +880,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                               className={`p-2 rounded-xl transition-colors ${
                                 targetVehicle
                                   ? 'bg-slate-800 hover:bg-slate-700 text-blue-400 cursor-pointer'
-                                  : 'bg-slate-800/40 text-slate-600 cursor-not-allowed opacity-50'
+                                  : 'bg-slate-800/40 text-slate-500 cursor-not-allowed opacity-50'
                               }`}
                               title={targetVehicle ? 'نموذج فحص واستلام السيارة' : 'تعذر الفحص: بيانات السيارة غير متوفرة في الأسطول الحالي'}
                               aria-label={targetVehicle ? 'نموذج فحص واستلام السيارة' : 'بيانات السيارة غير متوفرة'}
@@ -1220,7 +1220,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
 
         return (
           <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
               <div className={`w-12 h-12 rounded-2xl border flex items-center justify-center mx-auto ${details.iconBg}`}>
                 <IconComponent className="w-6 h-6" />
               </div>
@@ -1269,7 +1269,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
       {/* Booking Permanent Deletion Confirmation Modal */}
       {bookingToDelete && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
             <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
               <Trash2 className="w-6 h-6" />
             </div>

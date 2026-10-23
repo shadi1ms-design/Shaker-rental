@@ -105,7 +105,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
                     min={todayDamascus}
                     value={pickupDate}
                     onChange={(e) => setPickupDate(e.target.value)}
-                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 hover:border-slate-600 text-white font-medium text-sm focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors [color-scheme:dark]"
+                    className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 hover:border-slate-600 text-white font-medium text-sm focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors [color-scheme:dark] ${!pickupDate ? '[&::-webkit-datetime-edit]:opacity-0' : ''}`}
                   />
                   {!pickupDate && (
                     <div className="absolute inset-y-0 right-3.5 pointer-events-none flex items-center gap-1.5 text-slate-400 text-xs sm:text-sm">
@@ -128,7 +128,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch }) => {
                     min={pickupDate || todayDamascus}
                     value={returnDate}
                     onChange={(e) => setReturnDate(e.target.value)}
-                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 hover:border-slate-600 text-white font-medium text-sm focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors [color-scheme:dark]"
+                    className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 hover:border-slate-600 text-white font-medium text-sm focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors [color-scheme:dark] ${!returnDate ? '[&::-webkit-datetime-edit]:opacity-0' : ''}`}
                   />
                   {!returnDate && (
                     <div className="absolute inset-y-0 right-3.5 pointer-events-none flex items-center gap-1.5 text-slate-400 text-xs sm:text-sm">

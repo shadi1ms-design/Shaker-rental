@@ -79,13 +79,20 @@ service cloud.firestore {
         (!('isStaff' in request.resource.data) || request.resource.data.isStaff == false) &&
         (!('active' in request.resource.data) || request.resource.data.active == true)
       );
+      // Customers can no longer change their phone number: 'phone' may only be written
+      // while it is still empty/missing (first-time registration or backfill). Admins can still edit it.
       allow update: if (
         isSignedIn() &&
         request.auth.uid == userId &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'displayName', 'phone', 'photoURL', 'updatedAt', 'email',
+          'name', 'displayName', 'phone', 'photoURL', 'updatedAt',
           'fcmTokens', 'fcmLastUpdated'
-        ])
+        ]) &&
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['phone']) ||
+          resource.data.get('phone', '') == '' ||
+          resource.data.get('phone', '') == null
+        )
       ) || isAdmin();
       allow delete: if isAdmin();
 
@@ -95,21 +102,31 @@ service cloud.firestore {
         allow create: if (isAdmin() || (
           isEmailVerified() && request.auth.uid == userId &&
           (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
-          (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
+          (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded', 'not_started']) &&
+          request.resource.data.get('storagePath', '').matches('^(users|uploads)/' + request.auth.uid + '/.*')
         )) && request.resource.data.keys().hasOnly([
           'id', 'userId', 'userEmail', 'fileName', 'storagePath', 'fileType',
           'fileSize', 'category', 'status', 'verified', 'uploadedAt', 'createdAt', 'updatedAt'
         ]);
         allow update: if (isAdmin() || (
           isSignedIn() && request.auth.uid == userId &&
-          (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending') || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
-        )) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storagePath', 'userId', 'verified']);
-        allow delete: if isAdmin() || (
-          isSignedIn() && request.auth.uid == userId &&
-          resource.data.get('verified', false) != true &&
-          resource.data.get('status', 'pending') in ['pending', 'uploaded', 'rejected', 'manual_review']
-        );
+          (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending'))
+        )) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storagePath', 'userId', 'verified'])
+          && (isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fileName', 'status', 'updatedAt']));
+        allow delete: if isAdmin();
       }
+    }
+
+    // Server-Authoritative Identity Verification Requests: verificationRequests/{userId}
+    // Only Admin and Owner can read. Client writes are completely forbidden.
+    match /verificationRequests/{userId} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow write: if false;
+    }
+
+    // Verification temporary sessions (internal Cloud Function nonce tracking)
+    match /verificationSessions/{sessionId} {
+      allow read, write: if false;
     }
 
     // Top-level files index: /files/{fileId}
@@ -118,7 +135,8 @@ service cloud.firestore {
       allow create: if (isAdmin() || (
         isEmailVerified() && request.resource.data.userId == request.auth.uid &&
         (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
-        (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
+        (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded', 'not_started']) &&
+        request.resource.data.get('storagePath', '').matches('^(users|uploads)/' + request.auth.uid + '/.*')
       )) && request.resource.data.keys().hasOnly([
         'id', 'userId', 'userEmail', 'fileName', 'storagePath', 'fileType',
         'fileSize', 'category', 'status', 'verified', 'uploadedAt', 'createdAt', 'updatedAt'
@@ -127,13 +145,10 @@ service cloud.firestore {
         isSignedIn() && 
         resource.data.userId == request.auth.uid && 
         request.resource.data.userId == request.auth.uid &&
-        (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending') || request.resource.data.status in ['pending', 'manual_review', 'uploaded'])
-      )) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storagePath', 'userId', 'verified']);
-      allow delete: if isAdmin() || (
-        isSignedIn() && resource.data.userId == request.auth.uid &&
-        resource.data.get('verified', false) != true &&
-        resource.data.get('status', 'pending') in ['pending', 'uploaded', 'rejected', 'manual_review']
-      );
+        (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending'))
+      )) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storagePath', 'userId', 'verified'])
+        && (isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fileName', 'status', 'updatedAt']));
+      allow delete: if isAdmin();
     }
 
     // Settings collection - Client writes completely blocked (Admin Cloud Functions / SDK only)
@@ -162,7 +177,7 @@ service cloud.firestore {
     // Bookings collection:
     // Direct client creation blocked (enforced via createBookingSecure).
     // Employee updates restricted strictly to notes, deliveryLocation, and updatedAt.
-    // Status changes are executed exclusively via updateBookingStatusSecure.
+    // Status changes (including customer cancellation) are executed exclusively via updateBookingStatusSecure.
     match /bookings/{bookingId} {
       allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
       allow create: if false;
@@ -171,12 +186,6 @@ service cloud.firestore {
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'notes', 'deliveryLocation', 'updatedAt'
         ])
-      ) || (
-        isSignedIn() && 
-        resource.data.customerId == request.auth.uid && 
-        resource.data.status in ['new', 'pending', 'reviewing'] &&
-        request.resource.data.status == 'cancelled' &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
       ) || (
         isSignedIn() &&
         resource.data.customerId == request.auth.uid &&

@@ -6,6 +6,8 @@ interface PageTopBarProps {
   title: string;
   onBack?: () => void;
   badge?: string;
+  /** Show the ☰ button here (only for pages without a header banner). */
+  showMenu?: boolean;
 }
 
 /**
@@ -16,13 +18,13 @@ interface PageTopBarProps {
  * - Page title and optional badge.
  * - Clean layout without excessive lateral margins.
  */
-export const PageTopBar: React.FC<PageTopBarProps> = ({ title, onBack, badge }) => {
+export const PageTopBar: React.FC<PageTopBarProps> = ({ title, onBack, badge, showMenu = false }) => {
   return (
     <header className="relative z-10 w-full bg-slate-950/95 border-b border-slate-800/80 text-slate-100">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-3 sm:gap-4">
         {/* Right side in RTL: MenuButton + Back Button + Page Title */}
         <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0">
-          <MenuButton />
+          {showMenu && <MenuButton />}
 
           {onBack && (
             <button

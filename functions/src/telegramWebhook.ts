@@ -11,6 +11,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import type { DocumentReference } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
 import { applyBookingStatusChange } from './bookingHelpers';
@@ -96,6 +97,7 @@ async function editMessageText(
 export const telegramWebhook = onRequest(
   {
     region: FUNCTION_REGION,
+    invoker: 'public',
     secrets: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_WEBHOOK_SECRET', 'TELEGRAM_ALLOWED_USER_IDS', 'TELEGRAM_CHAT_ID'],
     timeoutSeconds: 30,
     memory: '256MiB',
@@ -103,8 +105,9 @@ export const telegramWebhook = onRequest(
   async (req, res) => {
     try {
       // 1. Webhook secret header check using constant-time comparison (crypto.timingSafeEqual)
-      const secretHeader = String(req.headers['x-telegram-bot-api-secret-token'] || '');
-      const expectedSecret = String(process.env.TELEGRAM_WEBHOOK_SECRET || '');
+      // .trim(): secrets saved with a trailing newline/space would otherwise never match.
+      const secretHeader = String(req.headers['x-telegram-bot-api-secret-token'] || '').trim();
+      const expectedSecret = String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim();
 
       let isValidSecret = false;
       if (secretHeader && expectedSecret) {
@@ -116,7 +119,12 @@ export const telegramWebhook = onRequest(
       }
 
       if (!isValidSecret) {
-        console.warn('[telegramWebhook] Unauthorized webhook request. Secret mismatch.');
+        const reason = !expectedSecret
+          ? 'TELEGRAM_WEBHOOK_SECRET is empty on the server'
+          : !secretHeader
+          ? 'request has no x-telegram-bot-api-secret-token header (webhook was registered WITHOUT secret_token, or this is not Telegram)'
+          : 'secret_token sent by Telegram differs from TELEGRAM_WEBHOOK_SECRET (re-run setWebhook with the same secret)';
+        console.warn(`[telegramWebhook] Unauthorized webhook request: ${reason}`);
         res.status(401).end();
         return;
       }
@@ -129,7 +137,7 @@ export const telegramWebhook = onRequest(
 
       const callbackQueryId = String(callbackQuery.id || '').trim();
       const callbackData = String(callbackQuery.data || '').trim();
-      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      const botToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
 
       if (!botToken) {
         console.error('[telegramWebhook] TELEGRAM_BOT_TOKEN is missing in environment.');
@@ -148,7 +156,10 @@ export const telegramWebhook = onRequest(
         console.warn(`[telegramWebhook] Unauthorized Telegram user rejected (fail-closed): ${senderUserId}`);
         if (callbackQueryId) {
           await answerCallbackQuery(botToken, callbackQueryId, {
-            text: 'عذراً، لم يتم ضبط المستخدمين المصرحين أو معرف حسابك غير مصرح له بتنفيذ عمليات على هذا النظام.',
+            text:
+              'عذراً، حسابك غير مصرح له بتنفيذ عمليات على هذا النظام.\n' +
+              `معرّف حسابك على تيليجرام: ${senderUserId ?? 'غير معروف'}\n` +
+              'أضفه إلى السر TELEGRAM_ALLOWED_USER_IDS (أرقام مفصولة بفواصل) ثم أعد نشر الدالة.',
             show_alert: true,
           });
         }
@@ -157,13 +168,13 @@ export const telegramWebhook = onRequest(
       }
 
       // 3. Chat ID Verification: TELEGRAM_CHAT_ID (Requirement 4)
-      const expectedChatId = process.env.TELEGRAM_CHAT_ID;
+      const expectedChatId = String(process.env.TELEGRAM_CHAT_ID || '').trim();
       if (expectedChatId && messageChatId) {
         if (String(messageChatId).trim() !== String(expectedChatId).trim()) {
           console.warn(`[telegramWebhook] Unauthorized Telegram chat rejected: ${messageChatId}`);
           if (callbackQueryId) {
             await answerCallbackQuery(botToken, callbackQueryId, {
-              text: 'هذه المجموعة أو المحادثة غير معتمدة لإجراءات النظام.',
+              text: `هذه المحادثة غير معتمدة (معرّفها: ${messageChatId}). تأكد أن TELEGRAM_CHAT_ID يطابق معرّف المحادثة التي وصلت إليها رسالة الحجز.`,
               show_alert: true,
             });
           }
@@ -172,26 +183,31 @@ export const telegramWebhook = onRequest(
         }
       }
 
-      // 4. Idempotency Check via telegram_callbacks/{id} (Requirement 4)
+      // 4. Idempotency via telegram_callbacks/{id}.
+      // create() is atomic: two concurrent deliveries of the same callback cannot both pass.
+      // The lock is released again if processing crashes, so a Telegram retry is not silently swallowed.
+      let callbackRef: DocumentReference | null = null;
       if (callbackQueryId) {
-        const callbackRef = db.collection('telegram_callbacks').doc(callbackQueryId);
-        const callbackSnap = await callbackRef.get();
-        if (callbackSnap.exists) {
-          await answerCallbackQuery(botToken, callbackQueryId, {
-            text: 'تمت معالجة هذا الإجراء مسبقاً بنجاح.',
-            show_alert: false,
+        callbackRef = db.collection('telegram_callbacks').doc(callbackQueryId);
+        try {
+          await callbackRef.create({
+            id: callbackQueryId,
+            callbackData,
+            senderUserId: senderUserId || null,
+            handledAt: FieldValue.serverTimestamp(),
           });
-          res.status(200).send('ok');
-          return;
+        } catch (lockErr: any) {
+          const alreadyExists = lockErr?.code === 6 || /ALREADY_EXISTS/i.test(String(lockErr?.message || ''));
+          if (alreadyExists) {
+            await answerCallbackQuery(botToken, callbackQueryId, {
+              text: 'تمت معالجة هذا الإجراء مسبقاً بنجاح.',
+              show_alert: false,
+            });
+            res.status(200).send('ok');
+            return;
+          }
+          throw lockErr;
         }
-
-        // Record callback handling for idempotency
-        await callbackRef.set({
-          id: callbackQueryId,
-          callbackData,
-          senderUserId: senderUserId || null,
-          handledAt: FieldValue.serverTimestamp(),
-        });
       }
 
       // 5. Extract action and booking ID
@@ -233,13 +249,23 @@ export const telegramWebhook = onRequest(
 
       // 6. Apply booking status change
       const actorLabel = callbackQuery.from?.first_name || `موظف (${senderUserId})`;
-      const changeResult = await applyBookingStatusChange(db, bookingId, newStatus, actorLabel, {
-        actorUid: null,
-        actorEmail: null,
-        actorType: 'staff',
-        telegramUserId: senderUserId ?? null,
-        telegramName: callbackQuery.from?.first_name ?? null,
-      });
+      let changeResult: Awaited<ReturnType<typeof applyBookingStatusChange>>;
+      try {
+        changeResult = await applyBookingStatusChange(db, bookingId, newStatus, actorLabel, {
+          actorUid: null,
+          actorEmail: null,
+          actorType: 'staff',
+          telegramUserId: senderUserId ?? null,
+          telegramName: callbackQuery.from?.first_name ?? null,
+        });
+      } catch (applyErr) {
+        console.error('[telegramWebhook] applyBookingStatusChange threw:', applyErr);
+        if (callbackRef) await callbackRef.delete().catch(() => {});
+        changeResult = { success: false, message: 'حدث خطأ داخلي أثناء تحديث الحجز، يرجى المحاولة مرة أخرى.' };
+      }
+      if (!changeResult.success) {
+        console.warn(`[telegramWebhook] ${actionType} on booking ${bookingId} refused: ${changeResult.message}`);
+      }
 
       // 7. Answer callback and edit message with HTML mode
       if (callbackQueryId) {

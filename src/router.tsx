@@ -109,3 +109,111 @@ export const routes = {
   adminDashboard: '/admin/dashboard',
   adminLogin: '/admin/login',
 } as const;
+
+/* -------------------------------------------------------------------------- */
+/*  Route table: the single source of truth for "which page is this URL?"     */
+/* -------------------------------------------------------------------------- */
+
+export type RouteName =
+  | 'home'
+  | 'cars'
+  | 'car'
+  | 'book'
+  | 'about'
+  | 'login'
+  | 'register'
+  | 'profile'
+  | 'dashboard'
+  | 'admin'
+  | 'notFound';
+
+export interface ResolvedRoute {
+  name: RouteName;
+  params: Record<string, string>;
+}
+
+interface RouteDef {
+  name: RouteName;
+  /** Patterns such as "/cars/:id". A trailing "/*" matches any sub-path. */
+  patterns: string[];
+}
+
+// Order matters: first match wins.
+const ROUTE_TABLE: RouteDef[] = [
+  { name: 'home', patterns: ['/'] },
+  { name: 'cars', patterns: ['/cars', '/catalog'] },
+  { name: 'car', patterns: ['/cars/:id'] },
+  { name: 'book', patterns: ['/cars/:id/book'] },
+  { name: 'about', patterns: ['/about', '/contact'] },
+  { name: 'login', patterns: ['/login'] },
+  { name: 'register', patterns: ['/register'] },
+  { name: 'profile', patterns: ['/profile'] },
+  { name: 'dashboard', patterns: ['/dashboard'] },
+  { name: 'admin', patterns: ['/admin', '/admin/*'] },
+];
+
+export function resolveRoute(pathname: string): ResolvedRoute {
+  for (const def of ROUTE_TABLE) {
+    for (const pattern of def.patterns) {
+      if (pattern.endsWith('/*')) {
+        const base = pattern.slice(0, -2);
+        if (pathname === base || pathname.startsWith(`${base}/`)) {
+          return { name: def.name, params: {} };
+        }
+        continue;
+      }
+      const params = pattern === '/' ? (pathname === '/' ? {} : null) : matchPath(pattern, pathname);
+      if (params) return { name: def.name, params };
+    }
+  }
+  return { name: 'notFound', params: {} };
+}
+
+/** React hook: the route for the current URL. */
+export function useRoute(): ResolvedRoute & { pathname: string } {
+  const { pathname } = useLocation();
+  const route = resolveRoute(pathname);
+  return { ...route, pathname };
+}
+
+/**
+ * Coarse "section" used by the menus (GlobalMenu / Navbar) to highlight the active item.
+ * Car details and booking pages belong to the catalog section.
+ */
+export function getMenuSection(name: RouteName): string {
+  switch (name) {
+    case 'cars':
+    case 'car':
+    case 'book':
+      return 'cars';
+    case 'about':
+      return 'contact';
+    default:
+      return name;
+  }
+}
+
+/** Handles the string "views" emitted by the menus, Navbar and Footer. */
+export function navigateToView(view: string): void {
+  if (view === 'aboutus') goToAboutUs();
+  else if (view === 'cars' || view === 'catalog') navigate(routes.cars);
+  else if (view === 'contact' || view === 'about') navigate(routes.about);
+  else if (view === 'admin') navigate(routes.dashboard);
+  else navigate(routes.home);
+}
+
+/** "من نحن" (☰ menu): go to the home page and scroll to the company footer section. */
+export function goToAboutUs(): void {
+  const alreadyHome = window.location.pathname.replace(/\/+$/, '') === '';
+  navigate(routes.home, { scroll: false });
+  let tries = 0;
+  const scrollWhenReady = () => {
+    const el = document.getElementById('about-us');
+    if (el) {
+      el.scrollIntoView({ behavior: alreadyHome ? 'smooth' : 'auto', block: 'start' });
+    } else if (tries++ < 30) {
+      setTimeout(scrollWhenReady, 50);
+    }
+  };
+  setTimeout(scrollWhenReady, 80);
+}

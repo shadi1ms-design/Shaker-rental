@@ -7,6 +7,9 @@ import {
 import {
   calculateRentalPriceServer,
   calculateRentalDaysDamascus,
+  parseDamascusDateTime,
+  isValidDateString,
+  isValidTimeString,
 } from '../functions/src/pricingServer';
 
 describe('Pricing Engine & Damascus Timezone Tests', () => {
@@ -88,5 +91,37 @@ describe('Pricing Engine & Damascus Timezone Tests', () => {
 
     const matches = res.explanation.match(/خصم الأعضاء/g);
     expect(matches ? matches.length : 0).toBe(1); // Exactly 1 occurrence, no duplicate
+  });
+});
+
+describe('Strict date/time validation (server)', () => {
+  it('rejects impossible calendar dates instead of letting JS roll them over', () => {
+    expect(isValidDateString('2026-02-31')).toBe(false);
+    expect(isValidDateString('2026-04-31')).toBe(false);
+    expect(isValidDateString('2026-13-01')).toBe(false);
+    expect(isValidDateString('2026-00-10')).toBe(false);
+    expect(isValidDateString('2026-06-00')).toBe(false);
+    expect(isValidDateString('2026-6-1')).toBe(false);
+    expect(Number.isNaN(parseDamascusDateTime('2026-02-31', '10:00'))).toBe(true);
+  });
+
+  it('accepts real dates including leap days', () => {
+    expect(isValidDateString('2028-02-29')).toBe(true);
+    expect(isValidDateString('2027-02-29')).toBe(false);
+    expect(isValidDateString('2026-12-31')).toBe(true);
+    expect(Number.isNaN(parseDamascusDateTime('2026-06-01', '10:00'))).toBe(false);
+  });
+
+  it('rejects out-of-range times including 24:00', () => {
+    expect(isValidTimeString('00:00')).toBe(true);
+    expect(isValidTimeString('23:59')).toBe(true);
+    expect(isValidTimeString('24:00')).toBe(false);
+    expect(isValidTimeString('10:60')).toBe(false);
+    expect(isValidTimeString('9:00')).toBe(false);
+    expect(Number.isNaN(parseDamascusDateTime('2026-06-01', '24:00'))).toBe(true);
+  });
+
+  it('keeps Damascus UTC+3 semantics for valid input', () => {
+    expect(parseDamascusDateTime('2026-06-01', '10:00')).toBe(Date.UTC(2026, 5, 1, 7, 0, 0));
   });
 });

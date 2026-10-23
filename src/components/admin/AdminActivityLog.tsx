@@ -381,7 +381,7 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
         </div>
       ) : filteredLogs.length === 0 ? (
         <div className="py-16 text-center bg-slate-900/60 border border-slate-800 rounded-3xl p-6 space-y-2">
-          <Activity className="w-12 h-12 text-slate-600 mx-auto mb-2" />
+          <Activity className="w-12 h-12 text-slate-500 mx-auto mb-2" />
           <h3 className="text-sm font-bold text-white">لا توجد سجلات نشاط مطابقة</h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
             {searchQuery || actionFilter !== 'all'

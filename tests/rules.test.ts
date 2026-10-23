@@ -88,4 +88,45 @@ describe.skipIf(!hasEmulator)('Firestore Security Rules TDD Suite', () => {
       })
     ).rejects.toThrow();
   });
+
+  it('should allow customer to read own verificationRequest but block client write', async () => {
+    const customerContext = testEnv.authenticatedContext('cust-123', { role: 'customer' });
+    const db = customerContext.firestore();
+
+    const ownReq = db.collection('verificationRequests').doc('cust-123');
+    // Read allowed
+    await expect(ownReq.get()).resolves.toBeDefined();
+
+    // Client write strictly forbidden
+    await expect(
+      ownReq.set({
+        status: 'verified',
+        identityDocType: 'national_id',
+      })
+    ).rejects.toThrow();
+  });
+
+  it('should block customer from reading another user verificationRequest', async () => {
+    const customerContext = testEnv.authenticatedContext('cust-123', { role: 'customer' });
+    const db = customerContext.firestore();
+
+    const otherReq = db.collection('verificationRequests').doc('cust-456');
+    await expect(otherReq.get()).rejects.toThrow();
+  });
+
+  it('should allow admin to read all verificationRequests', async () => {
+    const adminContext = testEnv.authenticatedContext('admin-123', { role: 'admin', admin: true });
+    const db = adminContext.firestore();
+
+    const anyReq = db.collection('verificationRequests').doc('cust-789');
+    await expect(anyReq.get()).resolves.toBeDefined();
+  });
+
+  it('should block customer from deleting files', async () => {
+    const customerContext = testEnv.authenticatedContext('cust-123', { role: 'customer' });
+    const db = customerContext.firestore();
+
+    const fileDoc = db.collection('files').doc('file-abc');
+    await expect(fileDoc.delete()).rejects.toThrow();
+  });
 });

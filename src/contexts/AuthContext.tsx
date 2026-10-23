@@ -37,7 +37,8 @@ interface AuthContextType {
   resendVerificationEmail: () => Promise<void>;
   refreshEmailVerificationStatus: () => Promise<boolean>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  changePhoneNumber: (newPhone: string) => Promise<void>;
+  requiresPhone: boolean;
+  completePhone: (phone: string) => Promise<void>;
   isSuperAdmin: boolean;
   isAdmin: boolean;
   isEmployee: boolean;
@@ -132,7 +133,7 @@ async function resolveRoleFromToken(fbUser: FirebaseUser, forceRefresh = false):
         if (syncedRole === 'admin') {
           return 'admin';
         }
-        if (syncedRole === 'employee' || syncedRole === 'staff') {
+        if (syncedRole === 'employee' || syncedRole === 'staff' || syncedRole === 'manager') {
           return 'employee';
         }
         return 'customer';
@@ -149,6 +150,8 @@ async function resolveRoleFromToken(fbUser: FirebaseUser, forceRefresh = false):
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(Boolean(isFirebaseConfigured));
+  // Whether users/{uid}.phone exists. 'unknown' until the Firestore profile has been read (avoids flashing the phone gate).
+  const [phoneStatus, setPhoneStatus] = useState<'unknown' | 'missing' | 'present'>('unknown');
 
   // Centralized Firebase auth listener using onIdTokenChanged
   useEffect(() => {
@@ -290,10 +293,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   if (userSnap.exists()) {
                     const data = userSnap.data();
                     handleUserData(data as Partial<FirestoreUser>);
+                    setPhoneStatus(data?.phone ? 'present' : 'missing');
                     if (!data?.phone) {
                       triggerRetries();
                     }
                   } else {
+                    setPhoneStatus('missing');
                     triggerRetries();
                   }
                 },
@@ -308,6 +313,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } else {
           setUser(null);
+          setPhoneStatus('unknown');
           dataService.purgeSensitiveStorage();
         }
       } catch (err) {
@@ -568,7 +574,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setUser(null);
-    localStorage.removeItem('shaker_auth_session_v1');
+    try { localStorage.removeItem('shaker_auth_session_v1'); } catch {}
     dataService.purgeSensitiveStorage();
 
     try {
@@ -596,6 +602,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!auth?.currentUser) return false;
     await auth.currentUser.reload();
     const verified = auth.currentUser.emailVerified;
+    if (verified) {
+      // Firestore/Storage rules read request.auth.token.email_verified: the cached ID token is stale until refreshed.
+      try { await auth.currentUser.getIdToken(true); } catch (e) { console.warn('Token refresh after verification failed:', e); }
+    }
     setUser(prev => prev ? { ...prev, emailVerified: verified } : null);
     return verified;
   };
@@ -609,27 +619,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await updatePassword(auth.currentUser, newPassword);
   };
 
-  const changePhoneNumber = async (newPhone: string): Promise<void> => {
+  // One-time phone capture for Google sign-in customers (customers can't change it afterwards;
+  // Firestore rules only allow writing 'phone' while it is still empty).
+  const completePhone = async (phone: string): Promise<void> => {
     if (!auth?.currentUser) throw new Error('يجب تسجيل الدخول أولاً.');
-    const cleanPhone = newPhone.trim();
-    if (!cleanPhone) throw new Error('يرجى إدخال رقم هاتف صحيح.');
-    const uid = auth.currentUser.uid;
-    if (!db) {
-      throw new Error('خدمة قاعدة البيانات غير متصلة.');
-    }
+    const clean = phone.trim();
+    if (clean.replace(/\D/g, '').length < 7) throw new Error('يرجى إدخال رقم هاتف صالح (7 أرقام على الأقل).');
+    if (!db) throw new Error('خدمة قاعدة البيانات غير متصلة.');
 
+    const fbUser = auth.currentUser;
+    const ref = doc(db, 'users', fbUser.uid);
+    const nowIso = new Date().toISOString();
     try {
-      await setDoc(doc(db, 'users', uid), {
-        phone: cleanPhone,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        if (snap.data()?.phone) {
+          setPhoneStatus('present');
+          return;
+        }
+        await updateDoc(ref, { phone: clean, updatedAt: nowIso });
+      } else {
+        await setDoc(ref, {
+          id: fbUser.uid,
+          uid: fbUser.uid,
+          email: (fbUser.email || '').toLowerCase().trim(),
+          displayName: fbUser.displayName || (fbUser.email || '').split('@')[0] || 'مستخدم',
+          phone: clean,
+          role: 'customer',
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        });
+      }
     } catch (err: unknown) {
-      console.error('Failed to update phone number in users doc:', err);
-      throw new Error('حدث خطأ أثناء تحديث رقم الهاتف، يرجى المحاولة مرة أخرى.');
+      console.error('Failed to save phone number:', err);
+      throw new Error('تعذر حفظ رقم الهاتف، يرجى المحاولة مرة أخرى.');
     }
-
-    // Only update local state after successful Firestore write
-    setUser(prev => prev ? { ...prev, phone: cleanPhone } : null);
+    setUser(prev => prev ? { ...prev, phone: clean } : null);
+    setPhoneStatus('present');
   };
 
   const role = user?.role || null;
@@ -638,6 +664,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isEmployee = Boolean(user && (isAdmin || role === 'employee'));
   const isCustomer = Boolean(user && (role === 'customer' || !role));
   const isSpecificAdminUser = isAdmin;
+  const requiresPhone = Boolean(user && isCustomer && phoneStatus === 'missing');
 
   return (
     <AuthContext.Provider
@@ -655,12 +682,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resendVerificationEmail,
         refreshEmailVerificationStatus,
         changePassword,
-        changePhoneNumber,
         isSuperAdmin,
         isAdmin,
         isEmployee,
         isCustomer,
         isSpecificAdminUser,
+        requiresPhone,
+        completePhone,
       }}
     >
       {children}

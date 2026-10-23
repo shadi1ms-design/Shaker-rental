@@ -8,7 +8,9 @@ import {
   AuditLog,
   AppNotification,
   FirestoreUser,
-  UserFileRecord
+  UserFileRecord,
+  VerificationRequest,
+  VerificationStatus,
 } from '../types';
 import * as seedData from '../data/seedData';
 
@@ -434,9 +436,21 @@ export const dataService = {
 
       if (missingToSeed.length > 0) {
         await Promise.allSettled(
-          missingToSeed.map((v) =>
-            safeFirestore(setDoc(doc(getDb(), 'vehicles', v.id), v, { merge: true }), 2500)
-          )
+          missingToSeed.map(async (v) => {
+            // plateNumber / currentMileage are internal-only (rules reject them on the public doc)
+            const { plateNumber, currentMileage, ...publicFields } = v;
+            await safeFirestore(setDoc(doc(getDb(), 'vehicles', v.id), publicFields, { merge: true }), 2500);
+            if (plateNumber || currentMileage) {
+              await safeFirestore(
+                setDoc(
+                  doc(getDb(), 'vehicles', v.id, 'internal', 'details'),
+                  { plateNumber: plateNumber || '', currentMileage: currentMileage || 0 },
+                  { merge: true }
+                ),
+                2500
+              );
+            }
+          })
         );
       }
 
@@ -1624,7 +1638,9 @@ export const dataService = {
       const isMatchingAuthUser = customer.id === currentUid || booking.customerId === currentUid;
       const isStaff = isStaffOrAdmin();
 
-      if (isMatchingAuthUser || isStaff) {
+      // Customers are NOT allowed to write /customers (rules: create needs totals == 0, update is admin-only),
+      // so their own record is upserted server-side by createBookingSecure. Only staff write from here.
+      if (isStaff) {
         const targetDocId = isMatchingAuthUser ? currentUid : customer.id;
         try {
           await safeFirestore(setDoc(doc(getDb(), 'customers', targetDocId), { ...customer, id: targetDocId }, { merge: true }), 8000);
@@ -1763,11 +1779,13 @@ export const dataService = {
       }
 
       for (const bId of targetIds.bookingIds) {
-        try {
-          await safeFirestore(deleteDoc(doc(getDb(), 'bookings', bId)), 2500);
+        // Firestore rules forbid client-side booking deletes (allow delete: if false);
+        // the Admin-only Cloud Function is the only valid path.
+        const res = await functionsService.deleteBookingSecure({ bookingId: bId });
+        if (res.success) {
           deletedBookings++;
-        } catch (err) {
-          console.warn(`Could not delete booking doc ${bId}:`, err);
+        } else {
+          console.warn(`Could not delete booking doc ${bId}:`, res.error);
         }
       }
     }
@@ -2139,7 +2157,7 @@ export const dataService = {
               role: data.role || 'customer',
               createdAt: data.createdAt || new Date().toISOString(),
               uploadedFilesCount: computedFilesCount,
-              verificationStatus: data.verificationStatus || 'pending',
+              verificationStatus: (data.verificationStatus as VerificationStatus) || 'not_started',
               verifiedAt: data.verifiedAt,
             });
           }
@@ -2180,7 +2198,7 @@ export const dataService = {
             role: data.role || 'customer',
             createdAt: data.createdAt || new Date().toISOString(),
             uploadedFilesCount: data.uploadedFilesCount || 0,
-            verificationStatus: data.verificationStatus || 'pending',
+            verificationStatus: (data.verificationStatus as VerificationStatus) || 'not_started',
             verifiedAt: data.verifiedAt,
           };
         }
@@ -2298,22 +2316,7 @@ export const dataService = {
             }
           });
         } catch {
-          // Root query fallback: scan root files collection if filtered query has issue
-          try {
-            const allFilesSnap = await safeFirestore(getDocs(collection(getDb(), 'files')), 3500);
-            allFilesSnap.docs.forEach((d) => {
-              const fileData = d.data() as UserFileRecord;
-              if (fileData.userId === cleanUserId || (fileData as UserFileRecord & { uid?: string }).uid === cleanUserId) {
-                if (!collectedFilesMap.has(d.id)) {
-                  collectedFilesMap.set(d.id, {
-                    ...fileData,
-                    id: d.id,
-                    userId: cleanUserId,
-                  });
-                }
-              }
-            });
-          } catch {}
+          // Scoped root files query failed
         }
 
         if (collectedFilesMap.size > 0) {
@@ -2358,22 +2361,34 @@ export const dataService = {
         await safeFirestore(setDoc(doc(getDb(), 'users', fileData.userId, 'files', fileId), newFile), 2500);
         await safeFirestore(setDoc(doc(getDb(), 'files', fileId), newFile), 2500);
 
-        // Update uploadedFilesCount on user doc
+        // Flag the account for manual review.
+        // Firestore rules only let a customer edit name/phone/photo on their own user doc, so the old
+        // direct updateDoc(uploadedFilesCount / verificationStatus) was ALWAYS rejected for customers.
+        // Customers go through the server-authoritative verifyCustomerIdentity intake instead
+        // (it never overwrites a 'verified' / 'rejected' decision made by staff).
         try {
-          const userDocRef = doc(getDb(), 'users', fileData.userId);
-          const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
-          if (userSnap.exists()) {
-            const userData = userSnap.data();
-            const currentCount = (userData.uploadedFilesCount || 0) + 1;
-            const updatePayload: UpdateData<DocumentData> = { uploadedFilesCount: currentCount };
-            if (userData.verificationStatus !== 'verified') {
-              updatePayload.verificationStatus = 'manual_review';
-              updatePayload.verified = false;
+          if (isStaffOrAdmin()) {
+            const userDocRef = doc(getDb(), 'users', fileData.userId);
+            const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
+            if (userSnap.exists()) {
+              const userData = userSnap.data();
+              const updatePayload: UpdateData<DocumentData> = {
+                uploadedFilesCount: (userData.uploadedFilesCount || 0) + 1,
+              };
+              if (userData.verificationStatus !== 'verified') {
+                updatePayload.verificationStatus = 'manual_review';
+                updatePayload.verified = false;
+              }
+              await safeFirestore(updateDoc(userDocRef, updatePayload), 1500);
             }
-            await safeFirestore(updateDoc(userDocRef, updatePayload), 1500);
+          } else {
+            await functionsService.verifyCustomerIdentity({
+              storagePath: fileData.storagePath,
+              documentType: fileData.category,
+            });
           }
         } catch (cntErr) {
-          console.warn('Non-fatal error updating user uploadedFilesCount:', cntErr);
+          console.warn('Non-fatal error flagging document for manual review:', cntErr);
         }
       } catch (err: unknown) {
         console.error('Error in uploadUserFile:', err);
@@ -2409,16 +2424,18 @@ export const dataService = {
         // Delete from root files collection
         safeFirestore(deleteDoc(doc(getDb(), 'files', fileId)), 2500).catch(() => {});
 
-        // Decrement user uploadedFilesCount
-        try {
-          const userDocRef = doc(getDb(), 'users', userId);
-          const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
-          if (userSnap.exists()) {
-            const currentCount = Math.max(0, (userSnap.data().uploadedFilesCount || 1) - 1);
-            safeFirestore(updateDoc(userDocRef, { uploadedFilesCount: currentCount }), 1500).catch(() => {});
+        // Decrement user uploadedFilesCount (staff only: rules reject this field for customers)
+        if (isStaffOrAdmin()) {
+          try {
+            const userDocRef = doc(getDb(), 'users', userId);
+            const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
+            if (userSnap.exists()) {
+              const currentCount = Math.max(0, (userSnap.data().uploadedFilesCount || 1) - 1);
+              safeFirestore(updateDoc(userDocRef, { uploadedFilesCount: currentCount }), 1500).catch(() => {});
+            }
+          } catch {
+            // Ignore offline error
           }
-        } catch {
-          // Ignore offline error
         }
       } catch {
         // Fallback
@@ -2480,6 +2497,137 @@ export const dataService = {
         data: [firestoreUser, ...currentUsers],
         timestamp: Date.now(),
       };
+    }
+  },
+
+  /**
+   * Get single verification request for a specific user
+   */
+  async getVerificationRequest(userId: string): Promise<VerificationRequest | null> {
+    const cleanId = (userId || '').trim();
+    if (!cleanId) return null;
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const ref = doc(getDb(), 'verificationRequests', cleanId);
+        const snap = await safeFirestore(getDoc(ref), 2500);
+        if (snap.exists()) {
+          const d = snap.data();
+          return {
+            ...d,
+            userId: snap.id,
+            submittedAt: d.submittedAt?.toDate ? d.submittedAt.toDate().toISOString() : d.submittedAt || null,
+            reviewedAt: d.reviewedAt?.toDate ? d.reviewedAt.toDate().toISOString() : d.reviewedAt || null,
+          } as VerificationRequest;
+        }
+      } catch (err) {
+        console.warn('Error fetching verification request:', err);
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Subscribe to real-time verification request changes for a specific user
+   */
+  subscribeToVerificationRequest(userId: string, callback: (req: VerificationRequest | null) => void): () => void {
+    const cleanId = (userId || '').trim();
+    if (!cleanId) {
+      callback(null);
+      return () => {};
+    }
+
+    if (!isFirebaseConfigured || !db) {
+      this.getVerificationRequest(cleanId).then(callback).catch(() => callback(null));
+      return () => {};
+    }
+
+    try {
+      const ref = doc(getDb(), 'verificationRequests', cleanId);
+      const unsubscribe = onSnapshot(
+        ref,
+        (snap) => {
+          if (snap.exists()) {
+            const d = snap.data();
+            const req = {
+              ...d,
+              userId: snap.id,
+              submittedAt: d.submittedAt?.toDate ? d.submittedAt.toDate().toISOString() : d.submittedAt || null,
+              reviewedAt: d.reviewedAt?.toDate ? d.reviewedAt.toDate().toISOString() : d.reviewedAt || null,
+            } as VerificationRequest;
+            callback(req);
+          } else {
+            callback(null);
+          }
+        },
+        (err) => {
+          console.warn('subscribeToVerificationRequest error:', err);
+          this.getVerificationRequest(cleanId).then(callback).catch(() => callback(null));
+        }
+      );
+      return unsubscribe;
+    } catch {
+      return () => {};
+    }
+  },
+
+  /**
+   * Fetch all verification requests (Admin only)
+   */
+  async getAllVerificationRequests(): Promise<VerificationRequest[]> {
+    if (!isFirebaseConfigured || !db || !isStaffOrAdmin()) return [];
+
+    try {
+      const col = collection(getDb(), 'verificationRequests');
+      const snap = await safeFirestore(getDocs(col), 3500);
+      return snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          ...data,
+          userId: d.id,
+          submittedAt: data.submittedAt?.toDate ? data.submittedAt.toDate().toISOString() : data.submittedAt || null,
+          reviewedAt: data.reviewedAt?.toDate ? data.reviewedAt.toDate().toISOString() : data.reviewedAt || null,
+        } as VerificationRequest;
+      });
+    } catch (err) {
+      console.warn('Error fetching all verification requests:', err);
+      return [];
+    }
+  },
+
+  /**
+   * Real-time subscription to all verification requests (Admin only)
+   */
+  subscribeToAllVerificationRequests(callback: (requests: VerificationRequest[]) => void): () => void {
+    if (!isFirebaseConfigured || !db || !isStaffOrAdmin()) {
+      callback([]);
+      return () => {};
+    }
+
+    try {
+      const col = collection(getDb(), 'verificationRequests');
+      const unsubscribe = onSnapshot(
+        col,
+        (snap) => {
+          const list = snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              ...data,
+              userId: d.id,
+              submittedAt: data.submittedAt?.toDate ? data.submittedAt.toDate().toISOString() : data.submittedAt || null,
+              reviewedAt: data.reviewedAt?.toDate ? data.reviewedAt.toDate().toISOString() : data.reviewedAt || null,
+            } as VerificationRequest;
+          });
+          callback(list);
+        },
+        (err) => {
+          console.warn('subscribeToAllVerificationRequests error:', err);
+          this.getAllVerificationRequests().then(callback).catch(() => callback([]));
+        }
+      );
+      return unsubscribe;
+    } catch {
+      return () => {};
     }
   },
 };

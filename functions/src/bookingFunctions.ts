@@ -2,13 +2,15 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import type { DocumentReference, DocumentSnapshot } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
 import { isCallerStaff, isCallerAdmin, assertNotRevoked } from './authz';
+import { ttlTimestamp } from './rateLimit';
 import {
   calculateRentalDaysDamascus,
   calculateRentalPriceServer,
   parseDamascusDateTime,
+  isValidDateString,
+  isValidTimeString,
 } from './pricingServer';
 import {
   resolveVehicleDocument,
@@ -55,21 +57,27 @@ export const createBookingSecure = onCall(
     let customerId: string = callerUid;
     let customerEmail: string = (request.auth.token?.email || '').toLowerCase().trim();
 
-    // 1. Password provider email verification requirement (Requirement 1 - fail-closed)
+    // 1. Session & account checks (fail-closed): rejects disabled accounts and revoked tokens for
+    //    EVERY caller (customers included), then enforces email verification for password users.
+    const callerRecord = await assertNotRevoked(request);
     if (!isStaff) {
-      try {
-        const userRecord = await getAuth().getUser(callerUid);
-        const isPasswordAuth = userRecord.providerData.some((p) => p.providerId === 'password');
-        if (isPasswordAuth && !userRecord.emailVerified) {
-          throw new HttpsError(
-            'failed-precondition',
-            'يرجى تأكيد بريدك الإلكتروني أولاً قبل إنشاء الحجز. لقد تم إرسال رابط التأكيد إلى بريدك الإلكتروني المسجل.'
-          );
-        }
-      } catch (authErr: any) {
-        if (authErr instanceof HttpsError) throw authErr;
-        console.error('[createBookingSecure] Error checking email verification:', authErr);
-        throw new HttpsError('internal', 'تعذر التحقق من حالة تأكيد البريد الإلكتروني للحساب. يرجى إعادة المحاولة.');
+      const isPasswordAuth = callerRecord.providerData.some((p) => p.providerId === 'password');
+      if (isPasswordAuth && !callerRecord.emailVerified) {
+        throw new HttpsError(
+          'failed-precondition',
+          'يرجى تأكيد بريدك الإلكتروني أولاً قبل إنشاء الحجز. لقد تم إرسال رابط التأكيد إلى بريدك الإلكتروني المسجل.'
+        );
+      }
+
+      // Enforce Verified Account Requirement for Customer Bookings
+      const userSnap = await db.collection('users').doc(customerId).get();
+      const userData = userSnap.data();
+      const isVerified = userData?.verified === true || userData?.verificationStatus === 'verified';
+      if (!isVerified) {
+        throw new HttpsError(
+          'failed-precondition',
+          'يتطلب حجز السيارة توثيق حسابك ورفع وثائق الهوية ورخصة القيادة واعتمادها من الإدارة أولاً. يرجى التوجه إلى قسم "توثيق الحساب" في ملفك الشخصي لإكمال الطلب.'
+        );
       }
     }
 
@@ -113,14 +121,13 @@ export const createBookingSecure = onCall(
     const pickupTime = String(data.pickupTime || '10:00').trim();
     const returnTime = String(data.returnTime || '10:00').trim();
 
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(rawPickup) || !dateRegex.test(rawReturn)) {
-      throw new HttpsError('invalid-argument', 'صيغة التاريخ غير صالحة. يرجى استخدام تنسيق (YYYY-MM-DD).');
+    // Strict calendar validation: rejects impossible dates such as 2026-02-31 (JS would roll them over)
+    if (!isValidDateString(rawPickup) || !isValidDateString(rawReturn)) {
+      throw new HttpsError('invalid-argument', 'تاريخ غير صالح. يرجى استخدام تاريخ حقيقي بتنسيق (YYYY-MM-DD).');
     }
 
-    const timeRegex = /^\d{2}:\d{2}$/;
-    if (!timeRegex.test(pickupTime) || !timeRegex.test(returnTime)) {
-      throw new HttpsError('invalid-argument', 'صيغة الوقت غير صالحة. يرجى استخدام تنسيق (HH:MM).');
+    if (!isValidTimeString(pickupTime) || !isValidTimeString(returnTime)) {
+      throw new HttpsError('invalid-argument', 'وقت غير صالح. يرجى استخدام تنسيق (HH:MM) من 00:00 إلى 23:59.');
     }
 
     const pickupDateTime = parseDamascusDateTime(rawPickup, pickupTime);
@@ -162,6 +169,9 @@ export const createBookingSecure = onCall(
     const customerName = String(data.customerName || request.auth.token?.name || 'مستأجر').trim().slice(0, 100);
     const customerPhone = String(data.customerPhone || '').trim().slice(0, 30);
     const customerWhatsApp = String(data.customerWhatsApp || customerPhone).trim().slice(0, 30);
+    if (!isStaff && customerPhone.replace(/\D/g, '').length < 7) {
+      throw new HttpsError('invalid-argument', 'رقم هاتف صالح مطلوب لإتمام الحجز (7 أرقام على الأقل).');
+    }
     const customerNationalId = String(data.customerNationalId || '').trim().slice(0, 50);
     const customerLicenseNumber = String(data.customerLicenseNumber || '').trim().slice(0, 50);
     const customerAddress = String(data.customerAddress || '').trim().slice(0, 200);
@@ -221,6 +231,7 @@ export const createBookingSecure = onCall(
             firstAttemptAt,
             lastAttemptAt: nowMs,
             updatedAt: FieldValue.serverTimestamp(),
+            expiresAt: ttlTimestamp(nowMs),
           },
           { merge: true }
         );
@@ -245,6 +256,24 @@ export const createBookingSecure = onCall(
 
         const counterRef = db.collection('settings').doc('bookingCounter');
         const counterDoc = await transaction.get(counterRef);
+
+        const customerRef = db.collection('customers').doc(customerId);
+        const customerSnap = await transaction.get(customerRef);
+
+        // Re-check the pending-bookings cap atomically (the early check above is only a fast path).
+        if (!isStaff) {
+          const pendingSnap = await transaction.get(
+            db.collection('bookings')
+              .where('customerId', '==', customerId)
+              .where('status', 'in', ['new', 'reviewing'])
+          );
+          if (pendingSnap.docs.filter((d) => !d.data()?.isDeleted).length >= 3) {
+            throw new HttpsError(
+              'resource-exhausted',
+              'لديك بالفعل 3 طلبات حجز قيد المراجعة أو جديدة. لا يمكن إنشاء أكثر من 3 طلبات معلقة في نفس الوقت.'
+            );
+          }
+        }
 
         if (!vehicleDoc.exists) {
           throw new HttpsError('not-found', 'السيارة المطلوبة غير موجودة في أسطول الشركة.');
@@ -369,6 +398,26 @@ export const createBookingSecure = onCall(
         };
 
         transaction.set(newBookingRef, bookingPayload);
+
+        // CRM upsert (server-side: Firestore rules deliberately block customers from updating /customers).
+        const customerProfile: Record<string, unknown> = {
+          id: customerId,
+          uid: customerId,
+          fullName: customerName,
+          phone: customerPhone,
+          whatsapp: customerWhatsApp || customerPhone,
+          updatedAt: FieldValue.serverTimestamp(),
+          totalRentals: FieldValue.increment(1),
+        };
+        if (customerEmail) customerProfile.email = customerEmail;
+        if (customerNationalId) customerProfile.nationalId = customerNationalId;
+        if (customerLicenseNumber) customerProfile.drivingLicense = customerLicenseNumber;
+        if (customerAddress) customerProfile.address = customerAddress;
+        if (!customerSnap.exists) {
+          customerProfile.totalSpending = 0;
+          customerProfile.createdAt = FieldValue.serverTimestamp();
+        }
+        transaction.set(customerRef, customerProfile, { merge: true });
 
         const notificationRef = db.collection('notifications').doc();
         transaction.set(notificationRef, {
@@ -529,6 +578,8 @@ export const sendBookingNotification = onCall(
       throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً لإرسال إشعار الحجز.');
     }
 
+    await assertNotRevoked(request);
+
     const callerUid = request.auth.uid;
     const callerEmail = (request.auth.token?.email || '').toLowerCase().trim();
     const rawBookingId = request.data?.bookingId;
@@ -595,6 +646,7 @@ export const sendBookingNotification = onCall(
               count: count + 1,
               lastCallerUid: callerUid,
               updatedAt: FieldValue.serverTimestamp(),
+              expiresAt: ttlTimestamp(nowMs),
             });
           } else {
             t.set(rateLimitRef, {
@@ -603,6 +655,7 @@ export const sendBookingNotification = onCall(
               count: 1,
               lastCallerUid: callerUid,
               updatedAt: FieldValue.serverTimestamp(),
+              expiresAt: ttlTimestamp(nowMs),
             });
           }
         } else {
@@ -612,6 +665,7 @@ export const sendBookingNotification = onCall(
             count: 1,
             lastCallerUid: callerUid,
             updatedAt: FieldValue.serverTimestamp(),
+            expiresAt: ttlTimestamp(nowMs),
           });
         }
       });
@@ -719,6 +773,11 @@ export const getVehicleAvailability = onCall(
 
     const queryPickupMs = from ? parseDamascusDateTime(from, fromTime) : NaN;
     const queryReturnMs = to ? parseDamascusDateTime(to, toTime) : NaN;
+
+    // A malformed range must not silently report "available" (NaN comparisons are always false).
+    if ((from && isNaN(queryPickupMs)) || (to && isNaN(queryReturnMs))) {
+      throw new HttpsError('invalid-argument', 'تاريخ أو وقت الاستعلام غير صالح.');
+    }
 
     for (const doc of activeSnap.docs) {
       const b = doc.data();

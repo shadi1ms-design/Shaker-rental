@@ -34,11 +34,38 @@ export interface PricingCalculationResult {
 }
 
 /**
+ * Strictly validates a calendar date string (YYYY-MM-DD).
+ * `new Date('2026-02-31T10:00:00+03:00')` silently rolls over to March 3rd, so the
+ * calendar day must be checked explicitly (month 1-12, day within the month's length).
+ */
+export function isValidDateString(dateStr: unknown): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr ?? '').trim());
+  if (!m) return false;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day <= daysInMonth;
+}
+
+/**
+ * Strictly validates a 24h time string (HH:MM, 00:00 - 23:59). Rejects "24:00".
+ */
+export function isValidTimeString(timeStr: unknown): boolean {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(timeStr ?? '').trim());
+  if (!m) return false;
+  return Number(m[1]) <= 23 && Number(m[2]) <= 59;
+}
+
+/**
  * Parses a date + time in Asia/Damascus timezone (UTC+3) and returns epoch ms.
+ * Returns NaN for any invalid calendar date or time (e.g. 2026-02-31, 24:00, 10:99).
  */
 export function parseDamascusDateTime(dateStr: string, timeStr = '10:00'): number {
   const cleanDate = String(dateStr || '').trim();
   const cleanTime = String(timeStr || '10:00').trim();
+  if (!isValidDateString(cleanDate) || !isValidTimeString(cleanTime)) return NaN;
   // Asia/Damascus operates on permanent UTC+3
   return new Date(`${cleanDate}T${cleanTime}:00+03:00`).getTime();
 }

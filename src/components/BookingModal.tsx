@@ -7,7 +7,9 @@ import { bookingFormSchema } from '../services/validation';
 import { openWhatsAppChat } from '../services/whatsapp';
 import { useAuth } from '../contexts/AuthContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { todayLocalISO } from '../utils/dateUtils';
+import { addDaysISO, todayLocalISO } from '../utils/dateUtils';
+import { normalizeDigits } from '../utils/phone';
+import { isValidPhone } from '../utils/security';
 import {
   X,
   Calendar,
@@ -50,12 +52,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   initialStartDate,
   initialEndDate,
 }) => {
-  const modalContainerRef = useFocusTrap({ isOpen: true, onClose });
+  const modalContainerRef = useFocusTrap({ isOpen: true, onClose, trapTab: false });
   const todayDamascus = todayLocalISO();
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const nextWeek = new Date();
-  nextWeek.setDate(nextWeek.getDate() + 4);
+  // Defaults are computed from the Damascus calendar day (a UTC date is wrong between 00:00 and 03:00)
+  const defaultPickupDate = addDaysISO(todayDamascus, 1);
+  const defaultReturnDate = addDaysISO(todayDamascus, 4);
 
   const activeInitialVehicle = selectedVehicle || vehicle || vehicles?.[0] || null;
 
@@ -64,11 +65,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     activeInitialVehicle?.id || (vehicles?.[0]?.id || '')
   );
   const [pickupDate, setPickupDate] = useState<string>(
-    initialStartDate || initialDates?.pickupDate || tomorrow.toISOString().split('T')[0]
+    initialStartDate || initialDates?.pickupDate || defaultPickupDate
   );
   const [pickupTime, setPickupTime] = useState<string>('10:00');
   const [returnDate, setReturnDate] = useState<string>(
-    initialEndDate || initialDates?.returnDate || nextWeek.toISOString().split('T')[0]
+    initialEndDate || initialDates?.returnDate || defaultReturnDate
   );
   const [returnTime, setReturnTime] = useState<string>('10:00');
 
@@ -81,6 +82,23 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [customerAddress, setCustomerAddress] = useState('');
   const [customerLicenseNumber, setCustomerLicenseNumber] = useState('');
   const [notes, setNotes] = useState('');
+  const [isUserVerified, setIsUserVerified] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setIsUserVerified(false);
+      return;
+    }
+    if (user.role === 'admin' || user.role === 'super_admin' || user.role === 'employee') {
+      setIsUserVerified(true);
+      return;
+    }
+    dataService.getVerificationRequest(user.uid).then((req) => {
+      setIsUserVerified(req?.status === 'verified');
+    }).catch(() => {
+      setIsUserVerified(user.verificationStatus === 'verified');
+    });
+  }, [user?.uid, user?.role, user?.verificationStatus]);
 
   useEffect(() => {
     if (user) {
@@ -188,8 +206,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setErrorMessage('يرجى تحديد تاريخي الاستلام والتسليم');
       return false;
     }
-    const todayStr = new Date().toISOString().split('T')[0];
-    if (pickupDate < todayStr) {
+    if (pickupDate < todayDamascus) {
       setErrorMessage('تاريخ الاستلام لا يمكن أن يكون في الماضي');
       return false;
     }
@@ -197,8 +214,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setErrorMessage('تاريخ التسليم يجب أن يكون بعد تاريخ الاستلام');
       return false;
     }
+    if (rentalDays === 0) {
+      setErrorMessage('وقت التسليم يجب أن يكون بعد وقت الاستلام');
+      return false;
+    }
     if (currentVehicle && (currentVehicle.status === 'maintenance' || currentVehicle.status === 'inactive')) {
       setErrorMessage('السيارة المحددة في الصيانة الدورية أو خارج الخدمة حالياً، يرجى اختيار سيارة أخرى');
+      return false;
+    }
+
+    if (isCheckingAvailability) {
+      setErrorMessage('جاري التحقق من توفر السيارة، يرجى المحاولة بعد لحظات');
       return false;
     }
 
@@ -221,15 +247,30 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     e.preventDefault();
     setErrorMessage(null);
 
+    // Normalize Arabic-Indic digits so phones / IDs are stored consistently
+    const phone = normalizeDigits(customerPhone).trim();
+    const whatsapp = normalizeDigits(customerWhatsApp || customerPhone).trim();
+    const nationalId = normalizeDigits(customerNationalId).trim();
+    const licenseNumber = normalizeDigits(customerLicenseNumber).trim();
+
+    if (!isValidPhone(phone)) {
+      setErrorMessage('يرجى إدخال رقم هاتف صحيح (7 إلى 16 رقمًا، ويمكن أن يبدأ بـ +)');
+      return;
+    }
+    if (!isValidPhone(whatsapp)) {
+      setErrorMessage('يرجى إدخال رقم واتساب صحيح (7 إلى 16 رقمًا، ويمكن أن يبدأ بـ +)');
+      return;
+    }
+
     // Zod validation
     const validationResult = bookingFormSchema.safeParse({
       vehicleId,
       customerName,
-      customerPhone,
-      customerWhatsApp: customerWhatsApp || customerPhone,
-      customerNationalId,
+      customerPhone: phone,
+      customerWhatsApp: whatsapp,
+      customerNationalId: nationalId,
       customerAddress,
-      customerLicenseNumber,
+      customerLicenseNumber: licenseNumber,
       pickupDate,
       pickupTime,
       returnDate,
@@ -257,11 +298,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         customerId: user?.uid,
         customerEmail: user?.email,
         customerName,
-        customerPhone,
-        customerWhatsApp: customerWhatsApp || customerPhone,
-        customerNationalId,
+        customerPhone: phone,
+        customerWhatsApp: whatsapp,
+        customerNationalId: nationalId,
         customerAddress,
-        customerLicenseNumber,
+        customerLicenseNumber: licenseNumber,
         pickupDate,
         pickupTime,
         returnDate,
@@ -281,11 +322,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         vehicleName: `${currentVehicle.brand} ${currentVehicle.model} (${currentVehicle.year})`,
         vehicleCategory: currentVehicle.category,
         customerName,
-        customerPhone,
-        customerWhatsApp: customerWhatsApp || customerPhone,
-        customerNationalId: customerNationalId || '',
+        customerPhone: phone,
+        customerWhatsApp: whatsapp,
+        customerNationalId: nationalId,
         customerAddress: customerAddress || '',
-        customerLicenseNumber: customerLicenseNumber || '',
+        customerLicenseNumber: licenseNumber,
         customerId: (data.booking as Booking | undefined)?.customerId || user?.uid || '',
         customerEmail: (data.booking as Booking | undefined)?.customerEmail || user?.email || '',
         pickupDate,
@@ -321,7 +362,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       <div 
         ref={modalContainerRef}
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-labelledby="booking-modal-title"
         className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl animate-in fade-in duration-200 text-slate-100 overflow-clip"
         style={{ WebkitOverflowScrolling: 'touch' }}
@@ -471,9 +512,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       id="booking-pickup-date"
                       type="date"
                       value={pickupDate || ''}
-                      onChange={(e) => setPickupDate(e.target.value)}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setPickupDate(next);
+                        // Keep the return date from ending up before the new pickup date
+                        if (next && returnDate && returnDate < next) setReturnDate(next);
+                      }}
                       min={todayDamascus}
-                      className="w-full min-h-[44px] bg-slate-900 border border-slate-700 hover:border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-medium focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 [color-scheme:dark]"
+                      className={`w-full min-h-[44px] bg-slate-900 border border-slate-700 hover:border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-medium focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 [color-scheme:dark] ${!pickupDate ? '[&::-webkit-datetime-edit]:opacity-0' : ''}`}
                       required
                     />
                     {!pickupDate && (
@@ -512,7 +558,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       value={returnDate || ''}
                       onChange={(e) => setReturnDate(e.target.value)}
                       min={pickupDate || todayDamascus}
-                      className="w-full min-h-[44px] bg-slate-900 border border-slate-700 hover:border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-medium focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 [color-scheme:dark]"
+                      className={`w-full min-h-[44px] bg-slate-900 border border-slate-700 hover:border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-medium focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 [color-scheme:dark] ${!returnDate ? '[&::-webkit-datetime-edit]:opacity-0' : ''}`}
                       required
                     />
                     {!returnDate && (
@@ -672,6 +718,34 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             )}
 
+            {/* Account Verification Required Notice if logged-in customer is unverified */}
+            {user && isUserVerified === false && (
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/40 to-slate-900 border border-amber-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 text-xs text-amber-300">
+                  <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0" />
+                  <div>
+                    <span className="font-bold text-white block text-xs">يتطلب تأكيد الحجز توثيق حسابك</span>
+                    <span className="text-[11px] text-amber-300/90">
+                      وفق سياسة الشركة، يلزم تصوير رخصة القيادة والبطاقة الشخصية للتحقق منها قبل إتمام الحجز.
+                    </span>
+                  </div>
+                </div>
+                {onOpenProfile && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenProfile();
+                    }}
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 shrink-0 flex items-center gap-1.5"
+                  >
+                    <span>توثيق الحساب الآن</span>
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Customer Inputs */}
             <div className="space-y-4">
               <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
@@ -797,12 +871,22 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="flex-1 min-h-[44px] py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                disabled={isSubmitting || !user || isUserVerified === false}
+                className="flex-1 min-h-[44px] py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 id="booking-step2-submit-btn"
               >
                 {isSubmitting ? (
                   <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                ) : !user ? (
+                  <>
+                    <Lock className="w-4 h-4" />
+                    <span>سجّل الدخول أولاً لتأكيد الحجز</span>
+                  </>
+                ) : isUserVerified === false ? (
+                  <>
+                    <ShieldAlert className="w-4 h-4" />
+                    <span>يلزم توثيق الحساب للمتابعة</span>
+                  </>
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4" />

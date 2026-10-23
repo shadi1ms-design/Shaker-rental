@@ -28,51 +28,71 @@ service firebase.storage {
     // =========================================================================
     // 1. PUBLIC FLEET VEHICLE MEDIA
     // =========================================================================
+    // NOTE: `allow write` also covers delete, where request.resource is null; evaluating
+    // request.resource.size would error and DENY the delete even for admins. So create/update
+    // (which inspect the uploaded object) and delete are declared separately.
     match /vehicles/{vehicleId}/{allPaths=**} {
       allow read: if true;
-      allow write: if isEmployee()
+      allow create, update: if isAdmin()
                     && request.resource.size <= 30 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)');
+      allow delete: if isAdmin();
     }
 
     match /public/{allPaths=**} {
       allow read: if true;
-      allow write: if isEmployee()
+      allow create, update: if isAdmin()
                     && request.resource.size <= 30 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)');
+      allow delete: if isAdmin();
     }
 
     // =========================================================================
-    // 2. PRIVATE CUSTOMER DOCUMENTS & USER UPLOADS
+    // 2. IDENTITY VERIFICATION VAULT & PENDING (SERVER-AUTHORITATIVE ONLY)
+    // =========================================================================
+    // Direct client access is strictly DENIED.
+    // Uploads and moves occur via Cloud Functions using Admin SDK.
+    // Document viewing requires short-lived (60s) signed URLs generated for Admins.
+    match /verification_pending/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    match /verification_vault/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 3. PRIVATE CUSTOMER DOCUMENTS & USER UPLOADS (LEGACY / GENERAL)
     // =========================================================================
     match /users/{userId}/documents/{allPaths=**} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
-      allow create, update: if isSignedIn()
+      // Ordinary employees cannot view customer identity documents. Admins or owner only.
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      // Direct customer creation deprecated; documents are never updated or deleted by client
+      allow create: if isEmployee()
                     && request.auth.token.email_verified == true
-                    && (request.auth.uid == userId || isEmployee())
                     && request.resource.size <= 25 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
-      allow delete: if isEmployee();
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     match /users/{userId}/{allPaths=**} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
-      allow create, update: if isSignedIn()
+      // Only staff may write outside users/{uid}/documents/
+      allow create, update: if isEmployee()
                     && request.auth.token.email_verified == true
-                    && (request.auth.uid == userId || isEmployee())
                     && request.resource.size <= 25 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
-      allow delete: if isEmployee();
+      allow delete: if isAdmin();
     }
 
     match /uploads/{userId}/{allPaths=**} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
-      allow create, update: if isSignedIn()
+      allow create, update: if isEmployee()
                     && request.auth.token.email_verified == true
-                    && (request.auth.uid == userId || isEmployee())
                     && request.resource.size <= 25 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
-      allow delete: if isEmployee();
+      allow delete: if isAdmin();
     }
 
     // =========================================================================
@@ -88,7 +108,7 @@ service firebase.storage {
       allow create, update: if isEmployee()
                     && request.resource.size <= 100 * 1024 * 1024
                     && request.resource.contentType.matches('video/(mp4|webm|quicktime)');
-      allow delete: if isEmployee();
+      allow delete: if isAdmin();
     }
 
     match /contracts/{contractId}/{allPaths=**} {
@@ -98,15 +118,16 @@ service firebase.storage {
         resource.metadata != null &&
         resource.metadata.customerId == request.auth.uid
       );
-      allow write: if isEmployee()
+      allow create, update: if isEmployee()
                     && request.resource.size <= 30 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
+      // Contract evidence (photos / PDFs) can only be removed by admins, not by any staff member.
+      allow delete: if isAdmin();
     }
 
     // Default fallback catch-all
     match /{allPaths=**} {
-      allow read: if isEmployee();
-      allow write: if isAdmin();
+      allow read, write: if false;
     }
   }
 }

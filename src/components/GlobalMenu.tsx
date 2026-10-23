@@ -10,7 +10,8 @@ import {
   LogOut,
   MessageCircle,
   Shield,
-  Home
+  Home,
+  Info
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMenu } from '../contexts/MenuContext';
@@ -228,6 +229,15 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
             >
               <Car className="w-4 h-4 text-amber-400" />
               <span>أسطول السيارات المتاح</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleNav('aboutus')}
+              className="w-full text-right px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-3 transition-colors bg-slate-900/60 text-slate-200 hover:bg-slate-900 hover:text-white"
+            >
+              <Info className="w-4 h-4 text-amber-400" />
+              <span>من نحن</span>
             </button>
 
             <button

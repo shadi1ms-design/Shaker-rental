@@ -65,7 +65,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Phone className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               <span dir="ltr">00963 944 331 774</span>
             </a>
-            <span className="hidden sm:inline text-slate-600">•</span>
+            <span className="hidden sm:inline text-slate-500">•</span>
             <span className="hidden sm:inline text-slate-400 text-xs">دمشق – جرمانا</span>
           </div>
 
@@ -113,7 +113,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   type="button"
                   onClick={logout}
-                  className="text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors text-xs cursor-pointer"
+                  className="text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors text-xs cursor-pointer py-2 px-1.5"
                   title="تسجيل الخروج"
                   id="navbar-logout-btn"
                 >
@@ -126,17 +126,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenAuth('login')}
-                  className="text-slate-300 hover:text-amber-400 flex items-center gap-1 transition-colors font-medium cursor-pointer"
+                  className="text-slate-300 hover:text-amber-400 flex items-center gap-1 transition-colors font-medium cursor-pointer py-2 px-1.5"
                   id="navbar-login-btn"
                 >
                   <LogIn className="w-3.5 h-3.5 text-amber-500" />
                   <span>تسجيل الدخول</span>
                 </button>
-                <span className="text-slate-600">|</span>
+                <span className="text-slate-500">|</span>
                 <button
                   type="button"
                   onClick={() => onOpenAuth('register')}
-                  className="text-amber-400 hover:text-amber-300 transition-colors font-bold flex items-center gap-1 cursor-pointer"
+                  className="text-amber-400 hover:text-amber-300 transition-colors font-bold flex items-center gap-1 cursor-pointer py-2 px-1.5"
                   id="navbar-register-btn"
                 >
                   <UserPlus className="w-3.5 h-3.5" />
@@ -153,10 +153,12 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Menu Button & Brand Name */}
         <div className="flex items-center gap-3">
           <MenuButton />
-          <div
+          <button
+            type="button"
             onClick={() => handleNav('home')}
-            className="flex flex-col cursor-pointer group"
+            className="flex flex-col items-start text-start cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-lg"
             id="navbar-brand"
+            aria-label="الصفحة الرئيسية - شاكر لتأجير السيارات"
           >
             <span className="text-base sm:text-2xl font-black tracking-tight text-white flex items-center gap-1.5 sm:gap-2">
               شاكر <span className="text-amber-400">لتأجير السيارات</span>
@@ -164,7 +166,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="text-[10px] sm:text-xs text-slate-400 font-medium tracking-wide">
               Shaker Car Rental • دمشق – جرمانا
             </span>
-          </div>
+          </button>
         </div>
 
         {/* Desktop Navigation Links */}

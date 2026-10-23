@@ -1,6 +1,21 @@
 import { Booking } from '../types';
 
+/** Fallback only. The live number comes from admin settings via setOfficialWhatsAppNumber(). */
 export const OFFICIAL_WHATSAPP_NUMBER = '963944331774'; // Format for wa.me API
+
+let activeWhatsAppNumber = OFFICIAL_WHATSAPP_NUMBER;
+
+/**
+ * Applies the WhatsApp number saved in admin settings (AdminSettings -> whatsappNumber).
+ * Previously every customer-facing button used the hard-coded number, so changing it in
+ * settings had no effect. Empty / invalid values keep the current number.
+ */
+export function setOfficialWhatsAppNumber(raw?: string | null): void {
+  const normalized = normalizeCustomerPhoneForWhatsApp(raw || '');
+  if (normalized.length >= 9 && normalized.length <= 15) {
+    activeWhatsAppNumber = normalized;
+  }
+}
 
 /**
  * Builds a professional Arabic WhatsApp booking message
@@ -27,7 +42,7 @@ ${booking.notes ? `📝 ملاحظات خاصة: ${booking.notes}\n` : ''}
 export function openWhatsAppChat(booking?: Booking, customMessage?: string) {
   const message = customMessage || (booking ? generateWhatsAppBookingMessage(booking) : 'مرحباً شركة شاكر لتأجير السيارات، أود الاستفسار عن حجز سيارة.');
   const encodedText = encodeURIComponent(message);
-  const url = `https://wa.me/${OFFICIAL_WHATSAPP_NUMBER}?text=${encodedText}`;
+  const url = `https://wa.me/${activeWhatsAppNumber}?text=${encodedText}`;
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 

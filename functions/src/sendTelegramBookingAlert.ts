@@ -109,8 +109,9 @@ export const sendTelegramBookingAlert = onDocumentCreated(
       const totalPrice = bookingData.totalPrice !== undefined ? `${bookingData.totalPrice}` : '0';
       const status = bookingData.status || 'new';
 
-      const botToken = process.env.TELEGRAM_BOT_TOKEN;
-      const chatId = process.env.TELEGRAM_CHAT_ID;
+      // .trim(): a secret saved with a trailing newline would break the Bot API URL / chat id.
+      const botToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+      const chatId = String(process.env.TELEGRAM_CHAT_ID || '').trim();
 
       if (!botToken || !chatId) {
         console.warn('[sendTelegramBookingAlert] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not configured.');

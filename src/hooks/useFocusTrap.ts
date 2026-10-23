@@ -4,15 +4,31 @@ interface UseFocusTrapOptions {
   isOpen: boolean;
   onClose?: () => void;
   initialFocusRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * Keep Tab inside the container (default). Pass false when the "modal" is rendered as a full page,
+   * so keyboard users can still reach the site header and menu.
+   */
+  trapTab?: boolean;
 }
 
 export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
   isOpen,
   onClose,
   initialFocusRef,
+  trapTab = true,
 }: UseFocusTrapOptions) {
   const containerRef = useRef<T | null>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
+
+  // Keep the latest callback / ref without re-running the effect. Callers usually pass an inline
+  // arrow for onClose, which changes on every parent render; re-running the effect would move the
+  // focus back to the first field while the user is typing.
+  const onCloseRef = useRef(onClose);
+  const initialFocusRefRef = useRef(initialFocusRef);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    initialFocusRefRef.current = initialFocusRef;
+  });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -31,8 +47,9 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
     ].join(', ');
 
     const focusInitial = () => {
-      if (initialFocusRef?.current) {
-        initialFocusRef.current.focus();
+      const initialRef = initialFocusRefRef.current;
+      if (initialRef?.current) {
+        initialRef.current.focus();
       } else {
         const firstFocusable = container.querySelector<HTMLElement>(focusableSelectors);
         if (firstFocusable) {
@@ -47,14 +64,15 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        if (onClose) {
+        const close = onCloseRef.current;
+        if (close) {
           event.stopPropagation();
-          onClose();
+          close();
         }
         return;
       }
 
-      if (event.key !== 'Tab') return;
+      if (event.key !== 'Tab' || !trapTab) return;
 
       const focusables = Array.from(
         container.querySelectorAll<HTMLElement>(focusableSelectors)
@@ -90,7 +108,7 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
         previousActiveElementRef.current.focus();
       }
     };
-  }, [isOpen, onClose, initialFocusRef]);
+  }, [isOpen, trapTab]);
 
   return containerRef;
 }
