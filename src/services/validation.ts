@@ -14,6 +14,7 @@ export const bookingFormSchema = z.object({
   returnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'يرجى اختيار تاريخ تسليم صالح'),
   returnTime: z.string().min(1, 'يرجى اختيار وقت التسليم'),
   notes: z.string().max(1000, 'الملاحظات يجب ألا تتجاوز 1000 حرف').optional().or(z.literal('')),
+  deliveryLocation: z.string().max(200, 'موقع التسليم يجب ألا يتجاوز 200 حرف').optional().or(z.literal('')),
 }).refine((data) => {
   if (!data.pickupDate) return true;
   const today = todayLocalISO();

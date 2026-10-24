@@ -86,6 +86,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
 
   // Pagination (25 per page)
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [onlyVerified, setOnlyVerified] = useState<boolean>(false);
   const pageSize = 25;
 
   // Batch Selection
@@ -300,6 +301,8 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
           return false;
         }
 
+        if (onlyVerified && !b.customerVerified) return false;
+
         // Date Range filter (pickupDate or createdAt)
         if (startDate && b.pickupDate < startDate) return false;
         if (endDate && b.pickupDate > endDate) return false;
@@ -316,7 +319,16 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
         return true;
       })
       .sort((a, b) => {
-        let diff = 0;
+          // Priority for verified new/reviewing bookings
+          const isVerifiedA = a.customerVerified;
+          const isVerifiedB = b.customerVerified;
+          const isPendingA = a.status === 'new' || a.status === 'reviewing';
+          const isPendingB = b.status === 'new' || b.status === 'reviewing';
+          
+          if (isVerifiedA && isPendingA && (!isVerifiedB || !isPendingB)) return -1;
+          if (isVerifiedB && isPendingB && (!isVerifiedA || !isPendingA)) return 1;
+
+          let diff = 0;
         if (sortField === 'date') {
           const dateA = new Date(a.pickupDate || a.createdAt || 0).getTime();
           const dateB = new Date(b.pickupDate || b.createdAt || 0).getTime();
@@ -569,19 +581,33 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
               className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:border-amber-500 focus:outline-none"
               title="تاريخ النهاية"
             />
-            {(startDate || endDate) && (
+            {(startDate || endDate || onlyVerified) && (
               <button
                 type="button"
                 onClick={() => {
                   setStartDate('');
                   setEndDate('');
+                  setOnlyVerified(false);
                 }}
                 className="text-[11px] text-amber-400 hover:underline px-2 cursor-pointer"
               >
-                مسح التواريخ
+                مسح الفلاتر
               </button>
             )}
           </div>
+
+          <label className="flex items-center gap-2 text-slate-300 font-bold cursor-pointer">
+            <input
+              type="checkbox"
+              checked={onlyVerified}
+              onChange={(e) => {
+                setOnlyVerified(e.target.checked);
+                setCurrentPage(1);
+              }}
+              className="accent-amber-500"
+            />
+            <span>الموثقون فقط</span>
+          </label>
 
           <div className="flex items-center gap-2">
             <button
@@ -822,7 +848,10 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                         </td>
 
                         <td className="p-3.5">
-                          <div className="font-bold text-white">{b.customerName}</div>
+                          <div className="font-bold text-white flex items-center gap-1">
+                          {b.customerName}
+                          {b.customerVerified && <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-1 rounded border border-emerald-500/20">✅</span>}
+                        </div>
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className="text-[11px] text-slate-400 font-mono" dir="ltr">
                               {b.customerPhone}

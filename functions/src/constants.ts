@@ -13,3 +13,10 @@ export const DATABASE_ID = 'ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a
 export const DEFAULT_STORAGE_BUCKET = 'shaker-rentalcars.firebasestorage.app';
 
 export const STORAGE_TRIGGER_REGION = 'us-east1';
+
+/**
+ * Image quality validation thresholds — keep in sync with src/constants/limits.ts
+ */
+export const MIN_LAPLACIAN_BLUR_SCORE = 80;
+export const MIN_IMAGE_BRIGHTNESS = 35;
+export const MAX_IMAGE_BRIGHTNESS = 230;

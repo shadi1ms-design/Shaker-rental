@@ -8,14 +8,12 @@ import {
   AuditLog,
   AppNotification,
   FirestoreUser,
-  UserFileRecord,
   VerificationRequest,
   VerificationStatus,
 } from '../types';
 import * as seedData from '../data/seedData';
 
 const INITIAL_VEHICLES = import.meta.env.DEV ? seedData.INITIAL_VEHICLES : [];
-const INITIAL_UPLOADED_FILES = import.meta.env.DEV ? seedData.INITIAL_UPLOADED_FILES : {};
 import { DEFAULT_SETTINGS, calculateRentalDays, calculateRentalPrice } from './pricing';
 import { auth, db, functions, isFirebaseConfigured, firestoreDatabaseId, getDb as getFirebaseDb } from '../firebase/config';
 import { httpsCallable } from 'firebase/functions';
@@ -31,10 +29,7 @@ import {
   where,
   onSnapshot,
   serverTimestamp,
-  DocumentData,
-  UpdateData
 } from 'firebase/firestore';
-import { storageService } from './storageService';
 import { functionsService } from './functionsService';
 import { handleFirestoreError } from '../utils/firebaseErrorHandler';
 import { todayLocalISO } from '../utils/dateUtils';
@@ -2042,7 +2037,7 @@ export const dataService = {
     try {
       // Test read on users collection and files collection
       const usersSnap = await safeFirestore(getDocs(collection(getDb(), 'users')), 6000);
-      const filesSnap = await safeFirestore(getDocs(collection(getDb(), 'files')), 6000).catch(() => null);
+      const filesSnap = await safeFirestore(getDocs(collection(getDb(), 'verificationRequests')), 6000).catch(() => null);
       const latencyMs = Date.now() - startTime;
 
       const usersCount = usersSnap.size;
@@ -2088,7 +2083,6 @@ export const dataService = {
       phone: userData.phone?.trim() || '',
       role: userData.role || 'customer',
       createdAt: new Date().toISOString(),
-      uploadedFilesCount: 0,
     };
 
     if (isFirebaseConfigured && db) {
@@ -2117,36 +2111,13 @@ export const dataService = {
     if (isFirebaseConfigured && db) {
       try {
         const usersCol = collection(getDb(), 'users');
-        const [snap, filesSnap] = await Promise.all([
-          safeFirestore(getDocs(usersCol), 2500),
-          safeFirestore(getDocs(collection(getDb(), 'files')), 2000).catch(() => null),
-        ]);
-
-        // Fetch all files count from Firestore files collection to ensure 100% precision
-        const filesCountByUser: Record<string, number> = {};
-        if (filesSnap && filesSnap.docs) {
-          filesSnap.docs.forEach((fDoc) => {
-            const fData = fDoc.data() as UserFileRecord;
-            if (fData.userId) {
-              filesCountByUser[fData.userId] = (filesCountByUser[fData.userId] || 0) + 1;
-            }
-          });
-        }
+        const snap = await safeFirestore(getDocs(usersCol), 2500);
 
         if (!snap.empty) {
           const users: FirestoreUser[] = [];
           for (const docSnap of snap.docs) {
             const data = docSnap.data() as Partial<FirestoreUser>;
             const uid = docSnap.id;
-
-            const presetFilesCount = INITIAL_UPLOADED_FILES[uid]?.length || 0;
-            const firestoreLiveFilesCount = filesCountByUser[uid] || 0;
-
-            const computedFilesCount = Math.max(
-              firestoreLiveFilesCount,
-              data.uploadedFilesCount || 0,
-              presetFilesCount
-            );
 
             users.push({
               id: uid,
@@ -2156,7 +2127,6 @@ export const dataService = {
               phone: data.phone || '',
               role: data.role || 'customer',
               createdAt: data.createdAt || new Date().toISOString(),
-              uploadedFilesCount: computedFilesCount,
               verificationStatus: (data.verificationStatus as VerificationStatus) || 'not_started',
               verifiedAt: data.verifiedAt,
             });
@@ -2197,7 +2167,6 @@ export const dataService = {
             phone: data.phone || '',
             role: data.role || 'customer',
             createdAt: data.createdAt || new Date().toISOString(),
-            uploadedFilesCount: data.uploadedFilesCount || 0,
             verificationStatus: (data.verificationStatus as VerificationStatus) || 'not_started',
             verifiedAt: data.verifiedAt,
           };
@@ -2269,202 +2238,6 @@ export const dataService = {
     this.logAudit(`تعديل دور المستخدم (${cleanUid}) إلى ${newRole}`, 'users', cleanUid);
   },
 
-  /**
-   * جلب الملفات والوثائق الخاصة بمستخدم معين باستخدام معرفه (userId)
-   * تبحث في كل من المجلد الفرعي /users/{userId}/files وفي مجموعة /files الرئيسية
-   * يتم الاحتفاظ بالملفات في الذاكرة الحية فقط حفاظاً على سرية وخصوصية الوثائق
-   */
-  async getFilesForUser(userId: string): Promise<UserFileRecord[]> {
-    if (!userId || !userId.trim()) {
-      return [];
-    }
-
-    const cleanUserId = userId.trim();
-    const collectedFilesMap = new Map<string, UserFileRecord>();
-
-    if (isFirebaseConfigured && db) {
-      try {
-        // 1. Fetch from subcollection: /users/{userId}/files
-        try {
-          const filesSubCol = collection(getDb(), 'users', cleanUserId, 'files');
-          const subSnap = await safeFirestore(getDocs(filesSubCol), 3500);
-          subSnap.docs.forEach((d) => {
-            const fileData = d.data() as UserFileRecord;
-            collectedFilesMap.set(d.id, {
-              ...fileData,
-              id: d.id,
-              userId: fileData.userId || cleanUserId,
-            });
-          });
-        } catch {
-          // Subcollection query failed or offline
-        }
-
-        // 2. Fetch from root files collection: /files where userId == cleanUserId
-        try {
-          const rootFilesCol = collection(getDb(), 'files');
-          const q = query(rootFilesCol, where('userId', '==', cleanUserId));
-          const rootSnap = await safeFirestore(getDocs(q), 3500);
-          rootSnap.docs.forEach((d) => {
-            const fileData = d.data() as UserFileRecord;
-            if (!collectedFilesMap.has(d.id)) {
-              collectedFilesMap.set(d.id, {
-                ...fileData,
-                id: d.id,
-                userId: fileData.userId || cleanUserId,
-              });
-            }
-          });
-        } catch {
-          // Scoped root files query failed
-        }
-
-        if (collectedFilesMap.size > 0) {
-          const filesArray = Array.from(collectedFilesMap.values());
-          filesArray.sort(
-            (a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime()
-          );
-          return filesArray;
-        }
-      } catch {
-        // Ignore offline error
-      }
-    }
-
-    // Fallback to initial preset files in memory only
-    const preset = INITIAL_UPLOADED_FILES[cleanUserId] || [];
-    return [...preset].sort(
-      (a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime()
-    );
-  },
-
-  /**
-   * الاسم البديل المتوافق لدالة جلب ملفات المستخدم
-   */
-  async getUserFiles(userId: string): Promise<UserFileRecord[]> {
-    return this.getFilesForUser(userId);
-  },
-
-  async uploadUserFile(fileData: Omit<UserFileRecord, 'id' | 'uploadedAt'>): Promise<UserFileRecord> {
-    const fileId = `file-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const newFile: UserFileRecord = {
-      ...fileData,
-      id: fileId,
-      uploadedAt: new Date().toISOString(),
-      verified: false,
-      status: 'manual_review',
-    };
-
-    if (isFirebaseConfigured && db) {
-      try {
-        // Store in subcollection and root files collection
-        await safeFirestore(setDoc(doc(getDb(), 'users', fileData.userId, 'files', fileId), newFile), 2500);
-        await safeFirestore(setDoc(doc(getDb(), 'files', fileId), newFile), 2500);
-
-        // Flag the account for manual review.
-        // Firestore rules only let a customer edit name/phone/photo on their own user doc, so the old
-        // direct updateDoc(uploadedFilesCount / verificationStatus) was ALWAYS rejected for customers.
-        // Customers go through the server-authoritative verifyCustomerIdentity intake instead
-        // (it never overwrites a 'verified' / 'rejected' decision made by staff).
-        try {
-          if (isStaffOrAdmin()) {
-            const userDocRef = doc(getDb(), 'users', fileData.userId);
-            const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
-            if (userSnap.exists()) {
-              const userData = userSnap.data();
-              const updatePayload: UpdateData<DocumentData> = {
-                uploadedFilesCount: (userData.uploadedFilesCount || 0) + 1,
-              };
-              if (userData.verificationStatus !== 'verified') {
-                updatePayload.verificationStatus = 'manual_review';
-                updatePayload.verified = false;
-              }
-              await safeFirestore(updateDoc(userDocRef, updatePayload), 1500);
-            }
-          } else {
-            await functionsService.verifyCustomerIdentity({
-              storagePath: fileData.storagePath,
-              documentType: fileData.category,
-            });
-          }
-        } catch (cntErr) {
-          console.warn('Non-fatal error flagging document for manual review:', cntErr);
-        }
-      } catch (err: unknown) {
-        console.error('Error in uploadUserFile:', err);
-        const friendlyMsg = handleFirestoreError('users', `${fileData.userId}/files/${fileId}`, 'write', err, auth?.currentUser?.uid);
-        throw new Error(friendlyMsg || 'فشل حفظ بيانات الوثيقة في قاعدة البيانات.');
-      }
-    }
-
-    // Update user file count in memory cache ONLY
-    if (memoryCache.users?.data) {
-      memoryCache.users.data = memoryCache.users.data.map((u) => {
-        if (u.id === fileData.userId || u.uid === fileData.userId) {
-          return {
-            ...u,
-            uploadedFilesCount: (u.uploadedFilesCount || 0) + 1,
-          };
-        }
-        return u;
-      });
-    }
-
-    return newFile;
-  },
-
-  /**
-   * Delete a user's uploaded file from Firestore and Firebase Storage
-   */
-  async deleteUserFile(userId: string, fileId: string, storagePath?: string): Promise<void> {
-    if (isFirebaseConfigured && db) {
-      try {
-        // Delete from subcollection
-        safeFirestore(deleteDoc(doc(getDb(), 'users', userId, 'files', fileId)), 2500).catch(() => {});
-        // Delete from root files collection
-        safeFirestore(deleteDoc(doc(getDb(), 'files', fileId)), 2500).catch(() => {});
-
-        // Decrement user uploadedFilesCount (staff only: rules reject this field for customers)
-        if (isStaffOrAdmin()) {
-          try {
-            const userDocRef = doc(getDb(), 'users', userId);
-            const userSnap = await safeFirestore(getDoc(userDocRef), 1500);
-            if (userSnap.exists()) {
-              const currentCount = Math.max(0, (userSnap.data().uploadedFilesCount || 1) - 1);
-              safeFirestore(updateDoc(userDocRef, { uploadedFilesCount: currentCount }), 1500).catch(() => {});
-            }
-          } catch {
-            // Ignore offline error
-          }
-        }
-      } catch {
-        // Fallback
-      }
-    }
-
-    // If storagePath provided, delete from Firebase Storage
-    if (storagePath) {
-      try {
-        await storageService.deleteFile(storagePath);
-      } catch (err) {
-        console.warn('Error deleting file from storage:', err);
-      }
-    }
-
-    // Update user file count in memory cache ONLY
-    if (memoryCache.users?.data) {
-      memoryCache.users.data = memoryCache.users.data.map((u) => {
-        if (u.id === userId || u.uid === userId) {
-          return {
-            ...u,
-            uploadedFilesCount: Math.max(0, (u.uploadedFilesCount || 1) - 1),
-          };
-        }
-        return u;
-      });
-    }
-  },
-
   async syncUserToFirestore(authUser: { uid: string; email: string; displayName: string; phone?: string; role: string; createdAt?: string }): Promise<void> {
     const firestoreUser: FirestoreUser = {
       id: authUser.uid,
@@ -2474,7 +2247,6 @@ export const dataService = {
       phone: authUser.phone || '',
       role: authUser.role as FirestoreUser['role'],
       createdAt: authUser.createdAt || new Date().toISOString(),
-      uploadedFilesCount: 0,
     };
 
     if (isFirebaseConfigured && db) {

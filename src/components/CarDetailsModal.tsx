@@ -289,7 +289,7 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
           </div>
 
           {/* Key specs */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className={`grid grid-cols-2 gap-3 text-xs ${isAdmin || isSuperAdmin ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
             <div className="bg-slate-800/60 p-3 rounded-xl flex items-center gap-2">
               <Users className="w-4 h-4 text-amber-400" />
               <div>
@@ -314,13 +314,15 @@ export const CarDetailsModal: React.FC<CarDetailsModalProps> = ({
               </div>
             </div>
 
-            <div className="bg-slate-800/60 p-3 rounded-xl flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <div>
-                <span className="text-slate-400 block">العداد الحالي</span>
-                <span className="text-white font-bold">{vehicle.currentMileage != null ? vehicle.currentMileage.toLocaleString() : '0'} كم</span>
+            {(isAdmin || isSuperAdmin) && (
+              <div className="bg-slate-800/60 p-3 rounded-xl flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <div>
+                  <span className="text-slate-400 block">العداد الحالي</span>
+                  <span className="text-white font-bold">{vehicle.currentMileage != null ? vehicle.currentMileage.toLocaleString() : '0'} كم</span>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Description */}

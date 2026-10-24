@@ -20,6 +20,7 @@ import {
   Key,
   Camera,
   Send,
+  Sparkles,
 } from 'lucide-react';
 import { openWhatsAppChat } from '../services/whatsapp';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -69,6 +70,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [verificationSuccessNotice, setVerificationSuccessNotice] = useState<string | null>(null);
+  // True after the customer taps "start a new attempt" on a rejected request
+  const [isRestartingVerification, setIsRestartingVerification] = useState(false);
 
   // Bookings state
   const [directCustomerBookings, setDirectCustomerBookings] = useState<Booking[] | null>(null);
@@ -191,6 +194,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         throw new Error(res.error || 'تعذر إرسال طلب التوثيق للمراجعة.');
       }
 
+      setIsRestartingVerification(false);
       setVerificationSuccessNotice('تم إرسال طلب التوثيق بنجاح، وهو الآن قيد التدقيق الإداري من قبل فريق العمل.');
     } catch (err: unknown) {
       console.error('Submit verification request error:', err);
@@ -202,6 +206,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   // Reset verification for rejected status to start fresh
   const handleRestartVerification = () => {
+    setIsRestartingVerification(true);
     setCapturedDocs({});
     setVerificationError(null);
     setVerificationSuccessNotice(null);
@@ -268,8 +273,11 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const currentStatus = verificationRequest?.status || (liveProfile?.verificationStatus === 'verified' ? 'verified' : 'not_started');
 
   // Are both documents ready for submission?
-  const hasDriverLicense = Boolean(verificationRequest?.docs?.driver_license || capturedDocs.driver_license?.uploaded);
-  const hasIdentityDoc = Boolean(verificationRequest?.docs?.identity || capturedDocs.identity?.uploaded);
+  // While re-doing a rejected request, only freshly captured documents count
+  const showIntakeForm = currentStatus === 'not_started' || (currentStatus === 'rejected' && isRestartingVerification);
+  const useStoredDocs = !(currentStatus === 'rejected' && isRestartingVerification);
+  const hasDriverLicense = Boolean((useStoredDocs && verificationRequest?.docs?.driver_license) || capturedDocs.driver_license?.uploaded);
+  const hasIdentityDoc = Boolean((useStoredDocs && verificationRequest?.docs?.identity) || capturedDocs.identity?.uploaded);
   const canSubmitVerification = hasDriverLicense && hasIdentityDoc && currentStatus !== 'pending_review' && currentStatus !== 'verified';
 
   return (
@@ -405,6 +413,20 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 </div>
               )}
 
+              {/* Verification Benefits Card */}
+              {currentStatus !== 'verified' && (
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-slate-300 space-y-2">
+                  <h4 className="font-black text-amber-400 flex items-center gap-2 text-sm">
+                    <Sparkles className="w-4 h-4" />
+                    مزايا توثيق الحساب
+                  </h4>
+                  <ul className="list-disc list-inside space-y-1 text-slate-400">
+                    <li>تسليم السيارة لأي مكان أينما كان.</li>
+                    <li>أفضلية في الحجوزات: تظهر طلباتك أولاً لدى الإدارة.</li>
+                  </ul>
+                </div>
+              )}
+
               {/* STATE A: VERIFIED */}
               {currentStatus === 'verified' && (
                 <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-950 border border-emerald-500/30 space-y-3">
@@ -498,7 +520,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               )}
 
               {/* STATE C: REJECTED */}
-              {currentStatus === 'rejected' && (
+              {currentStatus === 'rejected' && !isRestartingVerification && (
                 <div className="p-5 rounded-2xl bg-rose-950/30 border border-rose-500/40 space-y-4">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
@@ -533,12 +555,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               )}
 
               {/* STATE D: NOT STARTED / INTAKE FORM */}
-              {(currentStatus === 'not_started' || (currentStatus === 'rejected' && Object.keys(capturedDocs).length > 0)) && (
+              {showIntakeForm && (
                 <div className="space-y-4">
                   <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 space-y-2">
                     <div className="font-bold text-amber-400 flex items-center gap-1.5 text-sm">
                       <Shield className="w-4 h-4 text-amber-400" />
-                      <span>خطوات توثيق الحساب (إلزامية لحجز السيارات):</span>
+                      <span>خطوات توثيق الحساب:</span>
                     </div>
                     <p className="text-slate-400 text-[11px] leading-relaxed">
                       وفقاً لشروط تأجير السيارات في سوريا، يلزم توثيق الحساب بصورتين حصراً تم التقاطهما مباشرة بالكاميرا:
@@ -597,7 +619,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       </div>
 
                       <div>
-                        <h4 className="text-sm font-black text-white">شهادة القيادة (إلزامي)</h4>
+                        <h4 className="text-sm font-black text-white">شهادة القيادة</h4>
                         <p className="text-[11px] text-slate-400 mt-1">صوّر الوجه الأمامي لشهادة القيادة بوضوح تام</p>
                       </div>
 

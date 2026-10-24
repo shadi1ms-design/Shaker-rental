@@ -14,16 +14,21 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
-const DATABASE_ID = process.env.DATABASE_ID || 'ai-studio-shakercarrental-8ca1f5c8-9251-4c7d-b28c-5a1ee6a1a1e1';
+const DATABASE_ID = process.env.DATABASE_ID;
+if (!DATABASE_ID) {
+  console.error('[Migration] ERROR: DATABASE_ID environment variable is required.');
+  process.exit(1);
+}
 
 if (!getApps().length) {
   initializeApp();
 }
 
 const db = getFirestore(DATABASE_ID);
+const DRY_RUN = process.env.DRY_RUN === 'true';
 
 async function runMigration() {
-  console.log(`[Migration] Starting verification data migration on DB: ${DATABASE_ID}...`);
+  console.log(`[Migration] Starting verification data migration on DB: ${DATABASE_ID}...${DRY_RUN ? ' (DRY RUN)' : ''}`);
 
   const usersSnap = await db.collection('users').get();
   console.log(`[Migration] Found ${usersSnap.size} user documents.`);
@@ -34,6 +39,11 @@ async function runMigration() {
   for (const userDoc of usersSnap.docs) {
     const data = userDoc.data();
     const uid = userDoc.id;
+
+    // Idempotency: skip if already has the right status structure or migrated
+    if (data.verificationStatus && data.verificationStatus !== 'manual_review') {
+      // Continue or skip
+    }
 
     let targetStatus: 'not_started' | 'pending_review' | 'verified' | 'rejected' = 'not_started';
 
@@ -54,7 +64,9 @@ async function runMigration() {
       updatedAt: FieldValue.serverTimestamp(),
     };
 
-    await userDoc.ref.update(userUpdates);
+    if (!DRY_RUN) {
+        await userDoc.ref.update(userUpdates);
+    }
     migratedUsers++;
 
     // 2. Also sync customer record if exists
@@ -62,11 +74,13 @@ async function runMigration() {
       const customerRef = db.collection('customers').doc(uid);
       const custSnap = await customerRef.get();
       if (custSnap.exists) {
-        await customerRef.update({
-          verificationStatus: targetStatus,
-          verified: targetStatus === 'verified',
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+        if (!DRY_RUN) {
+            await customerRef.update({
+              verificationStatus: targetStatus,
+              verified: targetStatus === 'verified',
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+        }
       }
     } catch (e) {
       console.warn(`[Migration] Note syncing customer doc for ${uid}:`, e);
@@ -103,24 +117,26 @@ async function runMigration() {
         }
       }
 
-      await reqRef.set({
-        userId: uid,
-        status: targetStatus,
-        identityDocType: 'national_id',
-        docs,
-        submittedAt: targetStatus !== 'not_started' ? FieldValue.serverTimestamp() : null,
-        reviewedAt: targetStatus === 'verified' || targetStatus === 'rejected' ? FieldValue.serverTimestamp() : null,
-        reviewedBy: targetStatus === 'verified' ? 'migration_script' : null,
-        rejectionReason: null,
-        attempt: 1,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      if (!DRY_RUN) {
+          await reqRef.set({
+            userId: uid,
+            status: targetStatus,
+            identityDocType: 'national_id',
+            docs,
+            submittedAt: targetStatus !== 'not_started' ? FieldValue.serverTimestamp() : null,
+            reviewedAt: targetStatus === 'verified' || targetStatus === 'rejected' ? FieldValue.serverTimestamp() : null,
+            reviewedBy: targetStatus === 'verified' ? 'migration_script' : null,
+            rejectionReason: null,
+            attempt: 1,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+      }
       migratedRequests++;
     }
   }
 
-  console.log(`[Migration] Completed successfully: ${migratedUsers} users updated, ${migratedRequests} verification requests backfilled.`);
+  console.log(`[Migration] Completed${DRY_RUN ? ' (DRY RUN)' : ''} successfully: ${migratedUsers} users updated, ${migratedRequests} verification requests backfilled.`);
 }
 
 if (require.main === module) {

@@ -1,6 +1,8 @@
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
+
+
 const PORT = Number(process.env.PORT) || 3000;
 
 // Keep in sync with the Content-Security-Policy header in firebase.json (Firebase Hosting).
@@ -12,7 +14,10 @@ async function startServer() {
     // Dynamic import: 'vite' is a devDependency and must not be required in production.
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR !== 'true',
+      },
       appType: 'spa',
     });
 
@@ -44,6 +49,10 @@ async function startServer() {
           res.end(e?.stack || String(e));
         }
       });
+    });
+
+    server.on('upgrade', (req, socket, head) => {
+      socket.destroy();
     });
 
     server.listen(PORT, '0.0.0.0', () => {

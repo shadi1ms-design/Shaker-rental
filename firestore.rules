@@ -96,24 +96,10 @@ service cloud.firestore {
       ) || isAdmin();
       allow delete: if isAdmin();
 
-      // Subcollection for user files (/users/{userId}/files/{fileId})
+      // Subcollection for user files (/users/{userId}/files/{fileId}) - Frozen for clients, Admin audit read only
       match /files/{fileId} {
-        allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
-        allow create: if (isAdmin() || (
-          isEmailVerified() && request.auth.uid == userId &&
-          (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
-          (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded', 'not_started']) &&
-          request.resource.data.get('storagePath', '').matches('^(users|uploads)/' + request.auth.uid + '/.*')
-        )) && request.resource.data.keys().hasOnly([
-          'id', 'userId', 'userEmail', 'fileName', 'storagePath', 'fileType',
-          'fileSize', 'category', 'status', 'verified', 'uploadedAt', 'createdAt', 'updatedAt'
-        ]);
-        allow update: if (isAdmin() || (
-          isSignedIn() && request.auth.uid == userId &&
-          (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending'))
-        )) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storagePath', 'userId', 'verified'])
-          && (isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fileName', 'status', 'updatedAt']));
-        allow delete: if isAdmin();
+        allow read: if isAdmin();
+        allow write: if false;
       }
     }
 
@@ -129,26 +115,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Top-level files index: /files/{fileId}
+    // Top-level files index: /files/{fileId} - Frozen for clients, Admin audit read only
     match /files/{fileId} {
-      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if (isAdmin() || (
-        isEmailVerified() && request.resource.data.userId == request.auth.uid &&
-        (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
-        (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'manual_review', 'uploaded', 'not_started']) &&
-        request.resource.data.get('storagePath', '').matches('^(users|uploads)/' + request.auth.uid + '/.*')
-      )) && request.resource.data.keys().hasOnly([
-        'id', 'userId', 'userEmail', 'fileName', 'storagePath', 'fileType',
-        'fileSize', 'category', 'status', 'verified', 'uploadedAt', 'createdAt', 'updatedAt'
-      ]);
-      allow update: if (isAdmin() || (
-        isSignedIn() && 
-        resource.data.userId == request.auth.uid && 
-        request.resource.data.userId == request.auth.uid &&
-        (!('status' in request.resource.data) || request.resource.data.status == resource.data.get('status', 'pending'))
-      )) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storagePath', 'userId', 'verified'])
-        && (isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fileName', 'status', 'updatedAt']));
-      allow delete: if isAdmin();
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Settings collection - Client writes completely blocked (Admin Cloud Functions / SDK only)

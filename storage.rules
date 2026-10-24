@@ -62,41 +62,22 @@ service firebase.storage {
     }
 
     // =========================================================================
-    // 3. PRIVATE CUSTOMER DOCUMENTS & USER UPLOADS (LEGACY / GENERAL)
+    // 3. LEGACY CUSTOMER DOCUMENT PATHS (FROZEN / ADMIN AUDIT ONLY)
     // =========================================================================
+    // Direct client writes are forbidden. Ordinary employees cannot access customer documents.
+    // Read is strictly restricted to Admins for historical audit; no client create/update/delete.
     match /users/{userId}/documents/{allPaths=**} {
-      // Ordinary employees cannot view customer identity documents. Admins or owner only.
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      // Direct customer creation deprecated; documents are never updated or deleted by client
-      allow create: if isEmployee()
-                    && request.auth.token.email_verified == true
-                    && request.resource.size <= 25 * 1024 * 1024
-                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
-      allow update: if false;
-      allow delete: if isAdmin();
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
-    match /users/{userId}/{allPaths=**} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
-      // Only staff may write outside users/{uid}/documents/
-      allow create, update: if isEmployee()
-                    && request.auth.token.email_verified == true
-                    && request.resource.size <= 25 * 1024 * 1024
-                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
-      allow delete: if isAdmin();
-    }
-
-    match /uploads/{userId}/{allPaths=**} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isEmployee());
-      allow create, update: if isEmployee()
-                    && request.auth.token.email_verified == true
-                    && request.resource.size <= 25 * 1024 * 1024
-                    && request.resource.contentType.matches('image/(jpeg|png|webp|jpg)|application/pdf');
-      allow delete: if isAdmin();
+    match /users/{userId}/files/{allPaths=**} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // =========================================================================
-    // 3. DIGITAL CONTRACTS & INSPECTION VIDEOS (<= 100MB)
+    // 4. DIGITAL CONTRACTS & INSPECTION VIDEOS (<= 100MB)
     // =========================================================================
     match /contracts/{contractId}/videos/{videoId} {
       allow read: if isEmployee() || (

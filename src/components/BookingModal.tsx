@@ -8,6 +8,7 @@ import { openWhatsAppChat } from '../services/whatsapp';
 import { useAuth } from '../contexts/AuthContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { addDaysISO, todayLocalISO } from '../utils/dateUtils';
+import { isUserVerified } from '../utils/verification';
 import { normalizeDigits } from '../utils/phone';
 import { isValidPhone } from '../utils/security';
 import {
@@ -82,23 +83,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [customerAddress, setCustomerAddress] = useState('');
   const [customerLicenseNumber, setCustomerLicenseNumber] = useState('');
   const [notes, setNotes] = useState('');
-  const [isUserVerified, setIsUserVerified] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    if (!user?.uid) {
-      setIsUserVerified(false);
-      return;
-    }
-    if (user.role === 'admin' || user.role === 'super_admin' || user.role === 'employee') {
-      setIsUserVerified(true);
-      return;
-    }
-    dataService.getVerificationRequest(user.uid).then((req) => {
-      setIsUserVerified(req?.status === 'verified');
-    }).catch(() => {
-      setIsUserVerified(user.verificationStatus === 'verified');
-    });
-  }, [user?.uid, user?.role, user?.verificationStatus]);
+  const [deliveryLocation, setDeliveryLocation] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -308,6 +293,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         returnDate,
         returnTime,
         notes,
+        deliveryLocation,
       });
 
       if (!result.success || !result.data) {
@@ -718,33 +704,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             )}
 
-            {/* Account Verification Required Notice if logged-in customer is unverified */}
-            {user && isUserVerified === false && (
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/40 to-slate-900 border border-amber-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5 text-xs text-amber-300">
-                  <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0" />
-                  <div>
-                    <span className="font-bold text-white block text-xs">يتطلب تأكيد الحجز توثيق حسابك</span>
-                    <span className="text-[11px] text-amber-300/90">
-                      وفق سياسة الشركة، يلزم تصوير رخصة القيادة والبطاقة الشخصية للتحقق منها قبل إتمام الحجز.
-                    </span>
-                  </div>
-                </div>
-                {onOpenProfile && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClose();
-                      onOpenProfile();
-                    }}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 shrink-0 flex items-center gap-1.5"
-                  >
-                    <span>توثيق الحساب الآن</span>
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            )}
 
             {/* Customer Inputs */}
             <div className="space-y-4">
@@ -856,6 +815,36 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400"
                 />
               </div>
+
+              {/* Delivery Location */}
+              <div>
+                <label htmlFor="booking-delivery-location" className="block text-xs font-semibold text-slate-300 mb-1">
+                    مكان التسليم (أينما كنت - للموثقين فقط)
+                </label>
+                <div className="relative">
+                  <input
+                    id="booking-delivery-location"
+                    type="text"
+                    value={deliveryLocation || ''}
+                    onChange={(e) => setDeliveryLocation(e.target.value)}
+                    placeholder="عنوان محدد للتسليم..."
+                    disabled={!!(user && !isUserVerified(user))}
+                    className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  {user && !isUserVerified(user) && (
+                    <button
+                        type="button"
+                        onClick={() => { onClose(); onOpenProfile?.(); }}
+                        className="absolute left-2 top-1.5 px-3 py-1 rounded-lg bg-amber-500 text-slate-950 text-[10px] font-black"
+                    >
+                        وثّق حسابك
+                    </button>
+                  )}
+                </div>
+                {user && !isUserVerified(user) && (
+                  <p className="text-[10px] text-amber-400 mt-1">مزايا التوثيق: التسليم أينما كنت + أفضلية الحجز.</p>
+                )}
+              </div>
             </div>
 
             {/* Actions */}
@@ -871,7 +860,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
               <button
                 type="submit"
-                disabled={isSubmitting || !user || isUserVerified === false}
+                disabled={isSubmitting || !user}
                 className="flex-1 min-h-[44px] py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 id="booking-step2-submit-btn"
               >
@@ -881,11 +870,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   <>
                     <Lock className="w-4 h-4" />
                     <span>سجّل الدخول أولاً لتأكيد الحجز</span>
-                  </>
-                ) : isUserVerified === false ? (
-                  <>
-                    <ShieldAlert className="w-4 h-4" />
-                    <span>يلزم توثيق الحساب للمتابعة</span>
                   </>
                 ) : (
                   <>

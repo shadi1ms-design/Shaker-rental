@@ -129,4 +129,45 @@ describe.skipIf(!hasEmulator)('Firestore Security Rules TDD Suite', () => {
     const fileDoc = db.collection('files').doc('file-abc');
     await expect(fileDoc.delete()).rejects.toThrow();
   });
+
+  it('should block employee from reading frozen customer files', async () => {
+    const employeeContext = testEnv.authenticatedContext('emp-123', { role: 'employee' });
+    const db = employeeContext.firestore();
+
+    const topFile = db.collection('files').doc('file-abc');
+    await expect(topFile.get()).rejects.toThrow();
+
+    const userFile = db.collection('users').doc('cust-123').collection('files').doc('file-abc');
+    await expect(userFile.get()).rejects.toThrow();
+  });
+
+  it('should block customer/owner from reading, writing, or deleting in legacy files', async () => {
+    const customerContext = testEnv.authenticatedContext('cust-123', { role: 'customer' });
+    const db = customerContext.firestore();
+
+    const topFile = db.collection('files').doc('file-abc');
+    await expect(topFile.get()).rejects.toThrow();
+    await expect(topFile.set({ id: 'file-abc', userId: 'cust-123', fileName: 'test.jpg' })).rejects.toThrow();
+    await expect(topFile.delete()).rejects.toThrow();
+
+    const ownSubFile = db.collection('users').doc('cust-123').collection('files').doc('file-abc');
+    await expect(ownSubFile.get()).rejects.toThrow();
+    await expect(ownSubFile.set({ id: 'file-abc', userId: 'cust-123', fileName: 'test.jpg' })).rejects.toThrow();
+    await expect(ownSubFile.delete()).rejects.toThrow();
+  });
+
+  it('should block unauthenticated visitors from reading or writing files and verificationRequests', async () => {
+    const unauthDb = testEnv.unauthenticatedContext().firestore();
+
+    const topFile = unauthDb.collection('files').doc('file-abc');
+    await expect(topFile.get()).rejects.toThrow();
+    await expect(topFile.set({ id: 'file-abc', fileName: 'test.jpg' })).rejects.toThrow();
+
+    const userFile = unauthDb.collection('users').doc('cust-123').collection('files').doc('file-abc');
+    await expect(userFile.get()).rejects.toThrow();
+
+    const verReq = unauthDb.collection('verificationRequests').doc('cust-123');
+    await expect(verReq.get()).rejects.toThrow();
+    await expect(verReq.set({ status: 'verified' })).rejects.toThrow();
+  });
 });

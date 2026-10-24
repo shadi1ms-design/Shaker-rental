@@ -5,6 +5,7 @@ import type { DocumentReference, DocumentSnapshot } from 'firebase-admin/firesto
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
 import { isCallerStaff, isCallerAdmin, assertNotRevoked } from './authz';
 import { ttlTimestamp } from './rateLimit';
+import { isUserVerified } from './verificationStatus';
 import {
   calculateRentalDaysDamascus,
   calculateRentalPriceServer,
@@ -60,28 +61,7 @@ export const createBookingSecure = onCall(
     // 1. Session & account checks (fail-closed): rejects disabled accounts and revoked tokens for
     //    EVERY caller (customers included), then enforces email verification for password users.
     const callerRecord = await assertNotRevoked(request);
-    if (!isStaff) {
-      const isPasswordAuth = callerRecord.providerData.some((p) => p.providerId === 'password');
-      if (isPasswordAuth && !callerRecord.emailVerified) {
-        throw new HttpsError(
-          'failed-precondition',
-          'يرجى تأكيد بريدك الإلكتروني أولاً قبل إنشاء الحجز. لقد تم إرسال رابط التأكيد إلى بريدك الإلكتروني المسجل.'
-        );
-      }
-
-      // Enforce Verified Account Requirement for Customer Bookings
-      const userSnap = await db.collection('users').doc(customerId).get();
-      const userData = userSnap.data();
-      const isVerified = userData?.verified === true || userData?.verificationStatus === 'verified';
-      if (!isVerified) {
-        throw new HttpsError(
-          'failed-precondition',
-          'يتطلب حجز السيارة توثيق حسابك ورفع وثائق الهوية ورخصة القيادة واعتمادها من الإدارة أولاً. يرجى التوجه إلى قسم "توثيق الحساب" في ملفك الشخصي لإكمال الطلب.'
-        );
-      }
-    }
-
-    // Spoofing prevention
+    // Check spoofing of customerId/Email if not staff
     if (data.customerId && data.customerId !== callerUid) {
       if (!isStaff) {
         throw new HttpsError(
@@ -91,6 +71,23 @@ export const createBookingSecure = onCall(
       }
       customerId = String(data.customerId).trim();
       if (data.customerEmail) customerEmail = String(data.customerEmail).toLowerCase().trim();
+    }
+    if (!isStaff) {
+      const isPasswordAuth = callerRecord.providerData.some((p) => p.providerId === 'password');
+      if (isPasswordAuth && !callerRecord.emailVerified) {
+        throw new HttpsError(
+          'failed-precondition',
+          'يرجى تأكيد بريدك الإلكتروني أولاً قبل إنشاء الحجز. لقد تم إرسال رابط التأكيد إلى بريدك الإلكتروني المسجل.'
+        );
+      }
+    }
+
+    // Check customer verification status for delivery
+    const userSnap = await db.collection('users').doc(customerId).get();
+    const userData = userSnap.data();
+    const customerVerified = isUserVerified(userData);
+    if (data.deliveryLocation && data.deliveryLocation !== '' && !customerVerified && !isStaff) {
+       throw new HttpsError('failed-precondition', 'خدمة التسليم أينما كنت للحسابات الموثقة فقط');
     }
 
     // 2. Active Bookings Cap: Max 3 active ('new' or 'reviewing') bookings per customer (Requirement 1)
@@ -377,6 +374,7 @@ export const createBookingSecure = onCall(
           customerNationalId,
           customerAddress,
           customerLicenseNumber,
+          customerVerified,
           pickupDate: rawPickup,
           pickupTime,
           returnDate: rawReturn,
@@ -424,7 +422,7 @@ export const createBookingSecure = onCall(
           id: notificationRef.id,
           type: 'new_booking',
           title: 'طلب حجز جديد عبر الموقع',
-          message: `تم إنشاء حجز برقم ${formattedNumber} للعميل ${customerName} على ${vehicleData.brand} ${vehicleData.model} بمبلغ ${calculatedPricing.totalPrice}$`,
+          message: `تم إنشاء حجز برقم ${formattedNumber} للعميل ${customerName} ${customerVerified ? '(✅ عميل موثق)' : '(غير موثق)'} على ${vehicleData.brand} ${vehicleData.model} بمبلغ ${calculatedPricing.totalPrice}$`,
           bookingId: newBookingRef.id,
           vehicleId: canonicalVehicleId,
           read: false,

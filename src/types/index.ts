@@ -69,6 +69,7 @@ export interface Booking {
   notes?: string;
   isDeleted?: boolean;
   hiddenFromCustomer?: boolean;
+  customerVerified?: boolean;
   createdAt: string;
   updatedAt?: string;
 }

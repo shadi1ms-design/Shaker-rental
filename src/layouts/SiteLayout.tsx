@@ -61,7 +61,8 @@ export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
         onOpenProfile={openProfile}
       />
 
-      {/* Full Navbar ONLY on Home; minimal PageTopBar on every other page */}
+      {/* Full Navbar ONLY on Home. Other pages show their own PageHeaderBanner (menu + back + title),
+          so the top bar is rendered only for the 404 page, which has no banner. */}
       {isHome ? (
         <Navbar
           currentView="home"
@@ -70,9 +71,9 @@ export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
           onOpenAuth={openAuth}
           onOpenProfile={openProfile}
         />
-      ) : (
-        <PageTopBar title={meta.topBarTitle} badge={meta.badge} showMenu={route.name === 'notFound'} onBack={route.name === 'notFound' ? () => goBackFrom(route) : undefined} />
-      )}
+      ) : route.name === 'notFound' ? (
+        <PageTopBar title={meta.topBarTitle} showMenu onBack={() => goBackFrom(route)} />
+      ) : null}
 
       {/* Booking Status Alert Toast */}
       {lastCreatedBooking && (

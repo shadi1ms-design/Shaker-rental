@@ -61,6 +61,7 @@ export {
   reviewVerification,
   revokeVerification,
   getVerificationDocumentUrl,
+  cleanupVerificationStaging,
 } from './verifyCustomerIdentity';
 
 // 8. Auth Lifecycle Trigger

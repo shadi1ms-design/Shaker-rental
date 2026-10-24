@@ -1,11 +1,12 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import * as crypto from 'crypto';
 import { FUNCTION_REGION, DATABASE_ID, DEFAULT_STORAGE_BUCKET } from './constants';
 import { isCallerAdmin, assertNotRevoked } from './authz';
-import { inspectServerImage } from './imageQuality';
+import { inspectServerImage, analyzeServerQuality } from './imageQuality';
 
 const db = getFirestore(getApp(), DATABASE_ID);
 
@@ -41,13 +42,57 @@ const SIGNED_URL_TTL_MS = 60 * 1000; // 60 seconds
  */
 async function checkVerificationAttemptLimit(userId: string): Promise<number> {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  // Equality-only query (served by the automatic single-field indexes, no composite index needed);
+  // the 30-day window is applied in memory.
   const logsSnap = await db.collection('auditLogs')
     .where('action', '==', 'VERIFICATION_SUBMITTED')
     .where('targetUserId', '==', userId)
-    .where('timestamp', '>=', thirtyDaysAgo)
     .get();
 
-  return logsSnap.size;
+  return logsSnap.docs.filter((d) => String(d.data().timestamp || '') >= thirtyDaysAgo).length;
+}
+
+const MAX_SESSIONS_PER_HOUR = 15;
+const SESSION_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Caps how many upload sessions a user may open per hour (the 5-attempt limit only counts final
+ * submissions, so without this a user could open unlimited sessions).
+ */
+async function consumeSessionQuota(userId: string, userEmail: string): Promise<void> {
+  const reqRef = db.collection('verificationRequests').doc(userId);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(reqRef);
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const d = snap.data() || {};
+    const windowStart = d.sessionWindowStart ? new Date(d.sessionWindowStart).getTime() : 0;
+    const inWindow = windowStart && nowMs - windowStart < SESSION_WINDOW_MS;
+    const used = inWindow ? Number(d.sessionsInWindow || 0) : 0;
+    if (used >= MAX_SESSIONS_PER_HOUR) {
+      throw new HttpsError('resource-exhausted', 'تجاوزت عدد محاولات التصوير المسموح بها خلال ساعة. حاول لاحقاً.');
+    }
+    const quota = {
+      sessionWindowStart: inWindow ? d.sessionWindowStart : nowIso,
+      sessionsInWindow: used + 1,
+    };
+    if (!snap.exists) {
+      tx.set(reqRef, {
+        id: userId,
+        userId,
+        userEmail,
+        status: 'not_started',
+        identityDocType: 'national_id',
+        docs: {},
+        attempt: 0,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        ...quota,
+      });
+    } else {
+      tx.update(reqRef, quota);
+    }
+  });
 }
 
 // =============================================================================
@@ -93,6 +138,8 @@ export const initiateVerificationSession = onCall(
       throw new HttpsError('failed-precondition', 'لديك طلب توثيق قيد المراجعة الإدارية حالياً. يرجى انتظار قرار المدير.');
     }
 
+    await consumeSessionQuota(userId, (request.auth.token?.email || '').toLowerCase().trim());
+
     const nonce = crypto.randomUUID();
     const now = Date.now();
     const expiresAt = new Date(now + SESSION_TTL_MS).toISOString();
@@ -111,6 +158,7 @@ export const initiateVerificationSession = onCall(
     return {
       success: true,
       nonce,
+      sessionId: nonce,
       expiresAt,
       allowedDocTypes: ['driver_license', 'identity'],
       attemptsRemaining: Math.max(0, MAX_ATTEMPTS_30_DAYS - attemptsLast30Days),
@@ -136,13 +184,36 @@ export const submitVerificationDocument = onCall(
     const userEmail = (request.auth.token?.email || '').toLowerCase().trim();
     const data = request.data || {};
 
-    const nonce = sanitizeString(data.nonce, 100);
-    const docType = data.docType === 'driver_license' ? 'driver_license' : data.docType === 'identity' ? 'identity' : null;
+    const nonce = sanitizeString(data.nonce ?? data.sessionId, 100);
+    const rawDocType = data.docType ?? data.docKey;
+    const docType = rawDocType === 'driver_license' ? 'driver_license' : rawDocType === 'identity' ? 'identity' : null;
     const identityDocType = data.identityDocType === 'passport' ? 'passport' : 'national_id';
-    const imageBase64 = typeof data.imageBase64 === 'string' ? data.imageBase64 : '';
+    const imageBase64 =
+      typeof data.imageBase64 === 'string' ? data.imageBase64 : typeof data.base64Data === 'string' ? data.base64Data : '';
+
+    // Client-supplied metadata: mimeType and clientQuality are read for contract parity,
+    // but clientQuality is strictly ignored for the acceptance decision — server quality rules.
+    const _clientMimeType = data.mimeType;
+    const _clientQuality = data.clientQuality;
+    void _clientMimeType;
+    void _clientQuality;
 
     if (!nonce || !docType || !imageBase64) {
       throw new HttpsError('invalid-argument', 'البيانات غير مكتملة (الجلسة، نوع الوثيقة، أو بيانات الصورة مفقودة).');
+    }
+
+    // 0. A request that is locked (pending review / verified) can never receive new images.
+    {
+      const lockSnap = await db.collection('verificationRequests').doc(userId).get();
+      const lockStatus = lockSnap.data()?.status;
+      if (lockStatus === 'pending_review' || lockStatus === 'verified') {
+        throw new HttpsError(
+          'failed-precondition',
+          lockStatus === 'verified'
+            ? 'حسابك موثق ولا يمكن تعديل وثائقه.'
+            : 'طلبك قيد المراجعة ولا يمكن تعديل الوثائق المرسلة.'
+        );
+      }
     }
 
     // 1. Consume session nonce (single-use validation)
@@ -187,6 +258,18 @@ export const submitVerificationDocument = onCall(
       );
     }
 
+    // Server-side sharpness / exposure analysis. Client-reported numbers are NEVER trusted.
+    let serverQuality;
+    try {
+      serverQuality = await analyzeServerQuality(buffer);
+    } catch (qErr) {
+      console.error('[submitVerificationDocument] Server quality analysis failed:', qErr);
+      throw new HttpsError('internal', 'تعذر فحص جودة الصورة حالياً. يرجى المحاولة لاحقاً.');
+    }
+    if (!serverQuality.passed) {
+      throw new HttpsError('invalid-argument', serverQuality.failureReason || 'الصورة غير واضحة بما يكفي. أعد التصوير.');
+    }
+
     // Rejection of edited or screenshot photos
     if (inspectResult.suspiciousEditorFound) {
       await db.collection('auditLogs').add({
@@ -203,9 +286,9 @@ export const submitVerificationDocument = onCall(
       );
     }
 
-    // 4. Write directly to private storage path: verification_pending/{userId}/{docType}.jpg
+    // 4. Write to a UNIQUE staging object (never overwrites an object a submitted request points at).
     const bucket = getStorage().bucket(DEFAULT_STORAGE_BUCKET);
-    const storagePath = `verification_pending/${userId}/${docType}.jpg`;
+    const storagePath = `verification_pending/${userId}/${docType}_${crypto.randomUUID()}.jpg`;
     const file = bucket.file(storagePath);
 
     await file.save(buffer, {
@@ -234,38 +317,54 @@ export const submitVerificationDocument = onCall(
       quality: {
         width: inspectResult.width,
         height: inspectResult.height,
-        blurScore: typeof data.clientQuality?.blurScore === 'number' ? data.clientQuality.blurScore : 100,
-        brightness: typeof data.clientQuality?.brightness === 'number' ? data.clientQuality.brightness : 128,
+        blurScore: serverQuality.blurScore,
+        brightness: serverQuality.brightness,
         passed: true,
       },
       docType,
       subType: docType === 'identity' ? identityDocType : 'driver_license',
     };
 
-    // 5. Update or create verificationRequests document
+    // 5. Attach to the request inside a transaction that re-checks the lock (closes the race with
+    //    submitVerificationRequest / reviewVerification).
     const reqRef = db.collection('verificationRequests').doc(userId);
-    const reqSnap = await reqRef.get();
+    let previousPath: string | undefined;
+    try {
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(reqRef);
+        const cur = snap.data();
+        if (cur?.status === 'pending_review' || cur?.status === 'verified') {
+          throw new HttpsError('failed-precondition', 'تم قفل الطلب أثناء الرفع. لا يمكن تعديل الوثائق الآن.');
+        }
+        previousPath = cur?.docs?.[docType]?.storagePath;
+        if (!snap.exists) {
+          tx.set(reqRef, {
+            id: userId,
+            userId,
+            userEmail,
+            status: 'not_started',
+            identityDocType,
+            docs: { [docType]: docRecord },
+            attempt: 0,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
+        } else {
+          tx.update(reqRef, {
+            [`docs.${docType}`]: docRecord,
+            identityDocType,
+            updatedAt: nowIso,
+          });
+        }
+      });
+    } catch (txErr) {
+      await file.delete({ ignoreNotFound: true }).catch(() => {});
+      throw txErr;
+    }
 
-    if (!reqSnap.exists) {
-      await reqRef.set({
-        id: userId,
-        userId,
-        userEmail,
-        status: 'not_started',
-        identityDocType,
-        docs: {
-          [docType]: docRecord,
-        },
-        attempt: 0,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      });
-    } else {
-      await reqRef.update({
-        [`docs.${docType}`]: docRecord,
-        identityDocType,
-        updatedAt: nowIso,
-      });
+    // Replacing a not-yet-submitted photo: remove the superseded staging object.
+    if (previousPath && previousPath !== storagePath && previousPath.startsWith(`verification_pending/${userId}/`)) {
+      await bucket.file(previousPath).delete({ ignoreNotFound: true }).catch(() => {});
     }
 
     return {
@@ -273,6 +372,7 @@ export const submitVerificationDocument = onCall(
       docType,
       uploadedAt: nowIso,
       quality: docRecord.quality,
+      docKey: docType,
       message: 'تم استلام وفحص الوثيقة بنجاح ومطابقتها لمعايير الأمان والجودة.',
     };
   }
@@ -327,15 +427,30 @@ export const submitVerificationRequest = onCall(
     const nowIso = new Date().toISOString();
     const newAttempt = (reqData.attempt || 0) + 1;
 
-    // Update verification request
-    await reqRef.update({
-      status: 'pending_review',
-      identityDocType,
-      submittedAt: nowIso,
-      attempt: newAttempt,
-      rejectionReason: null,
-      updatedAt: nowIso,
+    // Update verification request (transaction: re-check the state to avoid double submission)
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(reqRef);
+      const st = fresh.data()?.status;
+      if (st === 'pending_review' || st === 'verified') {
+        throw new HttpsError('failed-precondition', 'الطلب مرسل بالفعل أو موثق.');
+      }
+      tx.update(reqRef, {
+        status: 'pending_review',
+        identityDocType,
+        submittedAt: nowIso,
+        attempt: newAttempt,
+        rejectionReason: null,
+        updatedAt: nowIso,
+      });
     });
+
+    // Invalidate every open upload session so nothing can be attached after submission.
+    try {
+      const openSessions = await db.collection('verificationSessions').where('userId', '==', userId).get();
+      await Promise.all(openSessions.docs.map((d) => d.ref.delete()));
+    } catch (sessErr) {
+      console.warn('[submitVerificationRequest] Failed to clear sessions:', sessErr);
+    }
 
     // Sync to user and customer records
     const userUpdate = {
@@ -394,9 +509,11 @@ export const reviewVerification = onCall(
     const callerEmail = request.auth!.token?.email || 'admin';
     const data = request.data || {};
 
-    const targetUserId = sanitizeString(data.targetUserId || data.userId, 128);
-    const decision = String(data.decision || data.action || '').toLowerCase().trim();
-    const rejectionReason = sanitizeString(data.rejectionReason || data.notes, 500);
+    const targetUserId = sanitizeString(data.targetUserId || data.targetUid || data.userId, 128);
+    const rawDecision = String(data.decision || data.action || '').toLowerCase().trim();
+    // Legacy router action names map onto the new decisions
+    const decision = rawDecision === 'verified' ? 'approve' : rawDecision === 'rejected' ? 'reject' : rawDecision;
+    const rejectionReason = sanitizeString(data.rejectionReason || data.reason || data.notes, 500);
 
     if (!targetUserId) {
       throw new HttpsError('invalid-argument', 'معرف المستخدم المستهدف مطلوب.');
@@ -421,46 +538,69 @@ export const reviewVerification = onCall(
     const bucket = getStorage().bucket(DEFAULT_STORAGE_BUCKET);
     const nowIso = new Date().toISOString();
 
+    // Only a submitted request can be decided (prevents approving incomplete requests and
+    // rejecting already-verified accounts, which would orphan vault images).
+    if (reqData.status !== 'pending_review') {
+      throw new HttpsError(
+        'failed-precondition',
+        reqData.status === 'verified'
+          ? 'الحساب موثق بالفعل. استخدم "إلغاء التوثيق" إن لزم.'
+          : 'لا يوجد طلب مُرسَل قيد المراجعة لهذا المستخدم.'
+      );
+    }
+
     // -------------------------------------------------------------------------
     // Decision: APPROVE
     // -------------------------------------------------------------------------
     if (decision === 'approve') {
       const updatedDocs: Record<string, any> = {};
 
-      // Move files from verification_pending to verification_vault
-      for (const key of ['driver_license', 'identity']) {
-        const item = reqData.docs?.[key];
-        if (item?.storagePath) {
-          const oldPath: string = item.storagePath;
-          const fileName = oldPath.split('/').pop() || `${key}.jpg`;
-          const newPath = `verification_vault/${targetUserId}/${fileName}`;
-
-          try {
-            const srcFile = bucket.file(oldPath);
-            const [srcExists] = await srcFile.exists();
-            if (srcExists) {
-              await srcFile.copy(bucket.file(newPath));
-              await srcFile.delete({ ignoreNotFound: true });
-            }
-          } catch (moveErr) {
-            console.error(`[reviewVerification] Failed moving ${oldPath} to vault:`, moveErr);
+      // Both documents must exist in staging; move them to the vault. ANY failure aborts the
+      // approval (nothing is marked verified) and rolls back copies already made.
+      const copied: string[] = [];
+      try {
+        for (const key of ['driver_license', 'identity']) {
+          const item = reqData.docs?.[key];
+          if (!item?.storagePath) {
+            throw new HttpsError('failed-precondition', 'الطلب غير مكتمل: إحدى الوثيقتين مفقودة.');
           }
-
-          updatedDocs[key] = {
-            ...item,
-            storagePath: newPath,
-          };
+          const oldPath: string = item.storagePath;
+          const newPath = `verification_vault/${targetUserId}/${key}.jpg`;
+          const srcFile = bucket.file(oldPath);
+          const [srcExists] = await srcFile.exists();
+          if (!srcExists) {
+            throw new HttpsError('failed-precondition', 'ملف إحدى الوثائق غير موجود في التخزين. اطلب من العميل إعادة التقديم.');
+          }
+          await srcFile.copy(bucket.file(newPath));
+          copied.push(newPath);
+          updatedDocs[key] = { ...item, storagePath: newPath };
         }
+      } catch (moveErr) {
+        await Promise.all(copied.map((p) => bucket.file(p).delete({ ignoreNotFound: true }).catch(() => {})));
+        if (moveErr instanceof HttpsError) throw moveErr;
+        console.error('[reviewVerification] Vault move failed:', moveErr);
+        throw new HttpsError('internal', 'تعذر نقل الوثائق إلى الخزنة. لم يتم اعتماد التوثيق، حاول مرة أخرى.');
       }
 
-      await reqRef.update({
-        status: 'verified',
-        docs: updatedDocs,
-        reviewedAt: nowIso,
-        reviewedBy: callerUid,
-        reviewedByEmail: callerEmail,
-        rejectionReason: null,
-        updatedAt: nowIso,
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(reqRef);
+        if (snap.data()?.status !== 'pending_review') {
+          throw new HttpsError('failed-precondition', 'لا يوجد طلب توثيق قيد المراجعة لهذا المستخدم.');
+        }
+        tx.update(reqRef, {
+          status: 'verified',
+          docs: updatedDocs,
+          reviewedAt: nowIso,
+          reviewedBy: callerUid,
+          reviewedByEmail: callerEmail,
+          rejectionReason: null,
+          updatedAt: nowIso,
+        });
+      });
+
+      // Staging copies are removed only after the vault copies and the status are committed.
+      await bucket.deleteFiles({ prefix: `verification_pending/${targetUserId}/`, force: true }).catch((e) => {
+        console.warn('[reviewVerification] Staging cleanup failed:', e);
       });
 
       const userVerifiedPayload = {
@@ -512,17 +652,24 @@ export const reviewVerification = onCall(
       console.warn(`[reviewVerification] Failed deleting pending files for ${targetUserId}:`, delErr);
     }
 
-    await reqRef.update({
-      status: 'rejected',
-      docs: {
-        driver_license: null,
-        identity: null,
-      },
-      reviewedAt: nowIso,
-      reviewedBy: callerUid,
-      reviewedByEmail: callerEmail,
-      rejectionReason,
-      updatedAt: nowIso,
+    // Atomic Reject
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(reqRef);
+      if (snap.data()?.status !== 'pending_review') {
+        throw new HttpsError('failed-precondition', 'لا يوجد طلب توثيق قيد المراجعة لهذا المستخدم.');
+      }
+      tx.update(reqRef, {
+        status: 'rejected',
+        docs: {
+          driver_license: null,
+          identity: null,
+        },
+        reviewedAt: nowIso,
+        reviewedBy: callerUid,
+        reviewedByEmail: callerEmail,
+        rejectionReason,
+        updatedAt: nowIso,
+      });
     });
 
     const userRejectedPayload = {
@@ -581,7 +728,7 @@ export const revokeVerification = onCall(
     const callerEmail = request.auth!.token?.email || 'admin';
     const data = request.data || {};
 
-    const targetUserId = sanitizeString(data.targetUserId || data.userId, 128);
+    const targetUserId = sanitizeString(data.targetUserId || data.targetUid || data.userId, 128);
     const reason = sanitizeString(data.reason || data.notes, 500);
 
     if (!targetUserId || !reason) {
@@ -602,16 +749,23 @@ export const revokeVerification = onCall(
 
     const nowIso = new Date().toISOString();
     const reqRef = db.collection('verificationRequests').doc(targetUserId);
-    await reqRef.set({
-      id: targetUserId,
-      userId: targetUserId,
-      status: 'not_started',
-      identityDocType: 'national_id',
-      docs: {},
-      attempt: 0,
-      rejectionReason: `تم إلغاء التوثيق بقرار إداري: ${reason}`,
-      updatedAt: nowIso,
-    }, { merge: true });
+    // Atomic Revoke
+    await db.runTransaction(async (tx) => {
+      const reqSnap = await tx.get(reqRef);
+      if (reqSnap.data()?.status !== 'verified') {
+        throw new HttpsError('failed-precondition', 'الحساب غير موثق حالياً.');
+      }
+      tx.set(reqRef, {
+        id: targetUserId,
+        userId: targetUserId,
+        status: 'not_started',
+        identityDocType: 'national_id',
+        docs: {},
+        attempt: 0,
+        rejectionReason: `تم إلغاء التوثيق بقرار إداري: ${reason}`,
+        updatedAt: nowIso,
+      }, { merge: true });
+    });
 
     const userPayload = {
       verificationStatus: 'not_started',
@@ -672,8 +826,9 @@ export const getVerificationDocumentUrl = onCall(
     const callerEmail = request.auth!.token?.email || 'admin';
     const data = request.data || {};
 
-    const targetUserId = sanitizeString(data.targetUserId || data.userId, 128);
-    const docType = data.docType === 'driver_license' ? 'driver_license' : data.docType === 'identity' ? 'identity' : null;
+    const targetUserId = sanitizeString(data.targetUserId || data.targetUid || data.userId, 128);
+    const rawDoc = data.docType ?? data.docKey;
+    const docType = rawDoc === 'driver_license' ? 'driver_license' : rawDoc === 'identity' ? 'identity' : null;
 
     if (!targetUserId || !docType) {
       throw new HttpsError('invalid-argument', 'معرف المستخدم ونوع الوثيقة مطلوبان.');
@@ -705,9 +860,6 @@ export const getVerificationDocumentUrl = onCall(
       action: 'read',
       expires: expiresAtMs,
       responseDisposition: 'inline',
-      responseResponseHeaders: {
-        'Cache-Control': 'no-store, max-age=0',
-      },
     });
 
     // Mandatory Audit Trail for Every Single View
@@ -726,8 +878,10 @@ export const getVerificationDocumentUrl = onCall(
     return {
       success: true,
       signedUrl,
+      url: signedUrl,
       expiresAt: new Date(expiresAtMs).toISOString(),
       docType,
+      docKey: docType,
       quality: docItem.quality || null,
     };
   }
@@ -783,3 +937,37 @@ export const verifyCustomerIdentity = onCall(
     };
   }
 );
+
+// =============================================================================
+// 8. SCHEDULED CLEANUP: cleanupVerificationStaging
+// =============================================================================
+export const cleanupVerificationStaging = onSchedule(
+  {
+    region: FUNCTION_REGION,
+    schedule: 'every 24 hours',
+  },
+  async () => {
+    // 1. Delete expired sessions (ttl 5 mins, cleanup every 24h for > 1h old)
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const expiredSessions = await db.collection('verificationSessions')
+      .where('createdAt', '<', hourAgo)
+      .get();
+    await Promise.all(expiredSessions.docs.map(d => d.ref.delete()));
+
+    // 2. Delete verification_pending files for not_started/rejected requests > 7 days old
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const requestsSnap = await db.collection('verificationRequests')
+       .where('updatedAt', '<', sevenDaysAgo)
+       .get();
+    
+    const requests = requestsSnap.docs.filter(d => ['not_started', 'rejected'].includes(d.data().status));
+
+    const bucket = getStorage().bucket(DEFAULT_STORAGE_BUCKET);
+    for (const reqSnap of requests) {
+        const req = reqSnap.data();
+        await bucket.deleteFiles({ prefix: `verification_pending/${req.userId}/`, force: true }).catch(console.error);
+        await reqSnap.ref.update({ docs: {}, updatedAt: new Date().toISOString() }).catch(console.error);
+    }
+  }
+);
+
