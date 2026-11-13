@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
 import { MenuProvider } from './contexts/MenuContext';
@@ -9,50 +9,62 @@ import { DashboardRedirect, GuestOnly, RequireAuth } from './components/routing/
 import { SiteLayout } from './layouts/SiteLayout';
 import { useAdminAutoRedirect } from './hooks/useAdminAutoRedirect';
 import { useRoute, type ResolvedRoute } from './router';
-import { AboutPage } from './pages/AboutPage';
-import { AdminPage } from './pages/AdminPage';
-import { AuthPage } from './pages/AuthPage';
-import { BookingPage } from './pages/BookingPage';
-import { CarDetailsPage } from './pages/CarDetailsPage';
-import { CatalogPage } from './pages/CatalogPage';
 import { HomePage } from './pages/HomePage';
-import { NotFoundPage } from './pages/NotFoundPage';
-import { ProfilePage } from './pages/ProfilePage';
+import { SuspenseFallback } from './components/routing/Spinners';
+import { lazyWithRetry } from './utils/lazyWithRetry';
+
+const AboutPage = lazyWithRetry(() => import('./pages/AboutPage').then((m) => ({ default: m.AboutPage })));
+const AdminPage = lazyWithRetry(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
+const AuthPage = lazyWithRetry(() => import('./pages/AuthPage').then((m) => ({ default: m.AuthPage })));
+const BookingPage = lazyWithRetry(() => import('./pages/BookingPage').then((m) => ({ default: m.BookingPage })));
+const CarDetailsPage = lazyWithRetry(() => import('./pages/CarDetailsPage').then((m) => ({ default: m.CarDetailsPage })));
+const CatalogPage = lazyWithRetry(() => import('./pages/CatalogPage').then((m) => ({ default: m.CatalogPage })));
+const NotFoundPage = lazyWithRetry(() => import('./pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
+const ProfilePage = lazyWithRetry(() => import('./pages/ProfilePage').then((m) => ({ default: m.ProfilePage })));
+const VerifyContractPage = lazyWithRetry(() => import('./pages/VerifyContractPage').then((m) => ({ default: m.VerifyContractPage })));
 
 // Mandatory email verification for customer accounts created on/after 2026-09-19
 const EMAIL_VERIFICATION_CUTOFF_DATE = new Date('2026-09-19T00:00:00.000Z').getTime();
 
 /** Route name -> page. Add a new page here (and in the route table in router.tsx). */
 function renderPage(route: ResolvedRoute): React.ReactNode {
-  switch (route.name) {
-    case 'home':
-      return <HomePage />;
-    case 'cars':
-      return <CatalogPage />;
-    case 'car':
-      return <CarDetailsPage id={route.params.id} />;
-    case 'book':
-      return <BookingPage id={route.params.id} />;
-    case 'about':
-      return <AboutPage />;
-    case 'login':
-    case 'register':
-      return (
-        <GuestOnly>
-          <AuthPage mode={route.name} />
-        </GuestOnly>
-      );
-    case 'profile':
-      return (
-        <RequireAuth>
-          <ProfilePage />
-        </RequireAuth>
-      );
-    case 'dashboard':
-      return <DashboardRedirect />;
-    default:
-      return <NotFoundPage />;
-  }
+  return (
+    <Suspense fallback={<SuspenseFallback />}>
+      {(() => {
+        switch (route.name) {
+          case 'home':
+            return <HomePage />;
+          case 'cars':
+            return <CatalogPage />;
+          case 'car':
+            return <CarDetailsPage id={route.params.id} />;
+          case 'book':
+            return <BookingPage id={route.params.id} />;
+          case 'about':
+            return <AboutPage />;
+          case 'login':
+          case 'register':
+            return (
+              <GuestOnly>
+                <AuthPage mode={route.name} />
+              </GuestOnly>
+            );
+          case 'profile':
+            return (
+              <RequireAuth>
+                <ProfilePage />
+              </RequireAuth>
+            );
+          case 'dashboard':
+            return <DashboardRedirect />;
+          case 'verifyContract':
+            return <VerifyContractPage />;
+          default:
+            return <NotFoundPage />;
+        }
+      })()}
+    </Suspense>
+  );
 }
 
 function MainAppContent() {
@@ -63,7 +75,11 @@ function MainAppContent() {
 
   // The staff dashboard has its own full-screen UI and skips the customer gates below.
   if (route.name === 'admin') {
-    return <AdminPage pathname={route.pathname} />;
+    return (
+      <Suspense fallback={<SuspenseFallback />}>
+        <AdminPage pathname={route.pathname} />
+      </Suspense>
+    );
   }
 
   const isAccountNewerThanCutoff = user?.createdAt

@@ -1,106 +1,99 @@
 /**
- * Shaker Car Rental — Serverless Cloud Functions (asia-south1)
- * 
- * Modular, hardened server-side authority endpoints:
- * - RBAC & Claims Authority (Auth Token Custom Claims)
- * - Booking Engine & Damascus Timezone Pricing
- * - Atomic Payment & Concurrency Transactions
- * - Dual-ownership Contract HMAC Verification
- * - Identity Verification & Privacy Guard
- * - Telegram Webhook & Alerts with Idempotency
- * - Asynchronous Storage Media Signature Validation
+ * Cloud Functions for Shaker Car Rental Platform
+ * Server-Side Business Logic, Atomic Transactions, Identity Verification & RBAC
  */
 
-import { initializeApp, getApps } from 'firebase-admin/app';
+import { getApps, initializeApp } from 'firebase-admin/app';
 
-// Initialize Firebase Admin globally once
+// Initialize Firebase Admin SDK
 if (!getApps().length) {
   initializeApp();
 }
 
-// 1. Booking Functions
+// ==========================================
+// 1. Booking & Availability Functions
+// ==========================================
 export {
   createBookingSecure,
   updateBookingStatusSecure,
-  deleteBookingSecure,
   sendBookingNotification,
   getVehicleAvailability,
+  deleteBookingSecure,
 } from './bookingFunctions';
 
-// 2. Contract Functions
+// ==========================================
+// 2. Identity & Document Verification Functions
+// ==========================================
 export {
-  generateRentalContractPdf,
-  verifyContractCode,
-} from './contractFunctions';
-
-// 3. Settings & Pricing Functions
-export {
-  calculateDynamicPricing,
-  updateSettingsSecure,
-} from './settingsFunctions';
-
-// 4. Overdue Rental Alerts Function
-export {
-  checkOverdueRentals,
-} from './fleetFunctions';
-
-// 6. User Management & Authorization Functions
-export {
-  setUserRole,
-  toggleUserAccountStatus,
-  deleteUserAccount,
-  syncMyRole,
-} from './userManagement';
-
-// 7. Identity & Account Verification Functions
-export {
-  verifyCustomerIdentity,
   initiateVerificationSession,
   submitVerificationDocument,
   submitVerificationRequest,
   reviewVerification,
   revokeVerification,
   getVerificationDocumentUrl,
+  verifyCustomerIdentity,
   cleanupVerificationStaging,
 } from './verifyCustomerIdentity';
 
-// 8. Auth Lifecycle Trigger
+// ==========================================
+// 3. User Management & Lifecycle Functions (RBAC)
+// ==========================================
+export {
+  setUserRole,
+  toggleUserAccountStatus,
+  deleteUserAccount,
+  syncMyRole,
+  setAdminMfaRequirement,
+} from './userManagement';
+
 export {
   beforeUserCreatedHandler,
 } from './userLifecycle';
 
-// 9. Telegram Bot Integration
+// ==========================================
+// 4. Fleet Management Functions (Admin Only)
+// ==========================================
 export {
-  sendTelegramBookingAlert,
-} from './sendTelegramBookingAlert';
-export {
-  telegramWebhook,
-} from './telegramWebhook';
+  addVehicle,
+  updateVehicle,
+  deleteVehicle,
+  getVehiclesInternalDetails,
+} from './fleetFunctions';
 
-// 10. Cloud Storage Signature Inspector
+// ==========================================
+// 5. Rental Contract Generation Functions
+// ==========================================
+export {
+  generateRentalContractPdf,
+  verifyContractCode,
+} from './contractFunctions';
+
+// ==========================================
+// 6. Settings & Pricing Functions
+// ==========================================
+export {
+  calculateDynamicPricing,
+  updateSettingsSecure,
+} from './settingsFunctions';
+
+// ==========================================
+// 7. Storage & Telegram Integrations
+// ==========================================
 export {
   validateUploadedFileSignature,
 } from './validateUploadedFileSignature';
 
-// Helper re-exports for testing and script utilities
 export {
-  applyBookingStatusChange,
-  ALLOWED_TRANSITIONS,
-  resolveBookingDocument,
-  resolveVehicleDocument,
-} from './bookingHelpers';
+  sendTelegramBookingAlert,
+} from './sendTelegramBookingAlert';
 
 export {
-  isCallerStaff,
-  isCallerAdmin,
-  isCallerSuperAdmin,
-  canManageUserRole,
-  canManageAccountLifecycle,
-  getUserRoleFromClaims,
-} from './authz';
+  telegramWebhook,
+} from './telegramWebhook';
 
+// ==========================================
+// 8. Scheduled Automated Tasks
+// ==========================================
 export {
-  calculateRentalDaysDamascus,
-  calculateRentalPriceServer,
-  parseDamascusDateTime,
-} from './pricingServer';
+  checkOverdueRentals,
+} from './overdueRentals';

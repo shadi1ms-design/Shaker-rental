@@ -2,7 +2,6 @@ import {
   Vehicle,
   Booking,
   Customer,
-  VehicleInspection,
   AppSettings,
   BookingStatus,
   AuditLog,
@@ -19,6 +18,7 @@ import { auth, db, functions, isFirebaseConfigured, firestoreDatabaseId, getDb a
 import { httpsCallable } from 'firebase/functions';
 import {
   collection,
+  collectionGroup,
   doc,
   getDocs,
   getDoc,
@@ -27,25 +27,26 @@ import {
   deleteDoc,
   query,
   where,
+  limit,
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
 import { functionsService } from './functionsService';
 import { handleFirestoreError } from '../utils/firebaseErrorHandler';
-import { todayLocalISO } from '../utils/dateUtils';
+import { isStaffClaims } from '../utils/roles';
+import { applyDerivedVehicleStatus, computeActiveRentedVehicleIds } from '../utils/vehicleStatus';
 import { Firestore } from 'firebase/firestore';
 
 const getDb = (): Firestore => {
   return getFirebaseDb();
 };
+
 // Storage keys for local persistence (STRICTLY NON-SENSITIVE / PUBLIC DATA ONLY)
 export const STORAGE_KEYS = {
   // Public Fleet Data (Safe for fast initial rendering & offline catalog browsing)
   VEHICLES: 'shaker_vehicles_v1',
   // Public Business Configuration (Company name, public phone, insurance rates)
   SETTINGS: 'shaker_settings_v1',
-  // Vehicle condition checklists (fuel level, odometer, vehicle exterior/interior condition)
-  INSPECTIONS: 'shaker_inspections_v1',
   // Non-sensitive Operational UI Notifications
   NOTIFICATIONS: 'shaker_notifications_v1',
   // Sequence counter
@@ -56,7 +57,6 @@ export const STORAGE_KEYS = {
 const PERMITTED_STORAGE_KEYS = new Set<string>([
   STORAGE_KEYS.VEHICLES,
   STORAGE_KEYS.SETTINGS,
-  STORAGE_KEYS.INSPECTIONS,
   STORAGE_KEYS.NOTIFICATIONS,
   STORAGE_KEYS.BOOKING_COUNTER,
 ]);
@@ -111,6 +111,7 @@ function setLocalItem<T>(key: string, data: T): void {
  * Permanently purges all sensitive customer, booking, auth, user, and financial data from browser storage
  */
 export function purgeSensitiveStorage(): void {
+  if (typeof localStorage === 'undefined') return;
   try {
     // 1. Explicitly remove all known sensitive keys
     const knownSensitiveKeys = [
@@ -176,7 +177,7 @@ async function safeFirestore<T>(promise: Promise<T>, timeoutMs = 8000): Promise<
 // High-performance in-memory cache to eliminate redundant network roundtrips
 // Sensitive collections (bookings, customers, users, payments) live in volatile RAM only
 interface MemoryCache {
-  vehicles: { data: Vehicle[]; timestamp: number } | null;
+  vehicles: { data: Vehicle[]; timestamp: number; version: number } | null;
   bookings: { data: Booking[]; timestamp: number } | null;
   settings: { data: AppSettings; timestamp: number } | null;
   users: { data: FirestoreUser[]; timestamp: number } | null;
@@ -197,12 +198,39 @@ const memoryCache: MemoryCache = {
 
 const CACHE_TTL_MS = 15000; // 15 seconds TTL for instant responsiveness
 
+let vehiclesVersion = 0;
+
+export function updateVehiclesCache(vehicles: Vehicle[]): { data: Vehicle[]; timestamp: number; version: number } {
+  vehiclesVersion++;
+  const now = Date.now();
+  try {
+    Object.defineProperties(vehicles, {
+      _version: { value: vehiclesVersion, writable: true, configurable: true, enumerable: false },
+      _timestamp: { value: now, writable: true, configurable: true, enumerable: false },
+    });
+  } catch {}
+  const cacheEntry = { data: vehicles, timestamp: now, version: vehiclesVersion };
+  memoryCache.vehicles = cacheEntry;
+  return cacheEntry;
+}
+
+export { computeActiveRentedVehicleIds };
+
+export function stripSensitiveVehicleFields(vehicles: Vehicle[]): Vehicle[] {
+  return (vehicles || []).map((v) => ({
+    ...v,
+    plateNumber: '',
+    currentMileage: 0,
+  }));
+}
+
 // Initial bootstrap check: Purges sensitive data and initializes public catalogs only
 function initStorage() {
+  if (typeof localStorage === 'undefined') return;
   purgeSensitiveStorage();
 
   if (!localStorage.getItem(STORAGE_KEYS.VEHICLES)) {
-    setLocalItem(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
+    setLocalItem(STORAGE_KEYS.VEHICLES, stripSensitiveVehicleFields(INITIAL_VEHICLES));
   }
   if (!localStorage.getItem(STORAGE_KEYS.SETTINGS)) {
     setLocalItem(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
@@ -240,39 +268,15 @@ function isStaffOrAdmin(): boolean {
   if (!auth?.currentUser) return false;
 
   // 1. Check asynchronously refreshed module-level token claims cache
-  if (cachedUserClaims) {
-    const role = (cachedUserClaims.role || '').toString().toLowerCase().trim();
-    if (
-      cachedUserClaims.super_admin ||
-      cachedUserClaims.superAdmin ||
-      cachedUserClaims.admin ||
-      cachedUserClaims.employee ||
-      cachedUserClaims.staff ||
-      role === 'admin' ||
-      role === 'super_admin' ||
-      role === 'employee' ||
-      role === 'staff'
-    ) {
-      return true;
-    }
+  if (cachedUserClaims && isStaffClaims(cachedUserClaims)) {
+    return true;
   }
 
   // 2. Direct synchronous check on reloadUserInfo.customAttributes from currentUser instance
   const claims = (auth.currentUser as unknown as { reloadUserInfo?: { customAttributes?: unknown } })?.reloadUserInfo?.customAttributes;
   try {
     const parsedClaims = claims ? (typeof claims === 'string' ? JSON.parse(claims) : claims) : {};
-    const role = (parsedClaims?.role || '').toString().toLowerCase().trim();
-    return Boolean(
-      parsedClaims?.super_admin ||
-      parsedClaims?.superAdmin ||
-      parsedClaims?.admin ||
-      parsedClaims?.employee ||
-      parsedClaims?.staff ||
-      role === 'admin' ||
-      role === 'super_admin' ||
-      role === 'employee' ||
-      role === 'staff'
-    );
+    return isStaffClaims(parsedClaims);
   } catch {
     return false;
   }
@@ -285,7 +289,7 @@ export const dataService = {
   getCachedVehicles(): Vehicle[] {
     if (memoryCache.vehicles?.data) return memoryCache.vehicles.data;
     const local = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
-    memoryCache.vehicles = { data: local, timestamp: Date.now() };
+    updateVehiclesCache(local);
     return local;
   },
 
@@ -352,16 +356,11 @@ export const dataService = {
   },
 
   async updateSettings(settingsUpdates: Partial<AppSettings>): Promise<AppSettings> {
-    const current = await this.getSettings();
-    const updated: AppSettings = {
-      ...current,
-      ...settingsUpdates,
-      updatedAt: new Date().toISOString(),
-    };
-
-    setLocalItem(STORAGE_KEYS.SETTINGS, updated);
-    memoryCache.settings = { data: updated, timestamp: Date.now() };
-    this.logAudit('تحديث إعدادات الشركة والنظام والأسعار', 'settings', 'global');
+    const res = await functionsService.updateSettingsSecure(settingsUpdates);
+    if (!res.success) {
+      throw new Error(res.error || 'فشل تحديث الإعدادات عبر الخادم.');
+    }
+    const updated = await this.getSettings(true);
     return updated;
   },
 
@@ -400,68 +399,7 @@ export const dataService = {
     return Array.from(map.values());
   },
 
-  async ensureVehiclesInFirestore(): Promise<{ total: number; seeded: number; remoteCount: number }> {
-    const localVehicles = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
-    if (!isFirebaseConfigured || !db) {
-      return { total: localVehicles.length, seeded: 0, remoteCount: 0 };
-    }
 
-    try {
-      const col = collection(getDb(), 'vehicles');
-      const snap = await safeFirestore(getDocs(col), 3500);
-      const remoteDocs = snap.docs.map((d) => d.data() as Vehicle).filter((v) => !v.isDeleted);
-      const remoteIds = new Set(remoteDocs.map((d) => d.id));
-
-      const missingToSeed: Vehicle[] = [];
-
-      // Check all initial seed vehicles
-      for (const seedV of INITIAL_VEHICLES) {
-        if (!remoteIds.has(seedV.id)) {
-          const localV = localVehicles.find((lv) => lv.id === seedV.id);
-          missingToSeed.push(localV || seedV);
-        }
-      }
-
-      // Check any local custom vehicles
-      for (const localV of localVehicles) {
-        if (!remoteIds.has(localV.id) && !missingToSeed.some((m) => m.id === localV.id)) {
-          missingToSeed.push(localV);
-        }
-      }
-
-      if (missingToSeed.length > 0) {
-        await Promise.allSettled(
-          missingToSeed.map(async (v) => {
-            // plateNumber / currentMileage are internal-only (rules reject them on the public doc)
-            const { plateNumber, currentMileage, ...publicFields } = v;
-            await safeFirestore(setDoc(doc(getDb(), 'vehicles', v.id), publicFields, { merge: true }), 2500);
-            if (plateNumber || currentMileage) {
-              await safeFirestore(
-                setDoc(
-                  doc(getDb(), 'vehicles', v.id, 'internal', 'details'),
-                  { plateNumber: plateNumber || '', currentMileage: currentMileage || 0 },
-                  { merge: true }
-                ),
-                2500
-              );
-            }
-          })
-        );
-      }
-
-      const merged = this.mergeVehicles(remoteDocs, [...localVehicles, ...missingToSeed]);
-      setLocalItem(STORAGE_KEYS.VEHICLES, merged);
-
-      return {
-        total: merged.length,
-        seeded: missingToSeed.length,
-        remoteCount: remoteDocs.length + missingToSeed.length,
-      };
-    } catch (err) {
-      console.warn('ensureVehiclesInFirestore note:', err);
-      return { total: localVehicles.length, seeded: 0, remoteCount: 0 };
-    }
-  },
 
   async ensureBookingsInFirestore(): Promise<{ total: number; seeded: number; remoteCount: number }> {
     if (!isFirebaseConfigured || !db) {
@@ -513,10 +451,15 @@ export const dataService = {
   },
 
   /**
-   * Fetches sensitive vehicle internal details (plateNumber, mileage)
+   * Fetches sensitive vehicle internal details (plateNumber, mileage, oil change tracking)
    * stored in vehicles/{id}/internal/details subcollection. Restricted by security rules to staff/admin.
    */
-  async fetchVehicleInternalDetails(vehicleId: string): Promise<{ plateNumber?: string; currentMileage?: number } | null> {
+  async fetchVehicleInternalDetails(vehicleId: string): Promise<{
+    plateNumber?: string;
+    currentMileage?: number;
+    lastOilChangeMileage?: number;
+    oilChangeIntervalKm?: number;
+  } | null> {
     if (!isFirebaseConfigured || !db || !isStaffOrAdmin()) return null;
     try {
       const cleanId = (vehicleId || '').trim();
@@ -524,7 +467,12 @@ export const dataService = {
       const internalDocRef = doc(getDb(), 'vehicles', cleanId, 'internal', 'details');
       const snap = await safeFirestore(getDoc(internalDocRef), 2000);
       if (snap.exists()) {
-        return snap.data() as { plateNumber?: string; currentMileage?: number };
+        return snap.data() as {
+          plateNumber?: string;
+          currentMileage?: number;
+          lastOilChangeMileage?: number;
+          oilChangeIntervalKm?: number;
+        };
       }
     } catch {
       // Gracefully silent if not authorized (customers/visitors)
@@ -542,21 +490,89 @@ export const dataService = {
         ...v,
         plateNumber: '',
         currentMileage: 0,
+        _internalDetailsLoaded: false,
       }));
     }
 
+    if (vehicles.length === 0) return [];
+
     try {
+      const detailsMap = new Map<
+        string,
+        {
+          plateNumber?: string;
+          currentMileage?: number;
+          lastOilChangeMileage?: number;
+          oilChangeIntervalKm?: number;
+        }
+      >();
+
+      let batchedSuccess = false;
+      if (isFirebaseConfigured && db) {
+        try {
+          const groupQuery = collectionGroup(getDb(), 'details');
+          const snap = await safeFirestore(getDocs(groupQuery), 3000);
+          snap.docs.forEach((d) => {
+            const vId = d.ref.parent?.parent?.id;
+            if (vId) {
+              detailsMap.set(vId, d.data() as {
+                plateNumber?: string;
+                currentMileage?: number;
+                lastOilChangeMileage?: number;
+                oilChangeIntervalKm?: number;
+              });
+            }
+          });
+          batchedSuccess = true;
+        } catch {
+          batchedSuccess = false;
+        }
+      }
+
+      if (batchedSuccess) {
+        return vehicles.map((v) => {
+          const internal = detailsMap.get(v.id);
+          if (internal) {
+            const currentMileage = internal.currentMileage ?? v.currentMileage ?? 0;
+            return {
+              ...v,
+              plateNumber: internal.plateNumber ?? v.plateNumber ?? '',
+              currentMileage,
+              lastOilChangeMileage: internal.lastOilChangeMileage ?? v.lastOilChangeMileage ?? currentMileage,
+              oilChangeIntervalKm: internal.oilChangeIntervalKm ?? v.oilChangeIntervalKm ?? 5000,
+              _internalDetailsLoaded: true,
+            };
+          }
+          return {
+            ...v,
+            lastOilChangeMileage: v.lastOilChangeMileage ?? v.currentMileage ?? 0,
+            oilChangeIntervalKm: v.oilChangeIntervalKm ?? 5000,
+            _internalDetailsLoaded: true,
+          };
+        });
+      }
+
+      // Fallback: per-vehicle fetch
       const enriched = await Promise.all(
         vehicles.map(async (v) => {
           const internal = await this.fetchVehicleInternalDetails(v.id);
           if (internal) {
+            const currentMileage = internal.currentMileage ?? v.currentMileage ?? 0;
             return {
               ...v,
               plateNumber: internal.plateNumber ?? v.plateNumber ?? '',
-              currentMileage: internal.currentMileage ?? v.currentMileage ?? 0,
+              currentMileage,
+              lastOilChangeMileage: internal.lastOilChangeMileage ?? v.lastOilChangeMileage ?? currentMileage,
+              oilChangeIntervalKm: internal.oilChangeIntervalKm ?? v.oilChangeIntervalKm ?? 5000,
+              _internalDetailsLoaded: true,
             };
           }
-          return v;
+          return {
+            ...v,
+            lastOilChangeMileage: v.lastOilChangeMileage ?? v.currentMileage ?? 0,
+            oilChangeIntervalKm: v.oilChangeIntervalKm ?? 5000,
+            _internalDetailsLoaded: true,
+          };
         })
       );
       return enriched;
@@ -571,6 +587,7 @@ export const dataService = {
       return memoryCache.vehicles.data;
     }
 
+    const startVersion = vehiclesVersion;
     const localVehicles = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
 
     if (isFirebaseConfigured && db) {
@@ -587,29 +604,18 @@ export const dataService = {
           })
           .filter((v) => !v.isDeleted);
 
-        const today = todayLocalISO();
         const bookings = memoryCache.bookings?.data || [];
-        const activeRentedIds = new Set(
-          bookings
-            .filter(
-              (b) =>
-                !b.isDeleted &&
-                (b.status === 'rented' ||
-                  (b.status === 'confirmed' && b.pickupDate <= today && b.returnDate >= today))
-            )
-            .map((b) => b.vehicleId)
-        );
-
-        const processed = docs.map((v) => {
-          if (v.status !== 'maintenance' && v.status !== 'inactive' && activeRentedIds.has(v.id)) {
-            return { ...v, status: 'rented' as const };
-          }
-          return v;
-        });
+        const processed = applyDerivedVehicleStatus(docs, bookings);
 
         const finalVehicles = await this.enrichVehiclesWithInternalDetails(processed);
-        setLocalItem(STORAGE_KEYS.VEHICLES, finalVehicles);
-        memoryCache.vehicles = { data: finalVehicles, timestamp: Date.now() };
+
+        // If a newer snapshot or update arrived while fetching, do not overwrite with stale fetch
+        if (vehiclesVersion > startVersion && memoryCache.vehicles?.data) {
+          return memoryCache.vehicles.data;
+        }
+
+        setLocalItem(STORAGE_KEYS.VEHICLES, stripSensitiveVehicleFields(finalVehicles));
+        updateVehiclesCache(finalVehicles);
         return finalVehicles;
       } catch (err: unknown) {
         const errObj = typeof err === 'object' && err !== null ? (err as { code?: string }) : null;
@@ -619,29 +625,17 @@ export const dataService = {
       }
     }
 
-    const today = todayLocalISO();
+    if (vehiclesVersion > startVersion && memoryCache.vehicles?.data) {
+      return memoryCache.vehicles.data;
+    }
+
     const bookings = memoryCache.bookings?.data || [];
-    const activeRentedIds = new Set(
+    const localProcessed = applyDerivedVehicleStatus(
+      localVehicles.filter((v) => !v.isDeleted),
       bookings
-        .filter(
-          (b) =>
-            !b.isDeleted &&
-            (b.status === 'rented' ||
-              (b.status === 'confirmed' && b.pickupDate <= today && b.returnDate >= today))
-        )
-        .map((b) => b.vehicleId)
     );
 
-    const localProcessed = localVehicles
-      .filter((v) => !v.isDeleted)
-      .map((v) => {
-        if (v.status !== 'maintenance' && v.status !== 'inactive' && activeRentedIds.has(v.id)) {
-          return { ...v, status: 'rented' as const };
-        }
-        return v;
-      });
-
-    memoryCache.vehicles = { data: localProcessed, timestamp: Date.now() };
+    updateVehiclesCache(localProcessed);
     return localProcessed;
   },
 
@@ -674,29 +668,12 @@ export const dataService = {
               })
               .filter((v) => !v.isDeleted);
 
-            const today = todayLocalISO();
             const bookings = memoryCache.bookings?.data || [];
-            const activeRentedIds = new Set(
-              bookings
-                .filter(
-                  (b) =>
-                    !b.isDeleted &&
-                    (b.status === 'rented' ||
-                      (b.status === 'confirmed' && b.pickupDate <= today && b.returnDate >= today))
-                )
-                .map((b) => b.vehicleId)
-            );
-
-            const processed = docs.map((v) => {
-              if (v.status !== 'maintenance' && v.status !== 'inactive' && activeRentedIds.has(v.id)) {
-                return { ...v, status: 'rented' as const };
-              }
-              return v;
-            });
+            const processed = applyDerivedVehicleStatus(docs, bookings);
 
             this.enrichVehiclesWithInternalDetails(processed).then((finalVehicles) => {
-              setLocalItem(STORAGE_KEYS.VEHICLES, finalVehicles);
-              memoryCache.vehicles = { data: finalVehicles, timestamp: Date.now() };
+              setLocalItem(STORAGE_KEYS.VEHICLES, stripSensitiveVehicleFields(finalVehicles));
+              updateVehiclesCache(finalVehicles);
               callback(finalVehicles);
             });
           } catch (procErr) {
@@ -727,18 +704,20 @@ export const dataService = {
     }
   },
 
-  async getVehicleById(id: string): Promise<Vehicle | null> {
+  async getVehicleById(id: string, options?: { forceRefresh?: boolean }): Promise<Vehicle | null> {
     const cleanId = (id || '').trim();
     if (!cleanId) return null;
 
-    const vehicles = await this.getVehicles();
-    const match = vehicles.find(
-      (v) =>
-        v.id === cleanId ||
-        v.id.toLowerCase() === cleanId.toLowerCase() ||
-        v.plateNumber === cleanId
-    );
-    if (match) return match;
+    if (!options?.forceRefresh) {
+      const vehicles = await this.getVehicles();
+      const match = vehicles.find(
+        (v) =>
+          v.id === cleanId ||
+          v.id.toLowerCase() === cleanId.toLowerCase() ||
+          v.plateNumber === cleanId
+      );
+      if (match) return match;
+    }
 
     if (isFirebaseConfigured && db) {
       try {
@@ -746,23 +725,32 @@ export const dataService = {
         const snap = await safeFirestore(getDoc(docRef), 2000);
         if (snap.exists()) {
           const v = { ...snap.data(), id: snap.id } as Vehicle;
+          let freshVehicle: Vehicle;
           if (isStaffOrAdmin()) {
             const internal = await this.fetchVehicleInternalDetails(v.id || cleanId);
-            if (internal) {
-              return {
-                ...v,
-                plateNumber: internal.plateNumber ?? v.plateNumber ?? '',
-                currentMileage: internal.currentMileage ?? v.currentMileage ?? 0,
-              };
-            }
-            return v;
+            const currentMileage = internal?.currentMileage ?? v.currentMileage ?? 0;
+            freshVehicle = {
+              ...v,
+              plateNumber: internal?.plateNumber ?? v.plateNumber ?? '',
+              currentMileage,
+              lastOilChangeMileage: internal?.lastOilChangeMileage ?? v.lastOilChangeMileage ?? currentMileage,
+              oilChangeIntervalKm: internal?.oilChangeIntervalKm ?? v.oilChangeIntervalKm ?? 5000,
+            };
           } else {
-            return {
+            freshVehicle = {
               ...v,
               plateNumber: '',
               currentMileage: 0,
             };
           }
+          const currentCached = this.getCachedVehicles();
+          const existingIdx = currentCached.findIndex((item) => item.id === cleanId);
+          if (existingIdx >= 0) {
+            currentCached[existingIdx] = freshVehicle;
+          } else {
+            currentCached.unshift(freshVehicle);
+          }
+          return freshVehicle;
         }
       } catch (err) {
         console.warn('getVehicleById note:', err);
@@ -776,148 +764,88 @@ export const dataService = {
     );
   },
 
-  async addVehicle(vehicleData: Omit<Vehicle, 'id'>): Promise<Vehicle> {
-    const id = `veh-${Date.now()}`;
-    const { plateNumber, currentMileage, ...publicVehicleFields } = vehicleData;
-    const newVehicle: Vehicle = {
-      ...publicVehicleFields,
-      plateNumber: plateNumber || '',
-      currentMileage: currentMileage || 0,
-      id,
-      isDeleted: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (isFirebaseConfigured && db) {
-      try {
-        // Save general public fields to parent doc (plateNumber & mileage excluded)
-        const publicDoc = {
-          ...publicVehicleFields,
-          id,
-          isDeleted: false,
-          createdAt: newVehicle.createdAt,
-          updatedAt: newVehicle.updatedAt,
-        };
-        await safeFirestore(setDoc(doc(getDb(), 'vehicles', id), publicDoc, { merge: true }), 2500);
-
-        // Save sensitive plate and mileage fields to vehicles/{id}/internal/details subcollection
-        await safeFirestore(
-          setDoc(
-            doc(getDb(), 'vehicles', id, 'internal', 'details'),
-            {
-              plateNumber: plateNumber || '',
-              currentMileage: currentMileage || 0,
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          ),
-          2500
-        );
-      } catch (err) {
-        console.warn('Firestore addVehicle error:', err);
-      }
+  async addVehicle(vehicleData: Omit<Vehicle, 'id'> & { id?: string }): Promise<Vehicle> {
+    const { id, ...data } = vehicleData;
+    const res = await functionsService.addVehicle({ id, vehicleData: data });
+    if (!res.success || !res.data?.id) {
+      throw new Error(res.error || 'فشل إضافة السيارة عبر الخادم.');
     }
-
-    const current = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
-    setLocalItem(STORAGE_KEYS.VEHICLES, [newVehicle, ...current]);
-    this.logAudit(`إضافة سيارة جديدة: ${newVehicle.brand} ${newVehicle.model}`, 'vehicles', id);
+    const newVehicle = await this.getVehicleById(res.data.id, { forceRefresh: true });
+    if (!newVehicle) {
+      const fallbackVehicle: Vehicle = {
+        id: res.data.id,
+        brand: data.brand,
+        model: data.model,
+        year: data.year,
+        color: data.color,
+        category: data.category,
+        seats: data.seats,
+        transmission: data.transmission,
+        fuelType: data.fuelType,
+        dailyPrice: data.dailyPrice,
+        plateNumber: data.plateNumber,
+        currentMileage: data.currentMileage,
+        lastOilChangeMileage: data.lastOilChangeMileage ?? data.currentMileage ?? 0,
+        oilChangeIntervalKm: data.oilChangeIntervalKm ?? 5000,
+        status: data.status || 'available',
+        imageUrl: data.imageUrl,
+        images: data.images || [data.imageUrl],
+        features: data.features || [],
+        description: data.description || '',
+      };
+      const cached = this.getCachedVehicles();
+      cached.unshift(fallbackVehicle);
+      return fallbackVehicle;
+    }
     return newVehicle;
   },
 
   async updateVehicle(id: string, updates: Partial<Vehicle>): Promise<Vehicle> {
-    const cleanId = (id || '').trim();
-    let current = getLocalItem<Vehicle[]>(STORAGE_KEYS.VEHICLES, INITIAL_VEHICLES);
-    let index = current.findIndex(
-      (v) =>
-        v.id === cleanId ||
-        v.id.toLowerCase() === cleanId.toLowerCase() ||
-        v.plateNumber === cleanId
-    );
-
-    if (index === -1) {
-      const seed = INITIAL_VEHICLES.find(
-        (v) => v.id === cleanId || v.id.toLowerCase() === cleanId.toLowerCase()
-      );
-      if (seed) {
-        current = [seed, ...current];
-        index = 0;
-      }
+    const res = await functionsService.updateVehicle({ id, updates });
+    if (!res.success) {
+      throw new Error(res.error || 'فشل تحديث بيانات السيارة عبر الخادم.');
     }
 
-    if (index === -1) {
-      if (isFirebaseConfigured && db) {
-        try {
-          const snap = await safeFirestore(getDoc(doc(getDb(), 'vehicles', cleanId)), 2000);
-          if (snap.exists()) {
-            const v = snap.data() as Vehicle;
-            current = [v, ...current];
-            index = 0;
-          }
-        } catch {}
-      }
+    const resVehicle = res.data?.vehicle as Vehicle | undefined;
+
+    let updated = await this.getVehicleById(id, { forceRefresh: true });
+    if (!updated) {
+      // Retry once with forceRefresh if reading failed
+      updated = await this.getVehicleById(id, { forceRefresh: true });
     }
 
-    if (index === -1) throw new Error(`السيارة (${cleanId}) غير موجودة`);
-
-    const updated: Vehicle = {
-      ...current[index],
-      ...updates,
-      updatedAt: new Date().toISOString(),
-    };
-    current[index] = updated;
-    setLocalItem(STORAGE_KEYS.VEHICLES, current);
-
-    if (isFirebaseConfigured && db) {
-      try {
-        const { plateNumber, currentMileage, ...publicUpdates } = updates;
-
-        // Update public vehicle document
-        if (Object.keys(publicUpdates).length > 0) {
-          await safeFirestore(
-            setDoc(doc(getDb(), 'vehicles', updated.id), { ...publicUpdates, updatedAt: updated.updatedAt }, { merge: true }),
-            3000
-          );
-        }
-
-        // Update sensitive fields in vehicles/{id}/internal/details subcollection
-        const hasInternalUpdates =
-          plateNumber !== undefined || currentMileage !== undefined;
-
-        if (hasInternalUpdates) {
-          const internalUpdates: Record<string, unknown> = { updatedAt: updated.updatedAt };
-          if (plateNumber !== undefined) internalUpdates.plateNumber = plateNumber;
-          if (currentMileage !== undefined) internalUpdates.currentMileage = currentMileage;
-
-          await safeFirestore(
-            setDoc(doc(getDb(), 'vehicles', updated.id, 'internal', 'details'), internalUpdates, { merge: true }),
-            3000
-          );
-        }
-      } catch (err) {
-        console.warn('Firestore updateVehicle error:', err);
-      }
+    const finalVehicle = updated || (resVehicle ? { ...resVehicle } : null);
+    if (!finalVehicle) {
+      throw new Error('تعذر جلب بيانات السيارة المحدثة.');
     }
 
-    const statusLabel =
-      updated.status === 'rented'
-        ? 'مؤجرة'
-        : updated.status === 'available'
-        ? 'متوفرة'
-        : updated.status === 'maintenance'
-        ? 'صيانة'
-        : updated.status;
-    this.logAudit(
-      `تحديث بيانات سيارة: ${updated.brand} ${updated.model} (الحالة: ${statusLabel})`,
-      'vehicles',
-      updated.id
-    );
-    return updated;
+    // Update memoryCache & localStorage together after successful save
+    const currentList = this.getCachedVehicles();
+    const existingIndex = currentList.findIndex((v) => v.id === id || v.id === finalVehicle.id);
+    let updatedList: Vehicle[];
+    if (existingIndex >= 0) {
+      updatedList = [...currentList];
+      updatedList[existingIndex] = { ...currentList[existingIndex], ...finalVehicle };
+    } else {
+      updatedList = [finalVehicle, ...currentList];
+    }
+
+    updateVehiclesCache(updatedList);
+    setLocalItem(STORAGE_KEYS.VEHICLES, stripSensitiveVehicleFields(updatedList));
+
+    return finalVehicle;
+  },
+
+  async recordVehicleOilChange(vehicleId: string, currentMileage: number): Promise<Vehicle> {
+    const safeMileage = Math.max(0, Math.round(Number(currentMileage) || 0));
+    return this.updateVehicle(vehicleId, { lastOilChangeMileage: safeMileage });
   },
 
   async deleteVehicle(id: string): Promise<void> {
-    await this.updateVehicle(id, { isDeleted: true });
-    this.logAudit(`حذف سيارة من الأسطول: ${id}`, 'vehicles', id);
+    const res = await functionsService.deleteVehicle({ id });
+    if (!res.success) {
+      throw new Error(res.error || 'فشل حذف السيارة عبر الخادم.');
+    }
   },
 
   // -------------------------------------------------------------
@@ -946,15 +874,19 @@ export const dataService = {
     return Array.from(map.values());
   },
 
-  async getBookings(forceRefresh = false): Promise<Booking[]> {
+  async getBookings(
+    forceRefresh = false,
+    options?: { limitCount?: number; pageSize?: number }
+  ): Promise<Booking[]> {
     if (!forceRefresh && memoryCache.bookings && Date.now() - memoryCache.bookings.timestamp < CACHE_TTL_MS) {
       return memoryCache.bookings.data;
     }
 
     if (isFirebaseConfigured && db && isStaffOrAdmin()) {
       try {
-        const col = collection(getDb(), 'bookings');
-        const snap = await safeFirestore(getDocs(col), 2500);
+        const fetchLimit = options?.limitCount || options?.pageSize || 200;
+        const q = query(collection(getDb(), 'bookings'), limit(fetchLimit));
+        const snap = await safeFirestore(getDocs(q), 2500);
         const remoteDocs = snap.docs.map((d) => {
           const data = d.data();
           const documentId = d.id;
@@ -1004,9 +936,9 @@ export const dataService = {
     }
 
     try {
-      const col = collection(getDb(), 'bookings');
+      const q = query(collection(getDb(), 'bookings'), limit(200));
       const unsubscribe = onSnapshot(
-        col,
+        q,
         (snap) => {
           try {
             const remoteDocs = snap.docs
@@ -1292,14 +1224,13 @@ export const dataService = {
   },
 
   /**
-   * Generates a unique sequential booking number: SHK-2026-XXXXXX
+   * Generates a unique sequential booking number ("1", "2"...)
    */
   async generateBookingNumber(): Promise<string> {
     const currentCounter = getLocalItem<number>(STORAGE_KEYS.BOOKING_COUNTER, 3);
     const nextNumber = currentCounter + 1;
     setLocalItem(STORAGE_KEYS.BOOKING_COUNTER, nextNumber);
-    const formatted = `SHK-2026-${String(nextNumber).padStart(6, '0')}`;
-    return formatted;
+    return String(nextNumber);
   },
 
   /**
@@ -1314,9 +1245,7 @@ export const dataService = {
     customerName: string;
     customerPhone: string;
     customerWhatsApp?: string;
-    customerNationalId?: string;
     customerAddress?: string;
-    customerLicenseNumber?: string;
     customerId?: string;
     customerEmail?: string;
     pickupDate: string;
@@ -1345,9 +1274,7 @@ export const dataService = {
           customerName: bookingData.customerName,
           customerPhone: bookingData.customerPhone,
           customerWhatsApp: bookingData.customerWhatsApp,
-          customerNationalId: bookingData.customerNationalId,
           customerAddress: bookingData.customerAddress,
-          customerLicenseNumber: bookingData.customerLicenseNumber,
           pickupDate: bookingData.pickupDate,
           pickupTime: bookingData.pickupTime,
           returnDate: bookingData.returnDate,
@@ -1387,9 +1314,7 @@ export const dataService = {
     customerName: string;
     customerPhone: string;
     customerWhatsApp?: string;
-    customerNationalId?: string;
     customerAddress?: string;
-    customerLicenseNumber?: string;
     customerId?: string;
     customerEmail?: string;
     pickupDate: string;
@@ -1475,7 +1400,7 @@ export const dataService = {
       vehicleId: bookingData.vehicleId,
     });
 
-    this.logAudit(`إنشاء حجز تجريبي: ${bookingNumber}`, 'bookings', id);
+
     return newBooking;
   },
 
@@ -1561,7 +1486,7 @@ export const dataService = {
       memoryCache.bookings.timestamp = Date.now();
     }
 
-    this.logAudit(`حذف حجز نهائياً من النظام: ${cleanId}`, 'bookings', cleanId);
+
     return true;
   },
 
@@ -1570,7 +1495,10 @@ export const dataService = {
   // -------------------------------------------------------------
   // Customers CRM
   // -------------------------------------------------------------
-  async getCustomers(forceRefresh = false): Promise<Customer[]> {
+  async getCustomers(
+    forceRefresh = false,
+    options?: { limitCount?: number; pageSize?: number }
+  ): Promise<Customer[]> {
     if (!forceRefresh && memoryCache.customers && Date.now() - memoryCache.customers.timestamp < CACHE_TTL_MS) {
       return memoryCache.customers.data;
     }
@@ -1578,8 +1506,9 @@ export const dataService = {
     // Only query Firestore customers if user is signed in as staff or admin
     if (isFirebaseConfigured && db && isStaffOrAdmin()) {
       try {
-        const col = collection(getDb(), 'customers');
-        const snap = await safeFirestore(getDocs(col), 2500);
+        const fetchLimit = options?.limitCount || options?.pageSize || 200;
+        const q = query(collection(getDb(), 'customers'), limit(fetchLimit));
+        const snap = await safeFirestore(getDocs(q), 2500);
         const remoteDocs = snap.docs.map(d => d.data() as Customer);
 
         memoryCache.customers = { data: remoteDocs, timestamp: Date.now() };
@@ -1607,8 +1536,6 @@ export const dataService = {
         fullName: booking.customerName,
         phone: booking.customerPhone,
         whatsapp: booking.customerWhatsApp,
-        nationalId: booking.customerNationalId || '',
-        drivingLicense: booking.customerLicenseNumber || '',
         address: booking.customerAddress || '',
         totalRentals: 1,
         totalSpending: bookingSpending,
@@ -1619,8 +1546,6 @@ export const dataService = {
       const bookingSpending = ['confirmed', 'rented', 'completed'].includes(booking.status) ? (booking.totalPrice || 0) : 0;
       customer.totalRentals = (customer.totalRentals || 0) + 1;
       customer.totalSpending = (customer.totalSpending || 0) + bookingSpending;
-      if (booking.customerNationalId && !customer.nationalId) customer.nationalId = booking.customerNationalId;
-      if (booking.customerLicenseNumber && !customer.drivingLicense) customer.drivingLicense = booking.customerLicenseNumber;
       if (booking.customerAddress && !customer.address) customer.address = booking.customerAddress;
     }
 
@@ -1676,7 +1601,7 @@ export const dataService = {
     // Update in-memory cache ONLY
     memoryCache.customers = { data: customers, timestamp: Date.now() };
 
-    this.logAudit(`تعديل بيانات العميل: ${updated.fullName}`, 'customers', id);
+
     return updated;
   },
 
@@ -1806,27 +1731,6 @@ export const dataService = {
   },
 
 
-
-  // -------------------------------------------------------------
-  // Vehicle Inspection
-  // -------------------------------------------------------------
-  async getInspections(): Promise<VehicleInspection[]> {
-    return getLocalItem<VehicleInspection[]>(STORAGE_KEYS.INSPECTIONS, []);
-  },
-
-  async recordInspection(inspection: Omit<VehicleInspection, 'id' | 'createdAt'>): Promise<VehicleInspection> {
-    const id = `insp-${Date.now()}`;
-    const newInspection: VehicleInspection = {
-      ...inspection,
-      id,
-      createdAt: new Date().toISOString(),
-    };
-
-    const current = getLocalItem<VehicleInspection[]>(STORAGE_KEYS.INSPECTIONS, []);
-    setLocalItem(STORAGE_KEYS.INSPECTIONS, [newInspection, ...current]);
-    this.logAudit(`تسجيل فحص استلام/تسليم للسيارة ${inspection.vehicleId}`, 'inspections', id);
-    return newInspection;
-  },
 
   // -------------------------------------------------------------
   // Notifications
@@ -1961,36 +1865,11 @@ export const dataService = {
   // -------------------------------------------------------------
   // Audit Logs
   // -------------------------------------------------------------
-  logAudit(action: string, entity: string, entityId: string, details?: string) {
-    const current = memoryCache.auditLogs?.data || [];
-    const isStaff = isStaffOrAdmin();
-    const currentUser = auth?.currentUser;
-    const actorUid = currentUser?.uid || null;
-    const actorEmail = currentUser?.email || null;
-    const actorType: 'customer' | 'staff' | 'guest' | 'system' = isStaff
-      ? 'staff'
-      : actorUid
-      ? 'customer'
-      : 'guest';
 
-    const newLog: AuditLog = {
-      id: `audit-${Date.now()}`,
-      user: actorEmail || (actorType === 'staff' ? 'مدير النظام (admin)' : 'زائر'),
-      actorUid,
-      actorEmail,
-      actorType,
-      action,
-      entity,
-      entityId,
-      timestamp: new Date().toISOString(),
-      details,
-    };
-    memoryCache.auditLogs = { data: [newLog, ...current].slice(0, 100), timestamp: Date.now() };
-  },
 
-  getAuditLogs(): AuditLog[] {
-    return memoryCache.auditLogs?.data || [];
-  },
+
+
+
 
   // Status helper
   getStatusLabel(status: BookingStatus): string {
@@ -2103,15 +1982,19 @@ export const dataService = {
   /**
    * جلب قائمة المستخدمين بالكامل من Firestore لعرضها في لوحة تحكم الإدارة
    */
-  async getAllUsers(forceRefresh = false): Promise<FirestoreUser[]> {
+  async getAllUsers(
+    forceRefresh = false,
+    options?: { limitCount?: number; pageSize?: number }
+  ): Promise<FirestoreUser[]> {
     if (!forceRefresh && memoryCache.users && Date.now() - memoryCache.users.timestamp < CACHE_TTL_MS) {
       return memoryCache.users.data;
     }
 
     if (isFirebaseConfigured && db) {
       try {
-        const usersCol = collection(getDb(), 'users');
-        const snap = await safeFirestore(getDocs(usersCol), 2500);
+        const fetchLimit = options?.limitCount || options?.pageSize || 200;
+        const q = query(collection(getDb(), 'users'), limit(fetchLimit));
+        const snap = await safeFirestore(getDocs(q), 2500);
 
         if (!snap.empty) {
           const users: FirestoreUser[] = [];
@@ -2150,6 +2033,23 @@ export const dataService = {
   },
 
   /**
+   * Fetch map of users by their IDs
+   */
+  async getUsersMapByIds(userIds: string[]): Promise<Record<string, FirestoreUser>> {
+    const cleanIds = Array.from(new Set((userIds || []).map((id) => id.trim()).filter(Boolean)));
+    if (cleanIds.length === 0) return {};
+
+    const allUsers = await this.getAllUsers();
+    const map: Record<string, FirestoreUser> = {};
+    for (const u of allUsers) {
+      if (cleanIds.includes(u.uid) || cleanIds.includes(u.id)) {
+        map[u.uid || u.id] = u;
+      }
+    }
+    return map;
+  },
+
+  /**
    * Fetch single user profile directly from Firestore
    */
   async getUserProfile(userId: string): Promise<FirestoreUser | null> {
@@ -2165,9 +2065,11 @@ export const dataService = {
             email: data.email || '',
             displayName: data.displayName || '',
             phone: data.phone || '',
+            address: data.address || '',
             role: data.role || 'customer',
             createdAt: data.createdAt || new Date().toISOString(),
             verificationStatus: (data.verificationStatus as VerificationStatus) || 'not_started',
+            verified: data.verified === true,
             verifiedAt: data.verifiedAt,
           };
         }
@@ -2178,6 +2080,108 @@ export const dataService = {
 
     const cached = memoryCache.users?.data?.find(u => u.id === userId || u.uid === userId);
     return cached || null;
+  },
+
+  /**
+   * Subscribe to real-time user profile changes for a specific user with auto-retry
+   */
+  subscribeToUserProfile(
+    userId: string,
+    callback: (profile: FirestoreUser | null) => void,
+    onError?: (err: unknown) => void
+  ): () => void {
+    const cleanId = (userId || '').trim();
+    if (!cleanId) {
+      callback(null);
+      return () => {};
+    }
+
+    if (!isFirebaseConfigured || !db) {
+      this.getUserProfile(cleanId).then(callback).catch(() => callback(null));
+      return () => {};
+    }
+
+    let activeUnsub: (() => void) | null = null;
+    let isCancelled = false;
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const startSubscription = () => {
+      if (isCancelled) return;
+      try {
+        const ref = doc(getDb(), 'users', cleanId);
+        activeUnsub = onSnapshot(
+          ref,
+          (snap) => {
+            if (isCancelled) return;
+            if (snap.exists()) {
+              const data = snap.data() as Partial<FirestoreUser>;
+              callback({
+                id: snap.id,
+                uid: snap.id,
+                email: data.email || '',
+                displayName: data.displayName || '',
+                phone: data.phone || '',
+                address: data.address || '',
+                role: data.role || 'customer',
+                createdAt: data.createdAt || new Date().toISOString(),
+                verificationStatus: (data.verificationStatus as VerificationStatus) || 'not_started',
+                verified: data.verified === true,
+                verifiedAt: data.verifiedAt,
+              });
+            } else {
+              callback(null);
+            }
+          },
+          async (err) => {
+            if (isCancelled) return;
+            console.warn('subscribeToUserProfile onSnapshot error:', err);
+            if (onError) onError(err);
+
+            if (retryCount < 3) {
+              retryCount++;
+              const delay = [1000, 2000, 4000][retryCount - 1] || 4000;
+              if (auth?.currentUser) {
+                try {
+                  await auth.currentUser.getIdToken(true);
+                } catch (tErr) {
+                  console.warn('Token refresh during profile retry warning:', tErr);
+                }
+              }
+              retryTimer = setTimeout(() => {
+                if (!isCancelled) startSubscription();
+              }, delay);
+            } else {
+              this.getUserProfile(cleanId).then(callback).catch(() => callback(null));
+            }
+          }
+        );
+      } catch (err) {
+        if (onError) onError(err);
+      }
+    };
+
+    startSubscription();
+
+    return () => {
+      isCancelled = true;
+      if (activeUnsub) activeUnsub();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  },
+
+  /**
+   * Update user profile fields in Firestore
+   */
+  async updateUserProfile(userId: string, updates: Partial<FirestoreUser>): Promise<void> {
+    if (!userId) return;
+    if (isFirebaseConfigured && db) {
+      const ref = doc(getDb(), 'users', userId);
+      await updateDoc(ref, {
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      });
+    }
   },
 
   /**
@@ -2235,7 +2239,7 @@ export const dataService = {
       localStorage.removeItem('shaker_demo_users_v1');
     } catch {}
 
-    this.logAudit(`تعديل دور المستخدم (${cleanUid}) إلى ${newRole}`, 'users', cleanUid);
+
   },
 
   async syncUserToFirestore(authUser: { uid: string; email: string; displayName: string; phone?: string; role: string; createdAt?: string }): Promise<void> {
@@ -2314,33 +2318,66 @@ export const dataService = {
       return () => {};
     }
 
-    try {
-      const ref = doc(getDb(), 'verificationRequests', cleanId);
-      const unsubscribe = onSnapshot(
-        ref,
-        (snap) => {
-          if (snap.exists()) {
-            const d = snap.data();
-            const req = {
-              ...d,
-              userId: snap.id,
-              submittedAt: d.submittedAt?.toDate ? d.submittedAt.toDate().toISOString() : d.submittedAt || null,
-              reviewedAt: d.reviewedAt?.toDate ? d.reviewedAt.toDate().toISOString() : d.reviewedAt || null,
-            } as VerificationRequest;
-            callback(req);
-          } else {
-            callback(null);
+    let activeUnsub: (() => void) | null = null;
+    let isCancelled = false;
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const startSubscription = () => {
+      if (isCancelled) return;
+      try {
+        const ref = doc(getDb(), 'verificationRequests', cleanId);
+        activeUnsub = onSnapshot(
+          ref,
+          (snap) => {
+            if (isCancelled) return;
+            if (snap.exists()) {
+              const d = snap.data();
+              const req = {
+                ...d,
+                userId: snap.id,
+                submittedAt: d.submittedAt?.toDate ? d.submittedAt.toDate().toISOString() : d.submittedAt || null,
+                reviewedAt: d.reviewedAt?.toDate ? d.reviewedAt.toDate().toISOString() : d.reviewedAt || null,
+              } as VerificationRequest;
+              callback(req);
+            } else {
+              callback(null);
+            }
+          },
+          async (err) => {
+            if (isCancelled) return;
+            console.warn('subscribeToVerificationRequest onSnapshot error:', err);
+
+            if (retryCount < 3) {
+              retryCount++;
+              const delay = [1000, 2000, 4000][retryCount - 1] || 4000;
+              if (auth?.currentUser) {
+                try {
+                  await auth.currentUser.getIdToken(true);
+                } catch (tErr) {
+                  console.warn('Token refresh during verification sub retry warning:', tErr);
+                }
+              }
+              retryTimer = setTimeout(() => {
+                if (!isCancelled) startSubscription();
+              }, delay);
+            } else {
+              this.getVerificationRequest(cleanId).then(callback).catch(() => callback(null));
+            }
           }
-        },
-        (err) => {
-          console.warn('subscribeToVerificationRequest error:', err);
-          this.getVerificationRequest(cleanId).then(callback).catch(() => callback(null));
-        }
-      );
-      return unsubscribe;
-    } catch {
-      return () => {};
-    }
+        );
+      } catch {
+        // Ignored
+      }
+    };
+
+    startSubscription();
+
+    return () => {
+      isCancelled = true;
+      if (activeUnsub) activeUnsub();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   },
 
   /**
@@ -2401,5 +2438,15 @@ export const dataService = {
     } catch {
       return () => {};
     }
+  },
+
+  clearCache(): void {
+    memoryCache.vehicles = null;
+    memoryCache.bookings = null;
+    memoryCache.settings = null;
+    memoryCache.users = null;
+    memoryCache.customers = null;
+    memoryCache.notifications = null;
+    memoryCache.auditLogs = null;
   },
 };

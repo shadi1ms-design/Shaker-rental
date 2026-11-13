@@ -46,3 +46,14 @@ export async function consumeRateLimit(
     }, { merge: true });
   });
 }
+
+export async function enforceRateLimit(
+  db: Firestore,
+  key: string,
+  max: number,
+  windowSeconds: number,
+  message = 'تم تجاوز الحد المسموح به من المحاولات. يرجى الانتظار قليلاً ثم المحاولة مجدداً.'
+): Promise<void> {
+  return consumeRateLimit(db, sanitizeRateLimitKey(key), max, windowSeconds * 1000, message);
+}
+

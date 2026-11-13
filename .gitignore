@@ -8,3 +8,4 @@ functions/lib/
 *.log
 .env*
 !.env.example
+!functions/.env.shaker-rentalcars

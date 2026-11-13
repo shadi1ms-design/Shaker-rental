@@ -7,7 +7,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 // Keep in sync with the Content-Security-Policy header in firebase.json (Firebase Hosting).
 const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; script-src 'self' https://apis.google.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.google.com/recaptcha/ https://www.google.com/recaptcha/enterprise/ https://www.recaptcha.net https://apis.google.com https://www.gstatic.com https://cloudfunctions.net https://*.cloudfunctions.net https://firebasestorage.googleapis.com https://content-firebaseappcheck.googleapis.com https://firebaseappcheck.googleapis.com https://firebaseinstallations.googleapis.com https://*.run.app https://storage.googleapis.com https://fcmregistrations.googleapis.com https://fcm.googleapis.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://www.googletagmanager.com; frame-src 'self' https://*.firebaseapp.com https://*.google.com https://www.google.com;";
+  "default-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; script-src 'self' https://apis.google.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.google.com/recaptcha/ https://www.google.com/recaptcha/enterprise/ https://www.recaptcha.net https://apis.google.com https://www.gstatic.com https://asia-south1-shaker-rentalcars.cloudfunctions.net https://firebasestorage.googleapis.com https://content-firebaseappcheck.googleapis.com https://firebaseappcheck.googleapis.com https://firebaseinstallations.googleapis.com https://*.run.app https://storage.googleapis.com https://fcmregistrations.googleapis.com https://fcm.googleapis.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://www.googletagmanager.com; frame-src 'self' https://shaker-rentalcars.firebaseapp.com https://www.google.com https://www.recaptcha.net;";
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
@@ -66,8 +66,8 @@ async function startServer() {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
       res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-      res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
-      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+      res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=()');
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
       res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
       res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
 

@@ -2,13 +2,17 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { FirestoreUser, VerificationRequest } from '../types';
 import { dataService } from '../services/dataService';
 import { functionsService } from '../services/functionsService';
+import { SearchInput } from './common/SearchInput';
+import { ADMIN_TAB_LABEL } from '../constants/adminNav';
 import { useAuth } from '../contexts/AuthContext';
+import { isStaffRole } from '../utils/roles';
+import { RoleBadge } from './common/RoleBadge';
+import { getVerificationState, VerificationAccountState } from '../utils/verification';
 import {
   Users,
   Shield,
   ShieldCheck,
   ShieldAlert,
-  Search,
   RefreshCw,
   Eye,
   CheckCircle2,
@@ -18,6 +22,7 @@ import {
   X,
   Lock,
   FileText,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface AdminUsersFilesViewProps {
@@ -39,7 +44,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
   // Users State
   const [users, setUsers] = useState<FirestoreUser[]>(() => dataService.getCachedUsers());
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [userRoleUpdating, setUserRoleUpdating] = useState<string | null>(null);
+  const [userStatusFilter, setUserStatusFilter] = useState<'all' | VerificationAccountState>('all');
 
   // Secure Document Viewer State (60s signed URL + watermark)
   const [viewingDoc, setViewingDoc] = useState<{
@@ -65,7 +70,6 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
   // Real-time subscription to verification requests
   useEffect(() => {
     if (!isAdmin && !isSuperAdmin) return;
-    setIsLoadingRequests(true);
     const unsubscribe = dataService.subscribeToAllVerificationRequests((reqs) => {
       setVerificationRequests(reqs);
       setIsLoadingRequests(false);
@@ -73,8 +77,29 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
     return () => unsubscribe();
   }, [isAdmin, isSuperAdmin]);
 
-  // Load all users for the "All Users" sub-tab
-  const loadUsers = async (forceRefresh = false) => {
+  const usersById = useMemo(() => {
+    const map = new Map<string, FirestoreUser>();
+    for (const u of users) {
+      if (u.uid) map.set(u.uid, u);
+      if (u.id) map.set(u.id, u);
+    }
+    return map;
+  }, [users]);
+
+  // Verification requests belong strictly to customers (exclude staff or archived docs)
+  const customerVerificationRequests = useMemo(() => {
+    return verificationRequests.filter((r) => {
+      if ((r as VerificationRequest & { archived?: boolean }).archived === true) return false;
+      const target = usersById.get(r.userId);
+      if (target && isStaffRole(target.role)) return false;
+      return true;
+    });
+  }, [verificationRequests, usersById]);
+
+  const pendingCount = customerVerificationRequests.filter((r) => r.status === 'pending_review').length;
+ 
+  // Load all users on component mount (used in both verification queue and verification status table)
+  const loadUsers = React.useCallback(async (forceRefresh = false) => {
     setIsLoadingUsers(true);
     try {
       const fetched = await dataService.getAllUsers(forceRefresh);
@@ -84,75 +109,21 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
     } finally {
       setIsLoadingUsers(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (subTab === 'all_users') {
-      loadUsers();
-    }
-  }, [subTab]);
-
-  // Filter verification requests (Must be before any early return to satisfy React Hook rules)
-  const filteredRequests = useMemo(() => {
-    return verificationRequests.filter((r) => {
-      if (requestFilter !== 'all' && r.status !== requestFilter) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchUid = r.userId.toLowerCase().includes(q);
-        const matchUser = users.find((u) => u.uid === r.userId || u.id === r.userId);
-        const matchName = matchUser?.displayName?.toLowerCase().includes(q);
-        const matchEmail = matchUser?.email?.toLowerCase().includes(q);
-        const matchPhone = matchUser?.phone?.includes(q);
-        return matchUid || matchName || matchEmail || matchPhone;
-      }
-      return true;
+    if (!isAdmin && !isSuperAdmin) return;
+    let active = true;
+    queueMicrotask(() => {
+      if (active) loadUsers();
     });
-  }, [verificationRequests, requestFilter, searchQuery, users]);
-
-  // Filter all users
-  const filteredUsers = useMemo(() => {
-    return users.filter((u) => {
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        return (
-          u.displayName?.toLowerCase().includes(q) ||
-          u.email?.toLowerCase().includes(q) ||
-          u.phone?.includes(q) ||
-          u.uid.toLowerCase().includes(q)
-        );
-      }
-      return true;
-    });
-  }, [users, searchQuery]);
-
-  const pendingCount = verificationRequests.filter((r) => r.status === 'pending_review').length;
-
-  // Access guard: ordinary employees cannot access verification documents
-  if (!isAdmin && !isSuperAdmin) {
-    return (
-      <div className="p-8 max-w-lg mx-auto bg-slate-900 border border-rose-500/30 rounded-3xl text-center space-y-4">
-        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center mx-auto">
-          <Lock className="w-8 h-8" />
-        </div>
-        <h3 className="text-lg font-black text-white">صلاحية المشرف مطلوبة</h3>
-        <p className="text-xs text-slate-400 leading-relaxed">
-          يتطلب الوصول إلى وثائق الهوية وتوثيق الحسابات صلاحية مدير النظام (Admin) أو المدير العام (Super Admin) لضمان حماية وسرية البيانات الشخصية.
-        </p>
-        {onBackToOverview && (
-          <button
-            type="button"
-            onClick={onBackToOverview}
-            className="px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs"
-          >
-            العودة
-          </button>
-        )}
-      </div>
-    );
-  }
+    return () => {
+      active = false;
+    };
+  }, [isAdmin, isSuperAdmin, loadUsers]);
 
   // Open secure 60s signed document viewer
-  const handleInspectDocument = async (targetUid: string, docKey: 'driver_license' | 'identity', docLabel: string) => {
+  const handleInspectDocument = React.useCallback(async (targetUid: string, docKey: 'driver_license' | 'identity', docLabel: string) => {
     setViewingDoc({
       targetUid,
       docKey,
@@ -186,10 +157,10 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
         error: err instanceof Error ? err.message : 'تعذر تحميل الوثيقة.',
       });
     }
-  };
+  }, []);
 
   // Submit review decision (Approve, Reject, Revoke)
-  const handleConfirmDecision = async () => {
+  const handleConfirmDecision = React.useCallback(async () => {
     if (!decisionAction) return;
     const { targetUid, action } = decisionAction;
 
@@ -237,20 +208,112 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
     } finally {
       setIsSubmittingDecision(false);
     }
-  };
+  }, [decisionAction, actionReason]);
 
-  // Change user role (Admin only)
-  const handleChangeRole = async (targetUid: string, newRole: 'customer' | 'employee' | 'admin') => {
-    setUserRoleUpdating(targetUid);
-    try {
-      await dataService.updateUserRole(targetUid, newRole);
-      await loadUsers(true);
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'تعذر تعديل الصلاحية');
-    } finally {
-      setUserRoleUpdating(null);
+  // Filter verification requests (customers only)
+  const filteredRequests = useMemo(() => {
+    return customerVerificationRequests.filter((r) => {
+      if (requestFilter !== 'all' && r.status !== requestFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchUid = r.userId.toLowerCase().includes(q);
+        const matchUser = usersById.get(r.userId);
+        const matchName = matchUser?.displayName?.toLowerCase().includes(q);
+        const matchEmail = matchUser?.email?.toLowerCase().includes(q);
+        const matchPhone = matchUser?.phone?.includes(q);
+        return matchUid || matchName || matchEmail || matchPhone;
+      }
+      return true;
+    });
+  }, [customerVerificationRequests, requestFilter, searchQuery, usersById]);
+
+  const verificationRequestsMap = useMemo(() => {
+    const map = new Map<string, VerificationRequest>();
+    for (const req of customerVerificationRequests) {
+      if (req.userId) {
+        map.set(req.userId, req);
+      }
     }
-  };
+    return map;
+  }, [customerVerificationRequests]);
+
+  const customerUsers = useMemo(
+    () => users.filter((u) => !isStaffRole(u.role)),
+    [users]
+  );
+
+  // Verification counts computed strictly across customer accounts
+  const userStateCounts = useMemo(() => {
+    const counts = {
+      all: customerUsers.length,
+      verified: 0,
+      pending_review: 0,
+      rejected: 0,
+      unverified: 0,
+    };
+    for (const u of customerUsers) {
+      const req = verificationRequestsMap.get(u.uid) ?? (u.id ? verificationRequestsMap.get(u.id) : undefined);
+      const state = getVerificationState(u, req);
+      counts[state] += 1;
+    }
+    return counts;
+  }, [customerUsers, verificationRequestsMap]);
+
+  // Filter and sort users: 'all' keeps staff visible (with RoleBadge); verification filters match customers only
+  const filteredUsers = useMemo(() => {
+    const trimmedQuery = searchQuery.trim().toLowerCase();
+    const toTimestamp = (value?: string) => {
+      if (!value) return 0;
+      const ms = new Date(value).getTime();
+      return Number.isFinite(ms) ? ms : 0;
+    };
+
+    return users
+      .filter((u) => {
+        if (userStatusFilter !== 'all') {
+          if (isStaffRole(u.role)) return false;
+          const req = verificationRequestsMap.get(u.uid) ?? (u.id ? verificationRequestsMap.get(u.id) : undefined);
+          const state = getVerificationState(u, req);
+          if (state !== userStatusFilter) {
+            return false;
+          }
+        }
+        if (trimmedQuery) {
+          return (
+            u.displayName?.toLowerCase().includes(trimmedQuery) ||
+            u.email?.toLowerCase().includes(trimmedQuery) ||
+            u.phone?.toLowerCase().includes(trimmedQuery) ||
+            u.uid?.toLowerCase().includes(trimmedQuery)
+          );
+        }
+        return true;
+      })
+      .sort((a, b) => toTimestamp(b.createdAt) - toTimestamp(a.createdAt));
+  }, [users, verificationRequestsMap, userStatusFilter, searchQuery]);
+
+  // Access guard: ordinary employees cannot access verification documents
+  if (!isAdmin && !isSuperAdmin) {
+    return (
+      <div className="p-8 max-w-lg mx-auto bg-slate-900 border border-rose-500/30 rounded-3xl text-center space-y-4">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center mx-auto">
+          <Lock className="w-8 h-8" />
+        </div>
+        <h3 className="text-lg font-extrabold text-white">صلاحية المشرف مطلوبة</h3>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          يتطلب الوصول إلى وثائق الهوية وتوثيق الحسابات صلاحية مدير النظام أو المدير العام لضمان حماية وسرية البيانات الشخصية.
+        </p>
+        {onBackToOverview && (
+          <button
+            type="button"
+            onClick={onBackToOverview}
+            className="px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs"
+          >
+            العودة
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 text-slate-100" dir="rtl">
@@ -262,9 +325,9 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg sm:text-xl font-black text-white">توثيق الحسابات والمستخدمين</h2>
+              <h1 className="text-lg sm:text-xl font-extrabold text-white">{ADMIN_TAB_LABEL.firestore_users}</h1>
               {pendingCount > 0 && (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500 text-slate-950 animate-pulse">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-500 text-slate-950 animate-pulse">
                   {pendingCount} بانتظار المراجعة
                 </span>
               )}
@@ -289,7 +352,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
             <Shield className="w-4 h-4" />
             <span>طلبات التوثيق</span>
             {pendingCount > 0 && (
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              <span className={`px-1.5 py-0.2 rounded-full text-xs font-extrabold ${
                 subTab === 'verification_queue' ? 'bg-slate-950 text-amber-400' : 'bg-amber-500 text-slate-950'
               }`}>
                 {pendingCount}
@@ -307,7 +370,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>كل المستخدمين ({users.length})</span>
+            <span>حالة توثيق الحسابات ({users.length})</span>
           </button>
         </div>
       </div>
@@ -330,7 +393,8 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
           <button
             type="button"
             onClick={() => setActionFeedback(null)}
-            className="p-1 rounded-lg hover:bg-white/10"
+            className="p-1 rounded-lg hover:bg-white/10 min-h-10 min-w-10 inline-flex items-center justify-center cursor-pointer text-slate-300 hover:text-white"
+            aria-label="إغلاق التنبيه"
           >
             <X className="w-4 h-4" />
           </button>
@@ -345,9 +409,9 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
             <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-2xl">
               {[
                 { key: 'pending_review' as const, label: 'قيد المراجعة', count: pendingCount },
-                { key: 'verified' as const, label: 'موثق', count: verificationRequests.filter((r) => r.status === 'verified').length },
-                { key: 'rejected' as const, label: 'مرفوض', count: verificationRequests.filter((r) => r.status === 'rejected').length },
-                { key: 'all' as const, label: 'الكل', count: verificationRequests.length },
+                { key: 'verified' as const, label: 'موثق', count: customerVerificationRequests.filter((r) => r.status === 'verified').length },
+                { key: 'rejected' as const, label: 'مرفوض', count: customerVerificationRequests.filter((r) => r.status === 'rejected').length },
+                { key: 'all' as const, label: 'الكل', count: customerVerificationRequests.length },
               ].map((f) => (
                 <button
                   key={f.key}
@@ -355,25 +419,22 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                   onClick={() => setRequestFilter(f.key)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
                     requestFilter === f.key
-                      ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                      ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
                   <span>{f.label}</span>
-                  <span className="text-[10px] opacity-75 font-mono">({f.count})</span>
+                  <span className="text-xs opacity-75 font-mono">({f.count})</span>
                 </button>
               ))}
             </div>
 
             {/* Search Input */}
-            <div className="relative min-w-[240px]">
-              <Search className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
+            <div className="min-w-[240px]">
+              <SearchInput
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={setSearchQuery}
                 placeholder="ابحث بالاسم، البريد أو المعرف..."
-                className="w-full bg-slate-900 border border-slate-800 rounded-2xl pr-9 pl-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500 transition"
               />
             </div>
           </div>
@@ -386,7 +447,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
             </div>
           ) : filteredRequests.length === 0 ? (
             <div className="py-16 text-center bg-slate-900/60 border border-slate-800 rounded-3xl p-6">
-              <ShieldCheck className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+              <ShieldCheck className="w-12 h-12 text-slate-400 mx-auto mb-3" />
               <h4 className="text-base font-bold text-white mb-1">لا توجد طلبات توثيق مطابقة</h4>
               <p className="text-xs text-slate-400">
                 {requestFilter === 'pending_review'
@@ -421,10 +482,10 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-black text-white text-sm">
+                            <span className="font-extrabold text-white text-sm">
                               {targetUser?.displayName || 'مستخدم غير معروف'}
                             </span>
-                            <span className="font-mono text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full">
+                            <span className="font-mono text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full">
                               {req.userId.substring(0, 10)}...
                             </span>
                           </div>
@@ -465,24 +526,24 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-white flex items-center gap-1.5">
                             <FileText className="w-3.5 h-3.5 text-amber-400" />
-                            <span>شهادة القيادة (الوجه الأمامي)</span>
+                            <span>وثيقة القيادة (الوجه الأمامي)</span>
                           </span>
                           {req.docs?.driver_license ? (
                             <button
                               type="button"
-                              onClick={() => handleInspectDocument(req.userId, 'driver_license', 'شهادة القيادة')}
+                              onClick={() => handleInspectDocument(req.userId, 'driver_license', 'وثيقة القيادة')}
                               className="px-2.5 py-1 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-xs font-bold transition flex items-center gap-1"
                             >
                               <Eye className="w-3.5 h-3.5" />
                               <span>معاينة آمنة</span>
                             </button>
                           ) : (
-                            <span className="text-[11px] text-slate-500">غير متوفرة</span>
+                            <span className="text-xs text-slate-400">غير متوفرة</span>
                           )}
                         </div>
 
                         {req.docs?.driver_license && (
-                          <div className="text-[11px] text-slate-400 flex flex-wrap gap-2 pt-1 border-t border-slate-800/80">
+                          <div className="text-xs text-slate-400 flex flex-wrap gap-2 pt-1 border-t border-slate-800/80">
                             {req.docs.driver_license.quality ? (
                               <>
                                 <span>الدقة: {req.docs.driver_license.quality.width}×{req.docs.driver_license.quality.height}</span>
@@ -502,7 +563,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                           <span className="text-xs font-bold text-white flex items-center gap-1.5">
                             <FileText className="w-3.5 h-3.5 text-amber-400" />
                             <span>
-                              {req.identityDocType === 'passport' ? 'جواز السفر' : 'الهوية الشخصية'}
+                              {req.identityDocType === 'passport' ? 'وثيقة السفر' : 'الهوية الشخصية'}
                             </span>
                           </span>
                           {req.docs?.identity ? (
@@ -512,7 +573,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                                 handleInspectDocument(
                                   req.userId,
                                   'identity',
-                                  req.identityDocType === 'passport' ? 'جواز السفر' : 'الهوية الشخصية'
+                                  req.identityDocType === 'passport' ? 'وثيقة السفر' : 'الهوية الشخصية'
                                 )
                               }
                               className="px-2.5 py-1 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-xs font-bold transition flex items-center gap-1"
@@ -521,12 +582,12 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                               <span>معاينة آمنة</span>
                             </button>
                           ) : (
-                            <span className="text-[11px] text-slate-500">غير متوفرة</span>
+                            <span className="text-xs text-slate-400">غير متوفرة</span>
                           )}
                         </div>
 
                         {req.docs?.identity && (
-                          <div className="text-[11px] text-slate-400 flex flex-wrap gap-2 pt-1 border-t border-slate-800/80">
+                          <div className="text-xs text-slate-400 flex flex-wrap gap-2 pt-1 border-t border-slate-800/80">
                             {req.docs.identity.quality ? (
                               <>
                                 <span>الدقة: {req.docs.identity.quality.width}×{req.docs.identity.quality.height}</span>
@@ -551,8 +612,8 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
 
                     {/* Admin Action Decision Bar */}
                     <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
-                      <div className="text-[11px] text-slate-400 font-mono">
-                        تاريخ التقديم: {req.submittedAt ? new Date(req.submittedAt).toLocaleString('ar-SY') : '—'}
+                      <div className="text-xs text-slate-400 font-mono">
+                        تاريخ التقديم: {req.submittedAt ? new Date(req.submittedAt).toLocaleString('ar-SY-u-nu-latn') : '—'}
                         {req.attempt ? ` • المحاولة رقم ${req.attempt}` : ''}
                       </div>
 
@@ -569,7 +630,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                                 });
                                 setActionReason('');
                               }}
-                              className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black transition flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
+                              className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
                             >
                               <CheckCircle2 className="w-4 h-4" />
                               <span>اعتماد التوثيق</span>
@@ -620,25 +681,47 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
         </div>
       )}
 
-      {/* SUB-TAB 2: ALL USERS & ROLES */}
+      {/* SUB-TAB 2: READ-ONLY ACCOUNT VERIFICATION STATUS */}
       {subTab === 'all_users' && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Users className="w-4 h-4 text-amber-400" />
-              <span>دليل الحسابات المسجلة في النظام ({filteredUsers.length})</span>
+              <span>حالة توثيق الحسابات ({filteredUsers.length})</span>
             </h3>
 
-            <div className="relative min-w-[260px]">
-              <Search className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
+            <div className="min-w-[260px]">
+              <SearchInput
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="ابحث بالاسم، البريد أو الهاتف..."
-                className="w-full bg-slate-900 border border-slate-800 rounded-2xl pr-9 pl-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500 transition"
+                onChange={setSearchQuery}
+                placeholder="ابحث بالاسم، البريد، الهاتف أو المعرف..."
               />
             </div>
+          </div>
+
+          {/* Read-only Status Filter Chips */}
+          <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-2xl w-fit max-w-full">
+            {[
+              { key: 'all' as const, label: 'الكل', count: userStateCounts.all },
+              { key: 'verified' as const, label: 'موثق', count: userStateCounts.verified },
+              { key: 'pending_review' as const, label: 'قيد المراجعة', count: userStateCounts.pending_review },
+              { key: 'rejected' as const, label: 'مرفوض', count: userStateCounts.rejected },
+              { key: 'unverified' as const, label: 'غير موثق', count: userStateCounts.unverified },
+            ].map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={() => setUserStatusFilter(chip.key)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                  userStatusFilter === chip.key
+                    ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>{chip.label}</span>
+                <span className="text-xs opacity-75 font-mono">({chip.count})</span>
+              </button>
+            ))}
           </div>
 
           {isLoadingUsers ? (
@@ -649,75 +732,71 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
           ) : (
             <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
               <div className="overflow-x-auto">
-                <table className="w-full text-right text-xs">
+                <table className="w-full text-right text-sm">
                   <thead className="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-bold">
                     <tr>
                       <th className="p-3.5">المستخدم</th>
                       <th className="p-3.5">البريد والهاتف</th>
                       <th className="p-3.5">حالة التوثيق</th>
-                      <th className="p-3.5">الدور والصلاحية</th>
                       <th className="p-3.5">تاريخ التسجيل</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
-                    {filteredUsers.map((u) => {
-                      const req = verificationRequests.find((r) => r.userId === u.uid || r.userId === u.id);
-                      const isTargetSuper = u.role === 'super_admin';
-                      return (
-                        <tr key={u.id || u.uid} className="hover:bg-slate-800/40 transition">
-                          <td className="p-3.5">
-                            <div className="font-bold text-white">{u.displayName || 'مستخدم'}</div>
-                            <div className="text-[10px] text-slate-500 font-mono">{u.uid}</div>
-                          </td>
-                          <td className="p-3.5">
-                            <div className="font-mono text-slate-300">{u.email}</div>
-                            <div className="font-mono text-[11px] text-slate-400">{u.phone || '—'}</div>
-                          </td>
-                          <td className="p-3.5">
-                            {req?.status === 'verified' || u.verificationStatus === 'verified' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                                موثق
-                              </span>
-                            ) : req?.status === 'pending_review' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                                قيد المراجعة
-                              </span>
-                            ) : req?.status === 'rejected' ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
-                                مرفوض
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                                غير موثق
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3.5">
-                            {isSuperAdmin && !isTargetSuper ? (
-                              <select
-                                value={u.role || 'customer'}
-                                disabled={userRoleUpdating === u.uid}
-                                onChange={(e) =>
-                                  handleChangeRole(u.uid, e.target.value as 'customer' | 'employee' | 'admin')
-                                }
-                                className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1 text-xs text-white outline-none focus:border-amber-500"
-                              >
-                                <option value="customer">عميل (Customer)</option>
-                                <option value="employee">موظف (Staff)</option>
-                                <option value="admin">مدير (Admin)</option>
-                              </select>
-                            ) : (
-                              <span className="font-bold text-amber-400 text-xs">
-                                {u.role === 'super_admin' ? 'المدير العام' : u.role === 'admin' ? 'مدير' : u.role === 'employee' ? 'موظف' : 'عميل'}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3.5 font-mono text-slate-400 text-[11px]">
-                            {u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-SY') : '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-8 text-center text-xs text-slate-400">
+                          لا توجد حسابات مطابقة لمعايير التصفية أو البحث.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredUsers.map((u) => {
+                        const isStaff = isStaffRole(u.role);
+                        const req = !isStaff
+                          ? (verificationRequestsMap.get(u.uid) ?? (u.id ? verificationRequestsMap.get(u.id) : undefined))
+                          : undefined;
+                        const verificationState = getVerificationState(u, req);
+
+                        return (
+                          <tr key={u.id || u.uid} className="hover:bg-slate-800/40 transition">
+                            <td className="p-3.5">
+                              <div className="font-bold text-white">{u.displayName || 'مستخدم'}</div>
+                              <div className="mt-0.5 empty:hidden">
+                                <RoleBadge role={u.role} size="xs" />
+                              </div>
+                              <div className="text-xs text-slate-400 font-mono mt-0.5">{u.uid}</div>
+                            </td>
+                            <td className="p-3.5">
+                              <div className="font-mono text-slate-300">{u.email}</div>
+                              <div className="font-mono text-xs text-slate-400">{u.phone || '—'}</div>
+                            </td>
+                            <td className="p-3.5">
+                              {isStaff ? (
+                                <RoleBadge role={u.role} />
+                              ) : verificationState === 'verified' ? (
+                                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                  موثق
+                                </span>
+                              ) : verificationState === 'pending_review' ? (
+                                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                  قيد المراجعة
+                                </span>
+                              ) : verificationState === 'rejected' ? (
+                                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                  مرفوض
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                  غير موثق
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3.5 font-mono text-slate-400 text-xs">
+                              {u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-SY-u-nu-latn') : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -733,20 +812,21 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
           role="dialog"
           aria-modal="true"
         >
-          <div className="w-full max-w-3xl bg-slate-900 border border-slate-700 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+          <div className="w-full max-w-3xl bg-slate-900 border border-slate-700 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92dvh]">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-b border-slate-800">
               <div className="flex items-center gap-2">
                 <Lock className="w-4 h-4 text-amber-400" />
-                <h4 className="text-sm font-black text-white">معاينة آمنة: {viewingDoc.docLabel}</h4>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-mono">
+                <h4 className="text-sm font-extrabold text-white">معاينة آمنة: {viewingDoc.docLabel}</h4>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-mono">
                   رابط مشفر لمدة 60 ثانية
                 </span>
               </div>
               <button
                 type="button"
                 onClick={() => setViewingDoc(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
+                className="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer min-h-10 min-w-10 inline-flex items-center justify-center"
+                aria-label="إغلاق المعاينة"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -769,6 +849,8 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                   <img
                     src={viewingDoc.url}
                     alt={viewingDoc.docLabel}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-contain pointer-events-none"
                     onContextMenu={(e) => e.preventDefault()}
                   />
@@ -776,10 +858,10 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                   {/* DYNAMIC SECURITY WATERMARK OVERLAY */}
                   <div className="absolute inset-0 pointer-events-none flex flex-col justify-around items-center p-4 rotate-[-25deg] opacity-25 select-none overflow-hidden">
                     {[1, 2, 3, 4].map((i) => (
-                      <div key={i} className="text-center font-mono font-black text-amber-200 text-xs sm:text-sm tracking-wider">
+                      <div key={i} className="text-center font-mono font-extrabold text-amber-200 text-xs sm:text-sm tracking-wider">
                         <div>🔒 سري - شاكر لتأجير السيارات</div>
                         <div>المدقق: {user?.email} • المستخدم: {viewingDoc.targetUid.substring(0, 8)}</div>
-                        <div>{new Date().toLocaleString('ar-SY')}</div>
+                        <div>{new Date().toLocaleString('ar-SY-u-nu-latn')}</div>
                       </div>
                     ))}
                   </div>
@@ -789,7 +871,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
 
             {/* Modal Footer */}
             <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-              <span>⚠️ يُمنع نسخ أو إعادة مشاركة وثائق الهوية خارج نطاق التدقيق.</span>
+              <span><AlertTriangle className="w-4 h-4 inline" /> يُمنع نسخ أو إعادة مشاركة وثائق الهوية خارج نطاق التدقيق.</span>
               <button
                 type="button"
                 onClick={() => setViewingDoc(null)}
@@ -819,7 +901,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                 {decisionAction.action === 'approve' ? <CheckCircle2 className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
               </div>
               <div>
-                <h4 className="text-base font-black text-white">
+                <h4 className="text-base font-extrabold text-white">
                   {decisionAction.action === 'approve'
                     ? 'اعتماد توثيق الحساب'
                     : decisionAction.action === 'reject'
@@ -832,7 +914,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
 
             {decisionAction.action === 'approve' ? (
               <p className="text-xs text-slate-300 leading-relaxed">
-                سيتم نقل وثائق الهوية وشهادة القيادة إلى الخزنة المشفرة واعتماد الحساب رسمياً لتمكين العميل من حجز واستلام السيارات مباشرة.
+                سيتم نقل وثائق الهوية والقيادة إلى الخزنة المشفرة واعتماد الحساب رسمياً لتمكين العميل من حجز واستلام السيارات مباشرة.
               </p>
             ) : (
               <div className="space-y-2">
@@ -842,7 +924,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                 <textarea
                   value={actionReason}
                   onChange={(e) => setActionReason(e.target.value)}
-                  placeholder="مثال: صورة رخصة القيادة غير واضحة، انتهاء صلاحية الهوية، عدم تطابق الاسم..."
+                  placeholder="مثال: صورة وثيقة القيادة غير واضحة، انتهاء صلاحية الهوية، عدم تطابق الاسم..."
                   rows={3}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500"
                   required
@@ -863,7 +945,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                 type="button"
                 onClick={handleConfirmDecision}
                 disabled={isSubmittingDecision}
-                className={`px-5 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-md ${
+                className={`px-5 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 shadow-md ${
                   decisionAction.action === 'approve'
                     ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'
                     : 'bg-rose-500 hover:bg-rose-400 text-white shadow-rose-500/20'

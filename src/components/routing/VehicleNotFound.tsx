@@ -8,14 +8,14 @@ export const VehicleNotFound: React.FC = () => {
   const { vehiclesReady } = useAppData();
 
   return (
-    <PageTransition className="min-h-[50vh] flex items-center justify-center text-center p-6">
+    <PageTransition className="min-h-[50dvh] flex items-center justify-center text-center p-6">
       {vehiclesReady ? (
         <div className="space-y-4">
           <p className="text-slate-300 font-bold">لم يتم العثور على هذه السيارة.</p>
           <button
             type="button"
             onClick={() => navigate(routes.cars)}
-            className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black active:scale-[0.97] transition-transform"
+            className="px-5 py-2.5 min-h-11 inline-flex items-center justify-center rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-extrabold active:scale-[0.97] transition-transform"
           >
             العودة إلى الأسطول
           </button>

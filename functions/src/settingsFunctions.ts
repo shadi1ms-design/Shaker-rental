@@ -1,21 +1,27 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
-import { isCallerAdmin, assertNotRevoked } from './authz';
+import { secureCall } from './secureCall';
+import { writeAuditAsync, computeSettingsDiff } from './audit';
 import { calculateRentalPriceServer } from './pricingServer';
 import { resolveVehicleDocument } from './bookingHelpers';
+import { formatAndValidatePhone } from './phoneValidation';
 
 const db = getFirestore(getApp(), DATABASE_ID);
+
+export { computeSettingsDiff };
+
 
 /**
  * Cloud Function: calculateDynamicPricing (region: asia-south1)
  * Calculates authoritative pricing on the server for a given vehicle and rental days.
  */
-export const calculateDynamicPricing = onCall(
+export const calculateDynamicPricing = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'public',
   },
   async (request) => {
     const { days, vehicleId, withDriver = false } = request.data || {};
@@ -61,40 +67,44 @@ export const calculateDynamicPricing = onCall(
  * Cloud Function: updateSettingsSecure (region: asia-south1)
  * Server-authoritative settings update with rigorous bounds validation.
  * Validates: insurance (0-5000), discount (0-25%), driver fee (0-1000), monthly rates (0-100000),
- * cancellationLeadHours (0-720), phone formats, and logs immutable audit.
+ * cancellationLeadHours (0-720), phone formats, and logs immutable audit with field-level diff.
  */
-export const updateSettingsSecure = onCall(
+export const updateSettingsSecure = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'admin',
+    requireMfa: true,
+    dbOverride: db,
+    permissionDeniedMessage: 'تعديل إعدادات النظام مقتصر حصراً على مدراء النظام (Admin).',
   },
   async (request) => {
-    await assertNotRevoked(request);
-
-    const callerToken = request.auth!.token;
-    if (!isCallerAdmin(callerToken)) {
-      throw new HttpsError('permission-denied', 'تعديل إعدادات النظام مقتصر حصراً على مدراء النظام (Admin).');
-    }
-
     const incomingSettings = request.data || {};
     const updates: Record<string, any> = {};
 
     // Validate insurance values (0-5000)
-    if (incomingSettings.insurance1to2Days !== undefined) {
-      const ins1 = Number(incomingSettings.insurance1to2Days);
+    // Accept either canonical or legacy input, but write ONLY canonical names (insuranceShortTerm, insuranceLongTerm)
+    const rawShortTerm = incomingSettings.insuranceShortTerm !== undefined
+      ? incomingSettings.insuranceShortTerm
+      : incomingSettings.insurance1to2Days;
+
+    if (rawShortTerm !== undefined) {
+      const ins1 = Number(rawShortTerm);
       if (isNaN(ins1) || ins1 < 0 || ins1 > 5000) {
-        throw new HttpsError('invalid-argument', 'قيمة تأمين 1-2 يوم يجب أن تكون رقماً بين 0 و 5000.');
+        throw new HttpsError('invalid-argument', 'قيمة تأمين الحجوزات القصيرة (insuranceShortTerm) يجب أن تكون رقماً بين 0 و 5000.');
       }
-      updates.insurance1to2Days = ins1;
       updates.insuranceShortTerm = ins1;
     }
 
-    if (incomingSettings.insuranceAbove2Days !== undefined) {
-      const ins2 = Number(incomingSettings.insuranceAbove2Days);
+    const rawLongTerm = incomingSettings.insuranceLongTerm !== undefined
+      ? incomingSettings.insuranceLongTerm
+      : incomingSettings.insuranceAbove2Days;
+
+    if (rawLongTerm !== undefined) {
+      const ins2 = Number(rawLongTerm);
       if (isNaN(ins2) || ins2 < 0 || ins2 > 5000) {
-        throw new HttpsError('invalid-argument', 'قيمة تأمين أكثر من يومين يجب أن تكون رقماً بين 0 و 5000.');
+        throw new HttpsError('invalid-argument', 'قيمة تأمين الحجوزات الطويلة (insuranceLongTerm) يجب أن تكون رقماً بين 0 و 5000.');
       }
-      updates.insuranceAbove2Days = ins2;
       updates.insuranceLongTerm = ins2;
     }
 
@@ -111,7 +121,7 @@ export const updateSettingsSecure = onCall(
     if (incomingSettings.monthlyRateLight !== undefined) {
       const rate = Number(incomingSettings.monthlyRateLight);
       if (isNaN(rate) || rate < 0 || rate > 100000) {
-        throw new HttpsError('invalid-argument', 'السعر الشهري للسيدان الاقتصادي يجب أن يكون رقماً بين 0 و 100000.');
+        throw new HttpsError('invalid-argument', 'السعر الشهري لسيدان (اقتصادي) يجب أن يكون رقماً بين 0 و 100000.');
       }
       updates.monthlyRateLight = rate;
     }
@@ -119,7 +129,7 @@ export const updateSettingsSecure = onCall(
     if (incomingSettings.monthlyRateMedium !== undefined) {
       const rate = Number(incomingSettings.monthlyRateMedium);
       if (isNaN(rate) || rate < 0 || rate > 100000) {
-        throw new HttpsError('invalid-argument', 'السعر الشهري للسيدان المتوسط يجب أن يكون رقماً بين 0 و 100000.');
+        throw new HttpsError('invalid-argument', 'السعر الشهري لسيدان يجب أن يكون رقماً بين 0 و 100000.');
       }
       updates.monthlyRateMedium = rate;
     }
@@ -127,7 +137,7 @@ export const updateSettingsSecure = onCall(
     if (incomingSettings.monthlyRateJeep !== undefined) {
       const rate = Number(incomingSettings.monthlyRateJeep);
       if (isNaN(rate) || rate < 0 || rate > 100000) {
-        throw new HttpsError('invalid-argument', 'السعر الشهري للجيب يجب أن يكون رقماً بين 0 و 100000.');
+        throw new HttpsError('invalid-argument', 'السعر الشهري لـ SUV يجب أن يكون رقماً بين 0 و 100000.');
       }
       updates.monthlyRateJeep = rate;
     }
@@ -151,30 +161,41 @@ export const updateSettingsSecure = onCall(
     }
 
     // Other non-financial settings
-    if (incomingSettings.companyName) updates.companyName = String(incomingSettings.companyName).slice(0, 100);
-    if (incomingSettings.companyNameEn) updates.companyNameEn = String(incomingSettings.companyNameEn).slice(0, 100);
-    const PHONE_REGEX = /^((\+?963\s?9\d{8})|(09\d{8})|(\+?[1-9]\d{6,14}))$/;
+    if (incomingSettings.companyName !== undefined) {
+      const nameStr = String(incomingSettings.companyName || '').trim();
+      if (!nameStr) {
+        throw new HttpsError('invalid-argument', 'اسم الشركة بالعربية مطلوب ولا يمكن تركه فارغاً.');
+      }
+      updates.companyName = nameStr.slice(0, 100);
+    }
 
+    if (incomingSettings.companyNameEn !== undefined) {
+      updates.companyNameEn = String(incomingSettings.companyNameEn || '').trim().slice(0, 100);
+    }
     if (incomingSettings.companyPhone !== undefined) {
       const phoneStr = String(incomingSettings.companyPhone || '').trim();
       if (phoneStr) {
-        const digitsOnly = phoneStr.replace(/[\s\-\(\)]/g, '');
-        if (!PHONE_REGEX.test(digitsOnly)) {
-          throw new HttpsError('invalid-argument', 'صيغة هاتف الشركة غير صالحة. يرجى إدخال رقم صحيح مع الرمز الدولي أو المحلي.');
+        try {
+          updates.companyPhone = formatAndValidatePhone(phoneStr);
+        } catch (phoneErr: any) {
+          throw new HttpsError('invalid-argument', phoneErr?.message || 'صيغة هاتف الشركة غير صالحة.');
         }
+      } else {
+        updates.companyPhone = '';
       }
-      updates.companyPhone = phoneStr.slice(0, 30);
     }
 
     if (incomingSettings.whatsappNumber !== undefined) {
       const waStr = String(incomingSettings.whatsappNumber || '').trim();
       if (waStr) {
-        const digitsOnly = waStr.replace(/[\s\-\(\)]/g, '');
-        if (!PHONE_REGEX.test(digitsOnly)) {
-          throw new HttpsError('invalid-argument', 'صيغة رقم واتساب غير صالحة. يرجى إدخال رقم صحيح مع الرمز الدولي أو المحلي.');
+        try {
+          updates.whatsappNumber = formatAndValidatePhone(waStr);
+        } catch (waErr: any) {
+          throw new HttpsError('invalid-argument', waErr?.message || 'صيغة رقم واتساب غير صالحة.');
         }
+      } else {
+        updates.whatsappNumber = '';
       }
-      updates.whatsappNumber = waStr.slice(0, 30);
     }
 
     if (incomingSettings.address !== undefined) updates.address = String(incomingSettings.address).slice(0, 200);
@@ -188,28 +209,34 @@ export const updateSettingsSecure = onCall(
       updates.cancellationLeadHours = lead;
     }
 
-    updates.updatedAt = FieldValue.serverTimestamp();
-
-    // Persist to single authoritative document: settings/global
+    // Persist to single authoritative document: settings/global (capture previous snapshot for audit diff)
     const settingsRef = db.collection('settings').doc('global');
+    const existingSettingsSnap = await settingsRef.get();
+    const previousSettings = existingSettingsSnap.exists ? existingSettingsSnap.data() : null;
+    const changes = computeSettingsDiff(previousSettings, updates);
+
+    updates.updatedAt = FieldValue.serverTimestamp();
     await settingsRef.set(updates, { merge: true });
 
-    // Record immutable audit log
-    const auditRef = db.collection('auditLogs').doc();
-    await auditRef.set({
-      id: auditRef.id,
-      user: request.auth!.token.email || request.auth!.uid,
-      userId: request.auth!.uid,
-      actorUid: request.auth!.uid,
-      actorEmail: request.auth!.token.email || null,
-      actorType: 'staff',
-      action: 'SETTINGS_UPDATED_SECURE',
-      entity: 'settings',
-      entityId: 'global',
-      details: 'تحديث إعدادات المنظومة العامة والمالية عبر معالج الإعدادات الآمن',
-      timestamp: new Date().toISOString(),
-      createdAt: FieldValue.serverTimestamp(),
-    });
+    // Record immutable audit log via unified writeAuditAsync only when at least one field changed
+    const changedKeys = Object.keys(changes);
+    if (changedKeys.length > 0) {
+      await writeAuditAsync(db, {
+        actorUid: request.auth.uid,
+        actorEmail: request.auth.token.email || null,
+        actorRole: String(request.auth.token.role || 'admin'),
+        actorType: 'staff',
+        action: 'SETTINGS_UPDATED_SECURE',
+        entity: 'settings',
+        entityId: 'global',
+        entityName: 'global',
+        details: 'تحديث إعدادات المنظومة العامة والمالية عبر معالج الإعدادات الآمن',
+        metadata: {
+          changes,
+          updatedFields: changedKeys,
+        },
+      });
+    }
 
     return {
       success: true,

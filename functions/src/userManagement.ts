@@ -1,4 +1,4 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import type { DocumentReference } from 'firebase-admin/firestore';
@@ -11,22 +11,122 @@ import {
   canManageAccountLifecycle,
   getUserRoleFromClaims,
   assertNotRevoked,
+  isCallerSuperAdmin,
+  getRequireAdminMfa,
+  setAdminMfaCacheValue,
 } from './authz';
+import { isStaffRole } from './roles';
+import { secureCall } from './secureCall';
+import { writeAuditAsync } from './audit';
 
-const db = getFirestore(getApp(), DATABASE_ID);
+let _dbInstance: ReturnType<typeof getFirestore> | null = null;
+function getDb() {
+  if (!_dbInstance) {
+    _dbInstance = getFirestore(getApp(), DATABASE_ID);
+  }
+  return _dbInstance;
+}
+const db = new Proxy({} as ReturnType<typeof getFirestore>, {
+  get(_target, prop, receiver) {
+    const instance = getDb();
+    const val = Reflect.get(instance, prop, receiver);
+    return typeof val === 'function' ? val.bind(instance) : val;
+  },
+});
+
+export const VERIFICATION_FIELDS_TO_REMOVE = [
+  'verified',
+  'verificationStatus',
+  'identityVerified',
+  'verifiedAt',
+  'verifiedBy',
+  'verificationNotes',
+  'verificationSubmittedAt',
+] as const;
+
+export interface StaffVerificationCleanupResult {
+  verificationFieldsCleaned: boolean;
+  archivedVerificationRequestId: string | null;
+}
+
+/**
+ * Cleans verification fields from users/customers and archives any active
+ * verificationRequests/{uid} document when a customer is promoted to a staff role.
+ * Never deletes Storage files.
+ */
+export async function cleanupStaffVerificationOnPromotion(
+  firestoreDb: any,
+  params: {
+    targetUid: string;
+    callerUid: string;
+    previousRole: string;
+    newRole: string;
+    nowIso?: string;
+  }
+): Promise<StaffVerificationCleanupResult> {
+  const { targetUid, callerUid, previousRole, newRole } = params;
+  const nowIso = params.nowIso || new Date().toISOString();
+
+  const deletePayload: Record<string, any> = {
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  for (const field of VERIFICATION_FIELDS_TO_REMOVE) {
+    deletePayload[field] = FieldValue.delete();
+  }
+
+  await firestoreDb.collection('users').doc(targetUid).set(deletePayload, { merge: true });
+
+  const custRef = firestoreDb.collection('customers').doc(targetUid);
+  const custSnap = await custRef.get();
+  if (custSnap.exists) {
+    await custRef.set(deletePayload, { merge: true });
+  }
+
+  const reqRef = firestoreDb.collection('verificationRequests').doc(targetUid);
+  const archiveId = `${targetUid}_${Date.now()}`;
+  const archiveRef = firestoreDb.collection('verificationRequestsArchive').doc(archiveId);
+
+  const archivedId = await firestoreDb.runTransaction(async (tx: any) => {
+    const reqSnap = await tx.get(reqRef);
+    if (!reqSnap.exists) {
+      return null;
+    }
+    const reqData = reqSnap.data() || {};
+    tx.set(archiveRef, {
+      ...reqData,
+      originalUserId: targetUid,
+      archived: true,
+      archivedReason: 'promoted_to_staff',
+      archivedBy: callerUid,
+      archivedAt: nowIso,
+      previousRole,
+      newRole,
+    });
+    tx.delete(reqRef);
+    return archiveId;
+  });
+
+  return {
+    verificationFieldsCleaned: true,
+    archivedVerificationRequestId: archivedId,
+  };
+}
 
 /**
  * Cloud Function: setUserRole (region: asia-south1)
  * Enforces strict role hierarchy and claims merging.
  */
-export const setUserRole = onCall(
+export const setUserRole = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'admin',
+    requireMfa: true,
+    dbOverride: db,
+    permissionDeniedMessage:
+      'غير مصرح لك بتعديل الصلاحيات. تعديل الصلاحيات مقتصر حصراً على مدراء النظام (Admin/Super Admin).',
   },
   async (request) => {
-    await assertNotRevoked(request);
-
     const { targetUid, newRole } = request.data || {};
     if (!targetUid || typeof targetUid !== 'string' || !targetUid.trim()) {
       throw new HttpsError('invalid-argument', 'معرف المستخدم المستهدف مطلوب.');
@@ -90,6 +190,8 @@ export const setUserRole = onCall(
       throw new HttpsError('internal', 'فشل تعيين مطالبات التوثيق للمستخدم في خادم المصادقة.');
     }
 
+    const previousRole = getUserRoleFromClaims(targetExistingClaims);
+
     // 4. Synchronize display role metadata in Firestore users/{targetUid}
     try {
       await db.collection('users').doc(cleanTargetUid).set(
@@ -103,24 +205,45 @@ export const setUserRole = onCall(
       console.warn('[setUserRole] Failed to sync users doc role display:', dbErr);
     }
 
-    // 5. Immutable audit log record
-    try {
-      await db.collection('auditLogs').add({
-        action: 'ROLE_MODIFIED',
-        actorUid: callerUid,
-        actorEmail: callerToken.email || null,
-        actorType: 'staff',
-        performedBy: callerUid,
-        targetUser: cleanTargetUid,
-        oldRole: getUserRoleFromClaims(targetExistingClaims),
-        newRole: normalizedRole,
-        timestamp: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
-        details: `تعديل صلاحيات المستخدم ${cleanTargetUid} إلى ${normalizedRole} مع إبطال الجلسات السابقة`,
-      });
-    } catch (auditErr) {
-      console.warn('[setUserRole] Audit write failed:', auditErr);
+    // 4.5. When promoted to a staff role, clear verification fields & archive verificationRequests
+    //      without touching Storage files.
+    let promotionCleanup: StaffVerificationCleanupResult = {
+      verificationFieldsCleaned: false,
+      archivedVerificationRequestId: null,
+    };
+    if (isStaffRole(normalizedRole)) {
+      try {
+        promotionCleanup = await cleanupStaffVerificationOnPromotion(db, {
+          targetUid: cleanTargetUid,
+          callerUid,
+          previousRole,
+          newRole: normalizedRole,
+        });
+      } catch (cleanupErr) {
+        console.warn('[setUserRole] Failed cleaning verification state on staff promotion:', cleanupErr);
+      }
     }
+
+    // 5. Immutable audit log record
+    await writeAuditAsync(db, {
+      actorUid: callerUid,
+      actorEmail: callerToken.email || null,
+      actorRole: String(callerToken.role || 'admin'),
+      actorType: 'staff',
+      action: 'ROLE_MODIFIED',
+      entity: 'user',
+      entityId: cleanTargetUid,
+      entityName: cleanTargetUid,
+      details: `تعديل صلاحيات المستخدم ${cleanTargetUid} إلى ${normalizedRole} مع إبطال الجلسات السابقة`,
+      metadata: {
+        oldRole: previousRole,
+        newRole: normalizedRole,
+        verificationFieldsCleaned: promotionCleanup.verificationFieldsCleaned,
+        archivedVerificationRequestId: promotionCleanup.archivedVerificationRequestId,
+      },
+    }).catch((auditErr) => {
+      console.warn('[setUserRole] Audit write failed:', auditErr);
+    });
 
     return {
       success: true,
@@ -135,14 +258,17 @@ export const setUserRole = onCall(
  * Cloud Function: toggleUserAccountStatus (region: asia-south1)
  * Enables or disables a user account in Auth and Firestore with token revocation.
  */
-export const toggleUserAccountStatus = onCall(
+export const toggleUserAccountStatus = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'admin',
+    requireMfa: (req) => req.data?.disabled !== false,
+    dbOverride: db,
+    permissionDeniedMessage:
+      'تعديل حالة الحساب مقتصر حصراً على مدراء النظام (Admin/Super Admin).',
   },
   async (request) => {
-    await assertNotRevoked(request);
-
     const { targetUid, disabled } = request.data || {};
     if (!targetUid || typeof targetUid !== 'string' || !targetUid.trim()) {
       throw new HttpsError('invalid-argument', 'معرف المستخدم المستهدف مطلوب.');
@@ -203,20 +329,19 @@ export const toggleUserAccountStatus = onCall(
     }
 
     // 5. Audit log
-    try {
-      await db.collection('auditLogs').add({
-        action: isDisabled ? 'USER_ACCOUNT_DISABLED' : 'USER_ACCOUNT_ENABLED',
-        actorUid: callerUid,
-        actorEmail: callerToken.email || null,
-        actorType: 'staff',
-        performedBy: callerUid,
-        targetUser: cleanTargetUid,
-        timestamp: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
-      });
-    } catch (auditErr) {
+    await writeAuditAsync(db, {
+      actorUid: callerUid,
+      actorEmail: callerToken.email || null,
+      actorRole: String(callerToken.role || 'admin'),
+      actorType: 'staff',
+      action: isDisabled ? 'USER_ACCOUNT_DISABLED' : 'USER_ACCOUNT_ENABLED',
+      entity: 'user',
+      entityId: cleanTargetUid,
+      entityName: cleanTargetUid,
+      details: isDisabled ? `تعطيل حساب المستخدم ${cleanTargetUid} وإبطال جلساته` : `تفعيل حساب المستخدم ${cleanTargetUid}`,
+    }).catch((auditErr) => {
       console.warn('[toggleUserAccountStatus] Audit write failed:', auditErr);
-    }
+    });
 
     return {
       success: true,
@@ -231,14 +356,17 @@ export const toggleUserAccountStatus = onCall(
  * Cloud Function: deleteUserAccount (region: asia-south1)
  * Deletes user account, purges storage files, anonymizes customer identity in bookings.
  */
-export const deleteUserAccount = onCall(
+export const deleteUserAccount = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'super_admin',
+    requireMfa: true,
+    dbOverride: db,
+    permissionDeniedMessage:
+      'حذف الحسابات نهائياً مقتصر حصراً على المدير العام (Super Admin).',
   },
   async (request) => {
-    await assertNotRevoked(request);
-
     const { targetUid } = request.data || {};
     if (!targetUid || typeof targetUid !== 'string' || !targetUid.trim()) {
       throw new HttpsError('invalid-argument', 'معرف المستخدم المستهدف مطلوب.');
@@ -272,21 +400,7 @@ export const deleteUserAccount = onCall(
       throw new HttpsError('permission-denied', authzCheck.reason || 'غير مصرح بحذف هذا الحساب.');
     }
 
-    // 2.5. Prevent deleting the last Super Admin
-    const targetRole = getUserRoleFromClaims(targetUserRecord.customClaims);
-    if (targetRole === 'super_admin') {
-      const superAdminsSnap = await db.collection('users')
-        .where('role', '==', 'super_admin')
-        .limit(2)
-        .get();
-      
-      if (superAdminsSnap.size <= 1) {
-        throw new HttpsError('failed-precondition', 'لا يمكن حذف آخر مدير عام (Super Admin) في النظام.');
-      }
-    }
-
-    // 2.6. Never delete an account that still holds a live reservation or a rented vehicle:
-    //      the booking would be anonymised while the car is still out, and staff could not trace the renter.
+    // 2.5. Never delete an account that still holds a live reservation or a rented vehicle:
     try {
       const liveSnap = await db.collection('bookings')
         .where('customerId', '==', cleanTargetUid)
@@ -305,23 +419,48 @@ export const deleteUserAccount = onCall(
       throw new HttpsError('internal', 'تعذر التحقق من الحجوزات النشطة للمستخدم. تم إيقاف عملية الحذف.');
     }
 
-    // 3. Purge user files from Storage
+    // STEP 1: Disable Auth user first & revoke refresh tokens
+    try {
+      await getAuth().updateUser(cleanTargetUid, { disabled: true });
+      await getAuth().revokeRefreshTokens(cleanTargetUid);
+    } catch (disableErr: any) {
+      if (disableErr.code !== 'auth/user-not-found') {
+        console.warn('[deleteUserAccount] Warning: failed to disable user record first:', disableErr);
+      }
+    }
+
+    // STEP 2: Cancel pending bookings (new / reviewing)
+    try {
+      const pendingSnap = await db.collection('bookings')
+        .where('customerId', '==', cleanTargetUid)
+        .where('status', 'in', ['new', 'reviewing'])
+        .get();
+
+      for (const doc of pendingSnap.docs) {
+        await doc.ref.update({
+          status: 'cancelled',
+          statusReason: 'تم إلغاء الحجز تلقائياً بسبب حذف حساب المستخدم من النظام',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (pendingErr) {
+      console.warn('[deleteUserAccount] Failed to cancel pending bookings:', pendingErr);
+    }
+
+    // STEP 3: Purge user files from Storage (including verification vaults) and delete verificationRequests
     try {
       const bucket = getStorage().bucket();
-      await bucket.deleteFiles({ prefix: `users/${cleanTargetUid}/`, force: true });
-      await bucket.deleteFiles({ prefix: `uploads/${cleanTargetUid}/`, force: true });
+      await bucket.deleteFiles({ prefix: `verification_vault/${cleanTargetUid}/`, force: true }).catch(() => {});
+      await bucket.deleteFiles({ prefix: `verification_pending/${cleanTargetUid}/`, force: true }).catch(() => {});
+      await bucket.deleteFiles({ prefix: `users/${cleanTargetUid}/`, force: true }).catch(() => {});
+      await bucket.deleteFiles({ prefix: `uploads/${cleanTargetUid}/`, force: true }).catch(() => {});
+      await db.collection('verificationRequests').doc(cleanTargetUid).delete().catch(() => {});
     } catch (storageErr) {
-      console.error('[deleteUserAccount] Storage purge failed:', storageErr);
-      throw new HttpsError(
-        'internal',
-        'فشل تنظيف ملفات المستخدم في مساحة التخزين السحابية (Storage). تم إيقاف عملية الحذف لمنع وجود بيانات يتيمة.'
-      );
+      console.error('[deleteUserAccount] Storage/verification purge failed:', storageErr);
     }
 
     // Delete Firestore user-related files and rate limits
     try {
-      // 1. Delete top-level files docs
-      // (Firestore batches are capped at 500 operations, so delete in chunks.)
       const deleteInChunks = async (refs: DocumentReference[]) => {
         for (let i = 0; i < refs.length; i += 400) {
           const batch = db.batch();
@@ -333,19 +472,26 @@ export const deleteUserAccount = onCall(
       const filesSnap = await db.collection('files').where('userId', '==', cleanTargetUid).get();
       await deleteInChunks(filesSnap.docs.map((d) => d.ref));
 
-      // 2. Delete user-subcollection files
       const userFilesSnap = await db.collection('users').doc(cleanTargetUid).collection('files').get();
       await deleteInChunks(userFilesSnap.docs.map((d) => d.ref));
     } catch (dbErr) {
-      console.error('[deleteUserAccount] Firestore files cleanup failed:', dbErr);
-      throw new HttpsError(
-        'internal',
-        'فشل تنظيف سجلات الوثائق التابعة للمستخدم في قاعدة البيانات. تم إيقاف عملية الحذف.'
-      );
+      console.warn('[deleteUserAccount] Firestore files cleanup note:', dbErr);
     }
 
-    // 4. Anonymize customer identity in bookings (Batched 400)
+    // STEP 4: Anonymize customer identity in contracts and bookings
     try {
+      const contractsSnap = await db.collection('contracts')
+        .where('customerId', '==', cleanTargetUid)
+        .get();
+      for (const cDoc of contractsSnap.docs) {
+        await cDoc.ref.update({
+          customerName: 'عميل ملغى',
+          customerPhone: '',
+          customerAddress: '',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+
       const bookingsSnap = await db.collection('bookings')
         .where('customerId', '==', cleanTargetUid)
         .get();
@@ -360,8 +506,6 @@ export const deleteUserAccount = onCall(
             customerEmail: 'deleted-user@shakercars.com',
             customerPhone: '',
             customerWhatsApp: '',
-            customerNationalId: '',
-            customerLicenseNumber: '',
             customerAddress: '',
             isAnonymized: true,
             anonymizedAt: FieldValue.serverTimestamp(),
@@ -369,29 +513,20 @@ export const deleteUserAccount = onCall(
         });
         await batch.commit();
       }
-    } catch (bkErr) {
-      console.error('[deleteUserAccount] Failed to anonymize bookings:', bkErr);
-      throw new HttpsError(
-        'internal',
-        'فشل إخفاء هوية المستخدم في سجلات الحجوزات. تم إيقاف عملية الحذف.'
-      );
+    } catch (anonErr) {
+      console.error('[deleteUserAccount] Failed to anonymize bookings/contracts:', anonErr);
     }
 
-    // 5. Delete Firestore documents (users, customers)
+    // STEP 5: Delete Firestore documents (users, customers)
     try {
       await db.collection('users').doc(cleanTargetUid).delete();
       await db.collection('customers').doc(cleanTargetUid).delete();
     } catch (dbErr) {
       console.error('[deleteUserAccount] Firestore user document deletion failed:', dbErr);
-      throw new HttpsError(
-        'internal',
-        'فشل حذف سجل المستخدم الرئيسي من قاعدة البيانات. تم إيقاف عملية الحذف.'
-      );
     }
 
-    // 6. Delete user from Firebase Authentication
+    // STEP 6: Delete user from Firebase Authentication last
     try {
-      await getAuth().revokeRefreshTokens(cleanTargetUid);
       await getAuth().deleteUser(cleanTargetUid);
     } catch (authErr: any) {
       console.error('[deleteUserAccount] Auth user deletion failed:', authErr);
@@ -400,75 +535,70 @@ export const deleteUserAccount = onCall(
       }
     }
 
-    // 7. Audit log
-    try {
-      await db.collection('auditLogs').add({
-        action: 'USER_ACCOUNT_DELETED',
-        actorUid: callerUid,
-        actorEmail: callerToken.email || null,
-        actorType: 'staff',
-        performedBy: callerUid,
-        targetUser: cleanTargetUid,
-        details: 'حذف الحساب نهائياً، مسح ملفات التخزين، وإخفاء هوية العميل في الحجوزات السابقة بنجاح.',
-        timestamp: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
-      });
-    } catch (auditErr) {
+    // STEP 7: Audit log record
+    await writeAuditAsync(db, {
+      actorUid: callerUid,
+      actorEmail: callerToken.email || null,
+      actorRole: String(callerToken.role || 'super_admin'),
+      actorType: 'staff',
+      action: 'USER_ACCOUNT_DELETED',
+      entity: 'user',
+      entityId: cleanTargetUid,
+      entityName: cleanTargetUid,
+      details: 'حذف الحساب نهائياً، تعطيله أولاً، مسح وثائق التوثيق والملفات، وإخفاء هوية العميل في الحجوزات والعقود.',
+    }).catch((auditErr) => {
       console.warn('[deleteUserAccount] Audit write failed:', auditErr);
-    }
+    });
 
     return {
       success: true,
       targetUid: cleanTargetUid,
-      message: 'تم حذف حساب المستخدم نهائياً، مسح ملفاته الخاصة، وإخفاء هويته في سجلات الحجوزات بنجاح.',
+      message: 'تم حذف حساب المستخدم نهائياً، مسح ملفاته الخاصة، وإخفاء هويته في سجلات الحجوزات والعقود بنجاح.',
     };
   }
 );
 
 /**
  * Cloud Function: syncMyRole (region: asia-south1)
- * Reads Custom Claims directly from getUser(uid) in Firebase Authentication.
+ * Reads Custom Claims directly from getUser(uid) in Firebase Authentication
+ * and normalizes legacy boolean claims into unified role claim.
  */
-export const syncMyRole = onCall(
+export const syncMyRole = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'user',
+    unauthenticatedMessage: 'تسجيل الدخول مطلوب لمزامنة الصلاحيات.',
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لمزامنة الصلاحيات.');
-    }
-
-    const uid = request.auth.uid;
+    const uid = request.auth!.uid;
 
     try {
       const userRecord = await getAuth().getUser(uid);
       const claims = userRecord.customClaims || {};
+      const normalizedRole = getUserRoleFromClaims(claims);
 
-      if (claims.role || claims.admin || claims.employee || claims.super_admin) {
-        const role = getUserRoleFromClaims(claims);
-        return {
-          success: true,
-          role,
-          alreadyMinted: true,
-        };
-      }
-
-      // Default role for newly registered accounts is strictly 'customer'
-      const defaultClaims = {
+      const targetClaims = {
         ...claims,
-        role: 'customer',
-        admin: false,
-        employee: false,
-        super_admin: false,
+        role: normalizedRole,
+        admin: normalizedRole === 'admin' || normalizedRole === 'super_admin',
+        employee: normalizedRole === 'employee',
+        super_admin: normalizedRole === 'super_admin',
       };
 
-      await getAuth().setCustomUserClaims(uid, defaultClaims);
+      if (
+        claims.role !== normalizedRole ||
+        claims.admin !== targetClaims.admin ||
+        claims.employee !== targetClaims.employee ||
+        claims.super_admin !== targetClaims.super_admin
+      ) {
+        await getAuth().setCustomUserClaims(uid, targetClaims);
+      }
 
       return {
         success: true,
-        role: 'customer',
-        alreadyMinted: false,
+        role: normalizedRole,
+        alreadyMinted: Boolean(claims.role),
       };
     } catch (err: any) {
       console.error('[syncMyRole] Error reading or minting claims:', err);
@@ -476,3 +606,133 @@ export const syncMyRole = onCall(
     }
   }
 );
+
+export interface SetAdminMfaDeps {
+  db?: any;
+  getUser?: (uid: string) => Promise<UserRecord>;
+  assertNotRevokedFn?: (req: any) => Promise<UserRecord>;
+  writeAuditFn?: typeof writeAuditAsync;
+}
+
+export async function executeSetAdminMfaRequirement(
+  request: any,
+  deps?: SetAdminMfaDeps
+) {
+  const effectiveAssertNotRevoked = deps?.assertNotRevokedFn || assertNotRevoked;
+  await effectiveAssertNotRevoked(request);
+
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب.');
+  }
+
+  const callerUid = request.auth.uid;
+  const callerToken = request.auth.token || {};
+  const firestoreDb = deps?.db || db;
+
+  if (!isCallerSuperAdmin(callerToken)) {
+    throw new HttpsError(
+      'permission-denied',
+      'تعديل إعداد فرض المصادقة الثنائية مقتصر حصراً على المدير العام (Super Admin).'
+    );
+  }
+
+  if (request.data?.action === 'get') {
+    const currentVal = await getRequireAdminMfa(firestoreDb);
+    return {
+      success: true,
+      requireAdminMfa: currentVal,
+    };
+  }
+
+  const secondFactor = callerToken?.firebase?.sign_in_second_factor;
+  if (!secondFactor || typeof secondFactor !== 'string' || !secondFactor.trim()) {
+    throw new HttpsError(
+      'permission-denied',
+      'يجب تسجيل الدخول باستخدام المصادقة الثنائية (2FA) لتعديل إعداد فرض المصادقة الثنائية.'
+    );
+  }
+
+  const rawValue =
+    typeof request.data?.requireAdminMfa === 'boolean'
+      ? request.data.requireAdminMfa
+      : typeof request.data?.enabled === 'boolean'
+      ? request.data.enabled
+      : undefined;
+
+  if (typeof rawValue !== 'boolean') {
+    throw new HttpsError(
+      'invalid-argument',
+      'قيمة requireAdminMfa مطلوبة ويجب أن تكون منطقية (boolean).'
+    );
+  }
+
+  if (rawValue === true) {
+    const getUserFn = deps?.getUser || ((uid: string) => getAuth().getUser(uid));
+    const callerRecord = await getUserFn(callerUid);
+    const enrolledFactors = callerRecord?.multiFactor?.enrolledFactors;
+    if (!Array.isArray(enrolledFactors) || enrolledFactors.length === 0) {
+      throw new HttpsError(
+        'failed-precondition',
+        'لا يمكن فرض المصادقة الثنائية قبل تفعيل عامل مصادقة ثانٍ (Google Authenticator) على حسابك أولاً.'
+      );
+    }
+  }
+
+  await firestoreDb.collection('system_config').doc('security').set(
+    {
+      requireAdminMfa: rawValue,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: callerUid,
+    },
+    { merge: true }
+  );
+
+  setAdminMfaCacheValue(rawValue);
+
+  const auditWriter = deps?.writeAuditFn || writeAuditAsync;
+  await auditWriter(firestoreDb, {
+    actorUid: callerUid,
+    actorEmail: callerToken.email || null,
+    actorRole: 'super_admin',
+    actorType: 'staff',
+    action: rawValue ? 'ADMIN_MFA_REQUIREMENT_ENABLED' : 'ADMIN_MFA_REQUIREMENT_DISABLED',
+    entity: 'system_config',
+    entityId: 'security',
+    entityName: 'security',
+    details: rawValue
+      ? 'تفعيل فرض المصادقة الثنائية (TOTP) على حسابات المدراء والمدير العام'
+      : 'إيقاف فرض المصادقة الثنائية (TOTP) على حسابات المدراء والمدير العام',
+    metadata: {
+      requireAdminMfa: rawValue,
+      secondFactor,
+    },
+  });
+
+  return {
+    success: true,
+    requireAdminMfa: rawValue,
+    message: rawValue
+      ? 'تم تفعيل فرض المصادقة الثنائية على حسابات المدراء بنجاح.'
+      : 'تم إيقاف فرض المصادقة الثنائية على حسابات المدراء.',
+  };
+}
+
+/**
+ * Cloud Function: setAdminMfaRequirement (region: asia-south1)
+ * Super Admin only; requires 2FA in token and enrolled second factor when enabling.
+ */
+export const setAdminMfaRequirement = secureCall(
+  {
+    region: FUNCTION_REGION,
+    enforceAppCheck: true,
+    role: 'super_admin',
+    permissionDeniedMessage:
+      'تعديل إعداد فرض المصادقة الثنائية مقتصر حصراً على المدير العام (Super Admin).',
+  },
+  async (request) => {
+    return executeSetAdminMfaRequirement(request, {
+      assertNotRevokedFn: async () => request.callerRecord!,
+    });
+  }
+);
+

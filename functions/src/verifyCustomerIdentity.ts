@@ -1,11 +1,15 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import * as crypto from 'crypto';
 import { FUNCTION_REGION, DATABASE_ID, DEFAULT_STORAGE_BUCKET } from './constants';
-import { isCallerAdmin, assertNotRevoked } from './authz';
+import { isCallerAdmin } from './authz';
+import { isCallerStaff, isStaffRole, getUserRoleFromClaims } from './roles';
+import { secureCall } from './secureCall';
+import { writeAuditAsync } from './audit';
 import { inspectServerImage, analyzeServerQuality } from './imageQuality';
 
 const db = getFirestore(getApp(), DATABASE_ID);
@@ -37,6 +41,40 @@ const MAX_ATTEMPTS_30_DAYS = 5;
 const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const SIGNED_URL_TTL_MS = 60 * 1000; // 60 seconds
 
+const STAFF_VERIFICATION_DENIED_MESSAGE =
+  'نظام توثيق الهوية مخصص لحسابات العملاء فقط ولا ينطبق على الموظفين أو الإدارة.';
+
+async function assertCallerIsCustomer(request: any): Promise<void> {
+  if (isCallerStaff(request.auth?.token) || isCallerStaff(request.callerRecord?.customClaims)) {
+    throw new HttpsError('permission-denied', STAFF_VERIFICATION_DENIED_MESSAGE);
+  }
+  const userSnap = await db.collection('users').doc(request.auth!.uid).get();
+  if (userSnap.exists && isStaffRole(userSnap.data()?.role)) {
+    throw new HttpsError('permission-denied', STAFF_VERIFICATION_DENIED_MESSAGE);
+  }
+}
+
+async function assertTargetIsCustomer(targetUserId: string): Promise<void> {
+  let targetRecord;
+  try {
+    targetRecord = await getAuth().getUser(targetUserId);
+  } catch (err: any) {
+    if (err?.code === 'auth/user-not-found') {
+      throw new HttpsError('not-found', 'المستخدم المستهدف غير موجود في نظام التوثيق.');
+    }
+    throw new HttpsError('internal', 'تعذر التحقق من صلاحيات الحساب المستهدف.');
+  }
+
+  if (getUserRoleFromClaims(targetRecord.customClaims || {}) !== 'customer') {
+    throw new HttpsError('permission-denied', STAFF_VERIFICATION_DENIED_MESSAGE);
+  }
+
+  const userSnap = await db.collection('users').doc(targetUserId).get();
+  if (userSnap.exists && isStaffRole(userSnap.data()?.role)) {
+    throw new HttpsError('permission-denied', STAFF_VERIFICATION_DENIED_MESSAGE);
+  }
+}
+
 /**
  * Validates attempt rate limit (max 5 within 30 days)
  */
@@ -49,7 +87,14 @@ async function checkVerificationAttemptLimit(userId: string): Promise<number> {
     .where('targetUserId', '==', userId)
     .get();
 
-  return logsSnap.docs.filter((d) => String(d.data().timestamp || '') >= thirtyDaysAgo).length;
+  return logsSnap.docs.filter((d) => {
+    const rawTs = d.data().timestamp || d.data().createdAt;
+    const iso =
+      rawTs && typeof rawTs.toDate === 'function'
+        ? rawTs.toDate().toISOString()
+        : String(rawTs || '');
+    return iso >= thirtyDaysAgo;
+  }).length;
 }
 
 const MAX_SESSIONS_PER_HOUR = 15;
@@ -85,8 +130,8 @@ async function consumeSessionQuota(userId: string, userEmail: string): Promise<v
         identityDocType: 'national_id',
         docs: {},
         attempt: 0,
-        createdAt: nowIso,
-        updatedAt: nowIso,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
         ...quota,
       });
     } else {
@@ -98,18 +143,18 @@ async function consumeSessionQuota(userId: string, userEmail: string): Promise<v
 // =============================================================================
 // 1. INITIATE VERIFICATION SESSION (Single-use Nonce, 5-min TTL)
 // =============================================================================
-export const initiateVerificationSession = onCall(
+export const initiateVerificationSession = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'user',
+    unauthenticatedMessage: 'تسجيل الدخول مطلوب لبدء جلسة التوثيق.',
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لبدء جلسة التوثيق.');
-    }
+    const callerRecord = request.callerRecord!;
+    const userId = request.auth!.uid;
 
-    const callerRecord = await assertNotRevoked(request);
-    const userId = request.auth.uid;
+    await assertCallerIsCustomer(request);
 
     // Check account status
     if (callerRecord.disabled) {
@@ -148,7 +193,7 @@ export const initiateVerificationSession = onCall(
     await db.collection('verificationSessions').doc(`${userId}_${nonce}`).set({
       userId,
       nonce,
-      createdAt: new Date(now).toISOString(),
+      createdAt: FieldValue.serverTimestamp(),
       expiresAt,
       ip: getClientIp(request.rawRequest),
       userAgent: getUserAgent(request.rawRequest),
@@ -169,20 +214,19 @@ export const initiateVerificationSession = onCall(
 // =============================================================================
 // 2. SUBMIT VERIFICATION DOCUMENT (Server-side camera JPEG upload)
 // =============================================================================
-export const submitVerificationDocument = onCall(
+export const submitVerificationDocument = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'user',
+    unauthenticatedMessage: 'تسجيل الدخول مطلوب لرفع وثيقة التوثيق.',
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لرفع وثيقة التوثيق.');
-    }
-
-    await assertNotRevoked(request);
-    const userId = request.auth.uid;
-    const userEmail = (request.auth.token?.email || '').toLowerCase().trim();
+    const userId = request.auth!.uid;
+    const userEmail = (request.auth!.token?.email || '').toLowerCase().trim();
     const data = request.data || {};
+
+    await assertCallerIsCustomer(request);
 
     const nonce = sanitizeString(data.nonce ?? data.sessionId, 100);
     const rawDocType = data.docType ?? data.docKey;
@@ -272,13 +316,20 @@ export const submitVerificationDocument = onCall(
 
     // Rejection of edited or screenshot photos
     if (inspectResult.suspiciousEditorFound) {
-      await db.collection('auditLogs').add({
+      await writeAuditAsync(db, {
         action: 'SUSPICIOUS_IMAGE_EDITOR_REJECTED',
         actorUid: userId,
         actorEmail: userEmail,
-        editor: inspectResult.suspiciousEditorFound,
-        timestamp: new Date().toISOString(),
-        createdAt: FieldValue.serverTimestamp(),
+        actorRole: 'customer',
+        actorType: 'customer',
+        entity: 'verification',
+        entityId: userId,
+        targetUserId: userId,
+        details: `رفض وثيقة توثيق لوجود آثار تعديل برمجي (${inspectResult.suspiciousEditorFound})`,
+        metadata: {
+          editor: inspectResult.suspiciousEditorFound,
+          docType,
+        },
       });
       throw new HttpsError(
         'invalid-argument',
@@ -346,8 +397,8 @@ export const submitVerificationDocument = onCall(
             identityDocType,
             docs: { [docType]: docRecord },
             attempt: 0,
-            createdAt: nowIso,
-            updatedAt: nowIso,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           });
         } else {
           tx.update(reqRef, {
@@ -381,21 +432,21 @@ export const submitVerificationDocument = onCall(
 // =============================================================================
 // 3. SUBMIT FINAL VERIFICATION REQUEST (Locks request for review)
 // =============================================================================
-export const submitVerificationRequest = onCall(
+export const submitVerificationRequest = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'user',
+    unauthenticatedMessage: 'تسجيل الدخول مطلوب لإرسال طلب التوثيق.',
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لإرسال طلب التوثيق.');
-    }
-
-    const callerRecord = await assertNotRevoked(request);
-    const userId = request.auth.uid;
-    const userEmail = (request.auth.token?.email || callerRecord.email || '').toLowerCase().trim();
+    const callerRecord = request.callerRecord!;
+    const userId = request.auth!.uid;
+    const userEmail = (request.auth!.token?.email || callerRecord.email || '').toLowerCase().trim();
     const data = request.data || {};
     const identityDocType = data.identityDocType === 'passport' ? 'passport' : 'national_id';
+
+    await assertCallerIsCustomer(request);
 
     const reqRef = db.collection('verificationRequests').doc(userId);
     const reqSnap = await reqRef.get();
@@ -420,7 +471,7 @@ export const submitVerificationRequest = onCall(
     if (!hasDriverLicense || !hasIdentityDoc) {
       throw new HttpsError(
         'failed-precondition',
-        'يجب إكمال تصوير شهادة القيادة والوثيقة الشخصية (الهوية أو الجواز) قبل إرسال الطلب.'
+        'يجب إكمال تصوير كافة الوثائق المطلوبة وإثبات الشخصية قبل إرسال الطلب.'
       );
     }
 
@@ -468,16 +519,20 @@ export const submitVerificationRequest = onCall(
     }
 
     // Audit log
-    await db.collection('auditLogs').add({
+    await writeAuditAsync(db, {
       action: 'VERIFICATION_SUBMITTED',
       actorUid: userId,
       actorEmail: userEmail,
+      actorRole: 'customer',
       actorType: 'customer',
+      entity: 'verification',
+      entityId: userId,
       targetUserId: userId,
-      attempt: newAttempt,
-      identityDocType,
-      timestamp: nowIso,
-      createdAt: FieldValue.serverTimestamp(),
+      details: `إرسال طلب توثيق الهوية (المحاولة #${newAttempt})`,
+      metadata: {
+        attempt: newAttempt,
+        identityDocType,
+      },
     });
 
     return {
@@ -493,18 +548,14 @@ export const submitVerificationRequest = onCall(
 // =============================================================================
 // 4. REVIEW VERIFICATION DECISION (Admin Only: Approve / Reject)
 // =============================================================================
-export const reviewVerification = onCall(
+export const reviewVerification = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'admin',
+    permissionDeniedMessage: 'مراجعة وتوثيق الحسابات مقتصر حصراً على مدراء النظام.',
   },
   async (request) => {
-    await assertNotRevoked(request);
-
-    if (!isCallerAdmin(request.auth?.token)) {
-      throw new HttpsError('permission-denied', 'مراجعة وتوثيق الحسابات مقتصر حصراً على مدراء النظام.');
-    }
-
     const callerUid = request.auth!.uid;
     const callerEmail = request.auth!.token?.email || 'admin';
     const data = request.data || {};
@@ -527,6 +578,8 @@ export const reviewVerification = onCall(
     if (decision !== 'approve' && decision !== 'reject') {
       throw new HttpsError('invalid-argument', 'القرار غير صالح. يجب اختيار (approve) أو (reject).');
     }
+
+    await assertTargetIsCustomer(targetUserId);
 
     const reqRef = db.collection('verificationRequests').doc(targetUserId);
     const reqSnap = await reqRef.get();
@@ -619,14 +672,16 @@ export const reviewVerification = onCall(
         await custRef.set(userVerifiedPayload, { merge: true });
       }
 
-      await db.collection('auditLogs').add({
+      await writeAuditAsync(db, {
         action: 'VERIFICATION_APPROVED',
         actorUid: callerUid,
         actorEmail: callerEmail,
+        actorRole: String(request.auth.token?.role || 'admin'),
         actorType: 'staff',
+        entity: 'verification',
+        entityId: targetUserId,
         targetUserId,
-        timestamp: nowIso,
-        createdAt: FieldValue.serverTimestamp(),
+        details: `اعتماد وتوثيق حساب العميل (${targetUserId}) ونقل الوثائق إلى الخزنة المشفرة`,
       });
 
       return {
@@ -687,15 +742,19 @@ export const reviewVerification = onCall(
       await custRef.set(userRejectedPayload, { merge: true });
     }
 
-    await db.collection('auditLogs').add({
+    await writeAuditAsync(db, {
       action: 'VERIFICATION_REJECTED',
       actorUid: callerUid,
       actorEmail: callerEmail,
+      actorRole: String(request.auth.token?.role || 'admin'),
       actorType: 'staff',
+      entity: 'verification',
+      entityId: targetUserId,
       targetUserId,
-      reason: rejectionReason,
-      timestamp: nowIso,
-      createdAt: FieldValue.serverTimestamp(),
+      details: `رفض طلب توثيق الحساب (${targetUserId}): ${rejectionReason}`,
+      metadata: {
+        reason: rejectionReason,
+      },
     });
 
     return {
@@ -712,18 +771,14 @@ export const reviewVerification = onCall(
 // =============================================================================
 // 5. REVOKE VERIFICATION (Admin Only)
 // =============================================================================
-export const revokeVerification = onCall(
+export const revokeVerification = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'admin',
+    permissionDeniedMessage: 'إلغاء التوثيق مقتصر حصراً على مدراء النظام.',
   },
   async (request) => {
-    await assertNotRevoked(request);
-
-    if (!isCallerAdmin(request.auth?.token)) {
-      throw new HttpsError('permission-denied', 'إلغاء التوثيق مقتصر حصراً على مدراء النظام.');
-    }
-
     const callerUid = request.auth!.uid;
     const callerEmail = request.auth!.token?.email || 'admin';
     const data = request.data || {};
@@ -738,6 +793,8 @@ export const revokeVerification = onCall(
     if (targetUserId === callerUid) {
       throw new HttpsError('permission-denied', 'لا يمكن للمدير إلغاء توثيق حسابه بنفسه.');
     }
+
+    await assertTargetIsCustomer(targetUserId);
 
     const bucket = getStorage().bucket(DEFAULT_STORAGE_BUCKET);
     try {
@@ -784,15 +841,19 @@ export const revokeVerification = onCall(
       await custRef.set(userPayload, { merge: true });
     }
 
-    await db.collection('auditLogs').add({
+    await writeAuditAsync(db, {
       action: 'VERIFICATION_REVOKED',
       actorUid: callerUid,
       actorEmail: callerEmail,
+      actorRole: String(request.auth.token?.role || 'admin'),
       actorType: 'staff',
+      entity: 'verification',
+      entityId: targetUserId,
       targetUserId,
-      reason,
-      timestamp: nowIso,
-      createdAt: FieldValue.serverTimestamp(),
+      details: `إلغاء توثيق الحساب (${targetUserId}): ${reason}`,
+      metadata: {
+        reason,
+      },
     });
 
     return {
@@ -806,22 +867,15 @@ export const revokeVerification = onCall(
 // =============================================================================
 // 6. GET VERIFICATION DOCUMENT URL (Admin Only, 60s Signed URL + Audit Log)
 // =============================================================================
-export const getVerificationDocumentUrl = onCall(
+export const getVerificationDocumentUrl = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'admin',
+    permissionDeniedMessage:
+      'معاينة وثائق الهوية ورخص القيادة مقتصرة حصراً على مدراء النظام (Admins).',
   },
   async (request) => {
-    await assertNotRevoked(request);
-
-    // Strictly Admin or Super Admin (regular employees CANNOT view identity docs)
-    if (!isCallerAdmin(request.auth?.token)) {
-      throw new HttpsError(
-        'permission-denied',
-        'معاينة وثائق الهوية ورخص القيادة مقتصرة حصراً على مدراء النظام (Admins).'
-      );
-    }
-
     const callerUid = request.auth!.uid;
     const callerEmail = request.auth!.token?.email || 'admin';
     const data = request.data || {};
@@ -833,6 +887,8 @@ export const getVerificationDocumentUrl = onCall(
     if (!targetUserId || !docType) {
       throw new HttpsError('invalid-argument', 'معرف المستخدم ونوع الوثيقة مطلوبان.');
     }
+
+    await assertTargetIsCustomer(targetUserId);
 
     const reqRef = db.collection('verificationRequests').doc(targetUserId);
     const reqSnap = await reqRef.get();
@@ -863,16 +919,20 @@ export const getVerificationDocumentUrl = onCall(
     });
 
     // Mandatory Audit Trail for Every Single View
-    await db.collection('auditLogs').add({
+    await writeAuditAsync(db, {
       action: 'DOCUMENT_VIEWED',
       actorUid: callerUid,
       actorEmail: callerEmail,
+      actorRole: String(request.auth.token?.role || 'admin'),
       actorType: 'staff',
+      entity: 'verification',
+      entityId: targetUserId,
       targetUserId,
-      docType,
-      storagePath: docItem.storagePath,
-      timestamp: new Date().toISOString(),
-      createdAt: FieldValue.serverTimestamp(),
+      details: `معاينة وثيقة التوثيق (${docType}) للمستخدم ${targetUserId}`,
+      metadata: {
+        docType,
+        storagePath: docItem.storagePath,
+      },
     });
 
     return {
@@ -890,10 +950,12 @@ export const getVerificationDocumentUrl = onCall(
 // =============================================================================
 // 7. COMPATIBLE ROUTER: verifyCustomerIdentity
 // =============================================================================
-export const verifyCustomerIdentity = onCall(
+export const verifyCustomerIdentity = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'user',
+    unauthenticatedMessage: 'تسجيل الدخول مطلوب.',
   },
   async (request) => {
     const data = request.data || {};
@@ -918,15 +980,29 @@ export const verifyCustomerIdentity = onCall(
       return (getVerificationDocumentUrl as any).run(request);
     }
 
-    // Default: Check self status
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب.');
+    // Default: Check status (customers only; admins may inspect a specific customer by targetUserId)
+    const isAdminCaller = isCallerAdmin(request.auth?.token);
+    if (isAdminCaller && data.targetUserId) {
+      const targetUid = sanitizeString(data.targetUserId, 128);
+      await assertTargetIsCustomer(targetUid);
+      const reqSnap = await db.collection('verificationRequests').doc(targetUid).get();
+      const reqData = reqSnap.data();
+      return {
+        success: true,
+        verificationStatus: reqData?.status || 'not_started',
+        request: reqData || null,
+      };
     }
 
-    const targetUid = isCallerAdmin(request.auth?.token) && data.targetUserId
-      ? sanitizeString(data.targetUserId, 128)
-      : request.auth.uid;
+    if (isCallerStaff(request.auth?.token)) {
+      return {
+        success: true,
+        verificationStatus: 'not_started',
+        request: null,
+      };
+    }
 
+    const targetUid = request.auth!.uid;
     const reqSnap = await db.collection('verificationRequests').doc(targetUid).get();
     const reqData = reqSnap.data();
 

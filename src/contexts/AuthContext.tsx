@@ -17,20 +17,35 @@ import {
   EmailAuthProvider,
   reauthenticateWithCredential,
   updatePassword,
+  getMultiFactorResolver,
+  MultiFactorResolver,
+  MultiFactorError,
+  TotpMultiFactorGenerator,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { getArabicErrorMessage } from '../utils/firebaseErrorHandler';
 import { functionsService } from '../services/functionsService';
 import { dataService } from '../services/dataService';
+import {
+  getUserRoleFromClaims,
+  hasPopulatedRoleClaims,
+  normalizeRoleName,
+  isSuperAdminRole,
+  isSuperAdminClaims,
+  isAdminRole,
+  isAdminClaims,
+  isStaffRole,
+  isStaffClaims,
+} from '../utils/roles';
 
 interface AuthContextType {
   user: AuthUser | null;
   role: UserRole | null;
   isAuthenticated: boolean;
   isLoadingAuth: boolean;
-  loginWithEmail: (email: string, pass: string) => Promise<boolean>;
+  loginWithEmail: (email: string, pass: string) => Promise<UserRole>;
   registerWithEmail: (data: { email: string; pass: string; displayName: string; phone?: string }) => Promise<boolean>;
-  loginWithGoogle: (preferredEmail?: string) => Promise<boolean>;
+  loginWithGoogle: (preferredEmail?: string) => Promise<UserRole>;
   resetPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshClaims: () => Promise<void>;
@@ -44,6 +59,9 @@ interface AuthContextType {
   isEmployee: boolean;
   isCustomer: boolean;
   isSpecificAdminUser: boolean;
+  mfaResolver: MultiFactorResolver | null;
+  verifyMfaSignIn: (code: string) => Promise<UserRole>;
+  cancelMfaSignIn: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -87,36 +105,19 @@ async function resolveRoleFromToken(fbUser: FirebaseUser, forceRefresh = false):
     let tokenResult = await fbUser.getIdTokenResult(forceRefresh);
     let claims = tokenResult.claims || {};
 
-    if (!claims.role && !claims.super_admin && !claims.superAdmin && !claims.admin && !claims.employee && !forceRefresh
-        && !claimsRefreshAttempted.has(fbUser.uid)) {
+    if (
+      !hasPopulatedRoleClaims(claims) &&
+      !forceRefresh &&
+      !claimsRefreshAttempted.has(fbUser.uid)
+    ) {
       // Force-refreshing emits onIdTokenChanged again; attempt it once per user to avoid a refresh loop.
       claimsRefreshAttempted.add(fbUser.uid);
       tokenResult = await fbUser.getIdTokenResult(true);
       claims = tokenResult.claims || {};
     }
 
-    if (claims.role && typeof claims.role === 'string') {
-      const cr = claims.role.toLowerCase().trim();
-      if (cr === 'super_admin' || cr === 'superadmin' || cr === 'owner') {
-        return 'super_admin';
-      }
-      if (cr === 'admin') {
-        return 'admin';
-      }
-      if (cr === 'employee' || cr === 'staff' || cr === 'manager') {
-        return 'employee';
-      }
-      return 'customer';
-    }
-
-    if (claims.super_admin === true || claims.superAdmin === true || claims.owner === true) {
-      return 'super_admin';
-    }
-    if (claims.admin === true) {
-      return 'admin';
-    }
-    if (claims.employee === true || claims.staff === true || claims.manager === true) {
-      return 'employee';
+    if (hasPopulatedRoleClaims(claims)) {
+      return getUserRoleFromClaims(claims);
     }
 
     // Invoke syncMyRole server function (once per user per session)
@@ -126,17 +127,7 @@ async function resolveRoleFromToken(fbUser: FirebaseUser, forceRefresh = false):
       const syncRes = await functionsService.syncMyRole();
       if (syncRes.success && syncRes.data?.role) {
         await fbUser.getIdTokenResult(true);
-        const syncedRole = syncRes.data.role.toLowerCase().trim();
-        if (syncedRole === 'super_admin' || syncedRole === 'superadmin' || syncedRole === 'owner') {
-          return 'super_admin';
-        }
-        if (syncedRole === 'admin') {
-          return 'admin';
-        }
-        if (syncedRole === 'employee' || syncedRole === 'staff' || syncedRole === 'manager') {
-          return 'employee';
-        }
-        return 'customer';
+        return normalizeRoleName(syncRes.data.role);
       }
     } catch {}
 
@@ -149,14 +140,18 @@ async function resolveRoleFromToken(fbUser: FirebaseUser, forceRefresh = false):
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(Boolean(isFirebaseConfigured));
+  const [tokenClaims, setTokenClaims] = useState<Record<string, unknown>>({});
+  const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(Boolean(isFirebaseConfigured && auth));
   // Whether users/{uid}.phone exists. 'unknown' until the Firestore profile has been read (avoids flashing the phone gate).
   const [phoneStatus, setPhoneStatus] = useState<'unknown' | 'missing' | 'present'>('unknown');
+  const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null);
 
   // Centralized Firebase auth listener using onIdTokenChanged
   useEffect(() => {
     if (!isFirebaseConfigured || !auth) {
-      setIsLoadingAuth(false);
+      if (isLoadingAuth !== false) {
+        setTimeout(() => setIsLoadingAuth(false), 0);
+      }
       return;
     }
 
@@ -182,6 +177,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         if (fbUser) {
           const userEmail = (fbUser.email || '').toLowerCase().trim();
+          const tokenResult = await fbUser.getIdTokenResult();
+          setTokenClaims(tokenResult.claims || {});
           const role: UserRole = await resolveRoleFromToken(fbUser);
           if (cancelledRun()) return;
 
@@ -250,7 +247,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     ...prev,
                     displayName: userData.displayName || prev.displayName,
                     phone: userData.phone || prev.phone,
+                    address: userData.address !== undefined ? userData.address : prev.address,
                     createdAt: userData.createdAt || prev.createdAt,
+                    verificationStatus: userData.verificationStatus || prev.verificationStatus,
+                    verified: userData.verified !== undefined ? userData.verified : prev.verified,
                   };
                 });
               };
@@ -331,10 +331,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (userDocUnsubscribe) userDocUnsubscribe();
       clearRetries();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Login with Email & Password
-  const loginWithEmail = async (email: string, pass: string): Promise<boolean> => {
+  const loginWithEmail = async (email: string, pass: string): Promise<UserRole> => {
     const cleanEmail = email.toLowerCase().trim();
     if (!cleanEmail) throw new Error('يرجى إدخال البريد الإلكتروني.');
     if (!pass) throw new Error('يرجى إدخال كلمة المرور.');
@@ -342,9 +343,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isFirebaseConfigured && auth) {
       try {
         const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-        await resolveRoleFromToken(cred.user, true);
-        return true;
+        const tokenResult = await cred.user.getIdTokenResult(true);
+        setTokenClaims(tokenResult.claims || {});
+        const role = await resolveRoleFromToken(cred.user, true);
+        const authUser: AuthUser = {
+          uid: cred.user.uid,
+          email: cleanEmail,
+          displayName: cred.user.displayName || cleanEmail.split('@')[0] || 'مستخدم',
+          phone: cred.user.phoneNumber || undefined,
+          role,
+          createdAt: cred.user.metadata?.creationTime,
+          emailVerified: cred.user.emailVerified,
+          isPasswordProvider: cred.user.providerData.some(p => p.providerId === 'password'),
+        };
+        setUser(authUser);
+        setMfaResolver(null);
+        return role;
       } catch (err: unknown) {
+        if ((err as { code?: string })?.code === 'auth/multi-factor-auth-required') {
+          const resolver = getMultiFactorResolver(auth, err as MultiFactorError);
+          setMfaResolver(resolver);
+          const mfaErr = new Error('يرجى إدخال رمز التحقق المكوّن من 6 أرقام من تطبيق المصادقة الثنائية.') as Error & { code?: string };
+          mfaErr.code = 'auth/multi-factor-auth-required';
+          throw mfaErr;
+        }
         throw new Error(err instanceof Error ? getArabicErrorMessage(err) : 'حدث خطأ غير معروف');
       }
     }
@@ -364,7 +386,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isPasswordProvider: found.isPasswordProvider ?? true,
       };
       setUser(authUser);
-      return true;
+      return found.role;
     }
 
     throw new Error('خدمة التوثيق السحابية غير متصلة.');
@@ -484,7 +506,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Google Sign-In
-  const loginWithGoogle = async (preferredEmail?: string): Promise<boolean> => {
+  const loginWithGoogle = async (preferredEmail?: string): Promise<UserRole> => {
     if (isFirebaseConfigured && auth) {
       try {
         const provider = new GoogleAuthProvider();
@@ -503,7 +525,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           if ((popupErr as { code?: string })?.code === 'auth/popup-blocked') {
             await signInWithRedirect(auth, provider);
-            return true;
+            return 'customer';
           }
           if ((popupErr as { code?: string })?.code === 'auth/account-exists-with-different-credential') {
             throw new Error('يوجد حساب مسجل مسبقاً بنفس البريد الإلكتروني باستخدام طريقة دخول مختلفة.');
@@ -511,9 +533,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw popupErr;
         }
 
-        await resolveRoleFromToken(fbUser, true);
-        return true;
+        const tokenResult = await fbUser.getIdTokenResult(true);
+        setTokenClaims(tokenResult.claims || {});
+        const role = await resolveRoleFromToken(fbUser, true);
+        const authUser: AuthUser = {
+          uid: fbUser.uid,
+          email: (fbUser.email || '').toLowerCase().trim(),
+          displayName: fbUser.displayName || (fbUser.email || '').split('@')[0] || 'مستخدم',
+          phone: fbUser.phoneNumber || undefined,
+          role,
+          createdAt: fbUser.metadata?.creationTime,
+          emailVerified: fbUser.emailVerified,
+          isPasswordProvider: fbUser.providerData.some(p => p.providerId === 'google.com'),
+        };
+        setUser(authUser);
+        setMfaResolver(null);
+        return role;
       } catch (err: unknown) {
+        if ((err as { code?: string })?.code === 'auth/multi-factor-auth-required') {
+          const resolver = getMultiFactorResolver(auth, err as MultiFactorError);
+          setMfaResolver(resolver);
+          const mfaErr = new Error('يرجى إدخال رمز التحقق المكوّن من 6 أرقام من تطبيق المصادقة الثنائية.') as Error & { code?: string };
+          mfaErr.code = 'auth/multi-factor-auth-required';
+          throw mfaErr;
+        }
         throw new Error(err instanceof Error ? getArabicErrorMessage(err) : 'حدث خطأ غير معروف');
       }
     }
@@ -536,10 +579,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveDemoUsers([...demoUsers, found]);
       }
       setUser(found);
-      return true;
+      return found.role;
     }
 
     throw new Error('خدمة التوثيق السحابية غير متصلة.');
+  };
+
+  const cancelMfaSignIn = () => {
+    setMfaResolver(null);
+  };
+
+  const verifyMfaSignIn = async (code: string): Promise<UserRole> => {
+    if (!mfaResolver) {
+      throw new Error('انتهت صلاحية جلسة التحقق الثنائي. يرجى إعادة تسجيل الدخول من جديد.');
+    }
+    const cleanCode = code.replace(/\D/g, '').trim();
+    if (cleanCode.length !== 6) {
+      throw new Error('يرجى إدخال رمز التحقق المكوّن من 6 أرقام.');
+    }
+
+    const totpHint = mfaResolver.hints.find(
+      (h) => h.factorId === TotpMultiFactorGenerator.FACTOR_ID
+    );
+    if (!totpHint) {
+      throw new Error('لم يتم العثور على عامل مصادقة ثنائية (Google Authenticator) مسجل لهذا الحساب.');
+    }
+
+    try {
+      const assertion = TotpMultiFactorGenerator.assertionForSignIn(totpHint.uid, cleanCode);
+      const cred = await mfaResolver.resolveSignIn(assertion);
+      setMfaResolver(null);
+
+      const fbUser = cred.user;
+      const tokenResult = await fbUser.getIdTokenResult(true);
+      setTokenClaims(tokenResult.claims || {});
+      const resolvedRole = await resolveRoleFromToken(fbUser, true);
+      const cleanEmail = (fbUser.email || '').toLowerCase().trim();
+      const authUser: AuthUser = {
+        uid: fbUser.uid,
+        email: cleanEmail,
+        displayName: fbUser.displayName || cleanEmail.split('@')[0] || 'مستخدم',
+        phone: fbUser.phoneNumber || undefined,
+        role: resolvedRole,
+        createdAt: fbUser.metadata?.creationTime,
+        emailVerified: fbUser.emailVerified,
+        isPasswordProvider: fbUser.providerData.some((p) => p.providerId === 'password'),
+      };
+      setUser(authUser);
+      return resolvedRole;
+    } catch (err: unknown) {
+      const errCode = (err as { code?: string })?.code;
+      if (errCode === 'auth/invalid-verification-code') {
+        throw new Error('رمز التحقق غير صحيح. يرجى التأكد من الرمز المكوّن من 6 أرقام في تطبيق المصادقة.');
+      }
+      if (errCode === 'auth/missing-verification-code') {
+        throw new Error('يرجى إدخال رمز التحقق المكوّن من 6 أرقام.');
+      }
+      if (
+        errCode === 'auth/code-expired' ||
+        errCode === 'auth/user-token-expired' ||
+        errCode === 'auth/invalid-multi-factor-session'
+      ) {
+        setMfaResolver(null);
+        throw new Error('انتهت صلاحية جلسة التحقق الثنائي. يرجى إعادة تسجيل الدخول والمحاولة مجدداً.');
+      }
+      if (errCode === 'auth/too-many-requests') {
+        throw new Error('تم تجاوز الحد المسموح من المحاولات. يرجى الانتظار قليلاً قبل المحاولة مجدداً.');
+      }
+      throw new Error(err instanceof Error ? getArabicErrorMessage(err) : 'فشل التحقق من الرمز الثنائي.');
+    }
   };
 
   const resetPassword = async (email: string): Promise<void> => {
@@ -574,6 +682,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setUser(null);
+    setTokenClaims({});
     try { localStorage.removeItem('shaker_auth_session_v1'); } catch {}
     dataService.purgeSensitiveStorage();
 
@@ -585,6 +694,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshClaims = async (): Promise<void> => {
     if (isFirebaseConfigured && auth && auth.currentUser) {
       try {
+        const tokenResult = await auth.currentUser.getIdTokenResult(true);
+        setTokenClaims(tokenResult.claims || {});
         const role = await resolveRoleFromToken(auth.currentUser, true);
         setUser(prev => prev ? { ...prev, role } : null);
       } catch (err) {
@@ -658,11 +769,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setPhoneStatus('present');
   };
 
-  const role = user?.role || null;
-  const isSuperAdmin = Boolean(user && (role === 'super_admin'));
-  const isAdmin = Boolean(user && (isSuperAdmin || role === 'admin'));
-  const isEmployee = Boolean(user && (isAdmin || role === 'employee'));
-  const isCustomer = Boolean(user && (role === 'customer' || !role));
+  const role = user?.role || (typeof tokenClaims.role === 'string' ? (tokenClaims.role as UserRole) : null);
+  const isSuperAdmin = Boolean(user && (isSuperAdminRole(role) || isSuperAdminClaims(tokenClaims)));
+  const isAdmin = Boolean(user && (isSuperAdmin || isAdminRole(role) || isAdminClaims(tokenClaims)));
+  const isEmployee = Boolean(user && (isAdmin || isStaffRole(role) || isStaffClaims(tokenClaims)));
+  const isCustomer = Boolean(user && !isAdmin && !isEmployee);
   const isSpecificAdminUser = isAdmin;
   const requiresPhone = Boolean(user && isCustomer && phoneStatus === 'missing');
 
@@ -689,6 +800,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isSpecificAdminUser,
         requiresPhone,
         completePhone,
+        mfaResolver,
+        verifyMfaSignIn,
+        cancelMfaSignIn,
       }}
     >
       {children}

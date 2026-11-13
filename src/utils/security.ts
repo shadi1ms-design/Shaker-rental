@@ -12,11 +12,10 @@ export function isValidEmail(email: string): boolean {
   return emailRegex.test(email.trim());
 }
 
+import { isValidPhone as validatePhone } from './phone';
+
 export function isValidPhone(phone: string): boolean {
-  if (!phone || typeof phone !== 'string') return false;
-  const clean = phone.replace(/[\s\-()]/g, '');
-  const phoneRegex = /^\+?[0-9]{7,16}$/;
-  return phoneRegex.test(clean);
+  return validatePhone(phone);
 }
 
 
@@ -60,7 +59,7 @@ export function validateUploadedFile(
       return { valid: false, error: 'يرجى رفع ملفات بصيغة PDF أو صور فقط (JPG, PNG, WEBP, PDF).' };
     }
   } else if (type === 'video') {
-    const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB for contract inspection videos
+    const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB for contract videos
     if (fileSize > MAX_VIDEO_SIZE) {
       return { valid: false, error: 'حجم مقطع الفيديو يتجاوز الحد الأقصى المسموح (100 ميجابايت).' };
     }

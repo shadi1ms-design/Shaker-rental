@@ -20,22 +20,22 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 }) => {
   return (
     <div
-      className={`bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center text-xs text-slate-400 space-y-4 shadow-xl ${className}`}
+      className={`bg-slate-900 border border-slate-800 rounded-card p-12 text-center text-sm text-slate-400 space-y-4 shadow-xl ${className}`}
     >
-      <div className="w-16 h-16 rounded-3xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-slate-500 shadow-inner">
-        <Icon className="w-8 h-8 text-slate-500" />
+      <div className="w-16 h-16 rounded-card bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-slate-400 shadow-inner">
+        <Icon className="w-8 h-8 text-slate-400" />
       </div>
 
       <div className="space-y-1.5 max-w-sm mx-auto">
-        <h4 className="font-bold text-sm text-white">{title}</h4>
-        {description && <p className="text-slate-400 text-xs leading-relaxed">{description}</p>}
+        <h3 className="font-bold text-base text-white">{title}</h3>
+        {description && <p className="text-slate-400 text-sm leading-relaxed">{description}</p>}
       </div>
 
       {actionLabel && onAction && (
         <button
           type="button"
           onClick={onAction}
-          className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 cursor-pointer"
+          className="px-4 py-2.5 min-h-11 inline-flex items-center justify-center rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-extrabold transition-all shadow-md shadow-amber-500/20 cursor-pointer"
         >
           {actionLabel}
         </button>

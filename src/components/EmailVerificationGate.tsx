@@ -57,26 +57,26 @@ export const EmailVerificationGate: React.FC = () => {
   return (
     <div
       id="email-verification-gate"
-      className="min-h-screen bg-slate-950 flex items-center justify-center p-4 selection:bg-amber-500 selection:text-slate-950 font-sans"
+      className="min-h-dvh bg-slate-950 flex items-center justify-center p-4 selection:bg-amber-500 selection:text-slate-950 font-sans"
       dir="rtl"
     >
       {/* Ambient background decoration */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-1/4 -right-24 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 -left-24 w-96 h-96 bg-amber-600/5 rounded-full blur-3xl" />
+        <div className="absolute top-1/4 -start-24 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 -end-24 w-96 h-96 bg-amber-600/5 rounded-full blur-3xl" />
       </div>
 
       <div
         id="email-verification-card"
-        className="w-full max-w-lg bg-slate-900 border border-slate-800/80 rounded-2xl p-6 sm:p-8 shadow-2xl relative z-10 text-center backdrop-blur-sm"
+        className="w-full max-w-lg bg-slate-900 border border-slate-800/80 rounded-card p-6 sm:p-8 shadow-2xl relative z-10 text-center backdrop-blur-sm"
       >
         {/* Icon */}
-        <div className="w-16 h-16 sm:w-20 sm:h-20 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6 text-amber-500 shadow-inner">
+        <div className="w-16 h-16 sm:w-20 sm:h-20 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-center mx-auto mb-6 text-amber-500 shadow-inner">
           <Mail className="w-8 h-8 sm:w-10 sm:h-10" />
         </div>
 
         {/* Heading */}
-        <h1 className="text-xl sm:text-2xl font-black text-slate-100 mb-2">
+        <h1 className="text-xl sm:text-2xl font-extrabold text-slate-100 mb-2">
           تأكيد البريد الإلكتروني مطلوب
         </h1>
         <p className="text-sm text-slate-400 mb-6 leading-relaxed">
@@ -87,7 +87,7 @@ export const EmailVerificationGate: React.FC = () => {
         {user?.email && (
           <div
             id="verification-email-badge"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-amber-400 font-mono text-xs sm:text-sm mb-6 max-w-full truncate"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-amber-400 tabular-nums text-sm mb-6 max-w-full truncate"
           >
             <Mail className="w-4 h-4 shrink-0 text-slate-400" />
             <span className="truncate">{user.email}</span>
@@ -98,12 +98,12 @@ export const EmailVerificationGate: React.FC = () => {
         {resendSuccess && (
           <div
             id="resend-success-alert"
-            className="mb-6 p-4 bg-emerald-950/50 border border-emerald-800/60 rounded-xl flex items-start gap-3 text-right text-emerald-300 text-xs sm:text-sm"
+            className="mb-6 p-4 bg-emerald-950/50 border border-emerald-800/60 rounded-xl flex items-start gap-3 text-start text-emerald-300 text-sm"
           >
             <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-400 mt-0.5" />
             <div>
               <p className="font-bold">تم إرسال رابط التفعيل بنجاح!</p>
-              <p className="text-emerald-400/80 text-xs mt-0.5">يرجى فحص صندوق الوارد ورسائل الترويج/غير المرغوب فيها (Spam).</p>
+              <p className="text-emerald-400/80 text-sm mt-0.5">يرجى فحص صندوق الوارد ورسائل الترويج/غير المرغوب فيها (Spam).</p>
             </div>
           </div>
         )}
@@ -111,7 +111,7 @@ export const EmailVerificationGate: React.FC = () => {
         {errorMessage && (
           <div
             id="resend-error-alert"
-            className="mb-6 p-4 bg-rose-950/50 border border-rose-800/60 rounded-xl flex items-start gap-3 text-right text-rose-300 text-xs sm:text-sm"
+            className="mb-6 p-4 bg-rose-950/50 border border-rose-800/60 rounded-xl flex items-start gap-3 text-start text-rose-300 text-sm"
           >
             <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
             <p>{errorMessage}</p>
@@ -154,14 +154,14 @@ export const EmailVerificationGate: React.FC = () => {
 
         {/* Logout Option */}
         <div className="pt-4 border-t border-slate-800/60 flex items-center justify-between">
-          <span className="text-xs text-slate-400">تريد استخدام حساب آخر؟</span>
+          <span className="text-sm text-slate-400">تريد استخدام حساب آخر؟</span>
           <button
             id="btn-verification-logout"
             type="button"
             onClick={logout}
-            className="text-xs text-rose-400 hover:text-rose-300 font-medium flex items-center gap-1.5 transition-colors"
+            className="text-sm min-h-11 px-3 text-rose-400 hover:text-rose-300 font-medium inline-flex items-center gap-1.5 transition-colors"
           >
-            <LogOut className="w-3.5 h-3.5" />
+            <LogOut className="w-4 h-4" />
             <span>تسجيل الخروج</span>
           </button>
         </div>

@@ -20,14 +20,16 @@ export const RequireAuth: React.FC<GuardProps> = ({ children }) => {
 
 /** Only visitors may see the children (login / register); signed-in users are sent to their home page. */
 export const GuestOnly: React.FC<GuardProps> = ({ children }) => {
-  const { user, isAdmin, isLoadingAuth } = useAuth();
+  const { user, isAdmin, isEmployee, isLoadingAuth } = useAuth();
+  const isStaffAuthorized = isAdmin || isEmployee;
 
   useEffect(() => {
     if (!isLoadingAuth && user) {
-      navigate(isAdmin ? routes.adminDashboard : routes.profile, { replace: true });
+      navigate(isStaffAuthorized ? routes.adminDashboard : routes.profile, { replace: true });
     }
-  }, [isLoadingAuth, user, isAdmin]);
+  }, [isLoadingAuth, user, isStaffAuthorized]);
 
+  if (isLoadingAuth) return null;
   return user ? null : <>{children}</>;
 };
 

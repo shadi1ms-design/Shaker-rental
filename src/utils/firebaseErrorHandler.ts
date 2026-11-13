@@ -43,8 +43,17 @@ export interface FirestoreErrorContext {
 export function getArabicErrorMessage(error: unknown): string {
   if (!error) return 'حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.';
 
-  const errObj = typeof error === 'object' && error !== null ? (error as { code?: string; message?: string }) : null;
+  const errObj = typeof error === 'object' && error !== null ? (error as { code?: string; message?: string; details?: unknown }) : null;
+  const rawMessage = typeof error === 'string' ? error : (errObj?.message || '');
   const code = typeof error === 'string' ? error : (errObj?.code || errObj?.message || '');
+
+  // If the error message already contains informative Arabic text from Cloud Functions, return it directly
+  if (rawMessage && /[\u0600-\u06FF]/.test(rawMessage)) {
+    return rawMessage;
+  }
+  if (typeof errObj?.details === 'string' && /[\u0600-\u06FF]/.test(errObj.details)) {
+    return errObj.details;
+  }
 
   // Firebase Authentication specific errors
   if (code.includes('auth/invalid-credential') || code.includes('auth/wrong-password')) {
@@ -117,6 +126,12 @@ export function getArabicErrorMessage(error: unknown): string {
   }
 
   if (code.includes('failed-precondition')) {
+    if (rawMessage && !rawMessage.toLowerCase().includes('failed-precondition')) {
+      return rawMessage;
+    }
+    if (typeof errObj?.details === 'string' && errObj.details.trim()) {
+      return errObj.details;
+    }
     return 'لم يتم استيفاء الشروط اللازمة لإتمام العملية (مثل تفعيل البريد أو توفر الرصيد).';
   }
 

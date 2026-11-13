@@ -18,6 +18,9 @@
 
 ## 🚀 النشر والترحيل (Deployment & Migration)
 
+- يُحمَّل ملف `functions/.env.shaker-rentalcars` تلقائيًا عند النشر إلى مشروع `shaker-rentalcars`، ويجب ألا يحوي أي أسرار أبدًا.
+- المتغير `REQUIRE_ADMIN_MFA` في هذا الملف هو قيمة احتياطية (fallback) فقط، لأن المفتاح في إعدادات الأدمن (`system_config/security`) هو المرجع الأساسي المعتمد.
+
 1. **Service Account Setup**: امنح حساب الدوال (Service Account) دور `Service Account Token Creator` (ضروري لـ `getSignedUrl`).
 2. **Deploy**: شغّل `firebase deploy --only firestore:rules,firestore:indexes,storage,functions`.
 3. **Data Migration**:

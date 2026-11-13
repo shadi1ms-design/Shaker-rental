@@ -1,12 +1,47 @@
 import { useEffect } from 'react';
 
-export function useDocumentTitle(title?: string) {
-  useEffect(() => {
-    const baseTitle = 'شاكر لتأجير السيارات';
-    if (!title) {
-      document.title = baseTitle;
-      return;
+function setOrUpdateMetaTag(selector: string, attr: string, value: string, tagName = 'meta') {
+  if (typeof document === 'undefined') return;
+  let element = document.querySelector(selector);
+  if (!element) {
+    element = document.createElement(tagName);
+    if (selector.includes('name="')) {
+      const match = selector.match(/name="([^"]+)"/);
+      if (match) element.setAttribute('name', match[1]);
+    } else if (selector.includes('property="')) {
+      const match = selector.match(/property="([^"]+)"/);
+      if (match) element.setAttribute('property', match[1]);
+    } else if (selector.includes('rel="')) {
+      const match = selector.match(/rel="([^"]+)"/);
+      if (match) element.setAttribute('rel', match[1]);
     }
-    document.title = `${title} | ${baseTitle}`;
-  }, [title]);
+    document.head.appendChild(element);
+  }
+  element.setAttribute(attr, value);
+}
+
+export function useDocumentTitle(title?: string, description?: string) {
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const baseTitle = 'شاكر لتأجير السيارات';
+    const fullTitle = !title || title === 'الرئيسية' ? `${baseTitle} | أسطول دمشق الأحدث` : `${title} | ${baseTitle}`;
+    document.title = fullTitle;
+
+    const defaultDescription =
+      description ||
+      'شركة شاكر لتأجير السيارات في دمشق - الخيار الأول لتأجير سيارات السيدان، سيدان (اقتصادي)، وSUV بأسعار منافسة وعقود رسمية.';
+
+    // Dynamic Meta Tags
+    setOrUpdateMetaTag('meta[name="description"]', 'content', defaultDescription);
+    setOrUpdateMetaTag('meta[property="og:title"]', 'content', fullTitle);
+    setOrUpdateMetaTag('meta[property="og:description"]', 'content', defaultDescription);
+
+    const canonicalUrl = typeof window !== 'undefined'
+      ? `${window.location.origin}${window.location.pathname}`
+      : 'https://shakerrent.com/';
+
+    setOrUpdateMetaTag('meta[property="og:url"]', 'content', canonicalUrl);
+    setOrUpdateMetaTag('link[rel="canonical"]', 'href', canonicalUrl, 'link');
+  }, [title, description]);
 }

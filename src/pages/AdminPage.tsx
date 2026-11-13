@@ -25,7 +25,7 @@ export const AdminPage: React.FC<{ pathname: string }> = ({ pathname }) => {
   // Do not render protected routes before the auth state is ready
   if (isLoadingAuth) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-cairo" dir="rtl">
+      <div className="min-h-dvh bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-cairo" dir="rtl">
         <div className="text-center space-y-4">
           <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-sm font-bold text-slate-300">جاري التحقق من صلاحيات الدخول المعتمدة...</p>

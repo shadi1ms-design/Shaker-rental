@@ -1,26 +1,29 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { navigate, useLocation, matchPath, goBack } from '../router';
-import React, { useState, useEffect } from 'react';
-import {
-  Vehicle,
-  Booking,
-  Customer,
-  AppSettings,
-  AppNotification,
-} from '../types';
+import { Vehicle, Booking, AppSettings, AppNotification } from '../types';
 import { dataService } from '../services/dataService';
 import { useAuth } from '../contexts/AuthContext';
-
-// Lazy-loaded Admin Views with Suspense for optimal performance
-const AdminReports = React.lazy(() => import('./AdminReports').then((m) => ({ default: m.AdminReports })));
-const AdminSettings = React.lazy(() => import('./AdminSettings').then((m) => ({ default: m.AdminSettings })));
-const AdminUsersFilesView = React.lazy(() => import('./AdminUsersFilesView').then((m) => ({ default: m.AdminUsersFilesView })));
-const AdminStaffRoles = React.lazy(() => import('./admin/AdminStaffRoles').then((m) => ({ default: m.AdminStaffRoles })));
-const AdminActivityLog = React.lazy(() => import('./admin/AdminActivityLog').then((m) => ({ default: m.AdminActivityLog })));
+import { useAppData } from '../contexts/DataContext';
+import { AdminTabType, ADMIN_NAV_ITEMS, ADMIN_NAV_SECTIONS, ROLE_LABEL } from '../constants/adminNav';
+import { getAdminTabFromPath } from '../utils/adminTabs';
+import { ConfirmModal } from './common/ConfirmModal';
 import { SkeletonLoader } from './common/SkeletonLoader';
-import { StatusBadge } from './common/StatusBadge';
 import { MenuButton } from './MenuButton';
+import { GlobalMenu } from './GlobalMenu';
+import { AdminCommandPalette } from './admin/AdminCommandPalette';
+import { CheckCircle2, X, Shield, Search, ChevronLeft, ChevronRight, ArrowRight, User, LogOut, MoreHorizontal, Lock, ChevronDown } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
-// Modular Sub-components for Admin
+import { lazyWithRetry } from '../utils/lazyWithRetry';
+
+// Lazy-loaded Admin Views
+const AdminReports = lazyWithRetry(() => import('./AdminReports').then((m) => ({ default: m.AdminReports })));
+const AdminSettings = lazyWithRetry(() => import('./AdminSettings').then((m) => ({ default: m.AdminSettings })));
+const AdminUsersFilesView = lazyWithRetry(() => import('./AdminUsersFilesView').then((m) => ({ default: m.AdminUsersFilesView })));
+const AdminStaffRoles = lazyWithRetry(() => import('./admin/AdminStaffRoles').then((m) => ({ default: m.AdminStaffRoles })));
+const AdminActivityLog = lazyWithRetry(() => import('./admin/AdminActivityLog').then((m) => ({ default: m.AdminActivityLog })));
+
+// Modular Sub-components
 import { AdminOverview } from './admin/AdminOverview';
 import { AdminBookings } from './admin/AdminBookings';
 import { AdminVehicles } from './admin/AdminVehicles';
@@ -28,50 +31,9 @@ import { AdminNotifications } from './admin/AdminNotifications';
 
 // Modals
 import { VehicleFormModal } from './VehicleFormModal';
-import { InspectionModal } from './InspectionModal';
 import { RentalContract } from './RentalContract';
 
-// Icons
-import { motion, AnimatePresence } from 'motion/react';
-import {
-  LayoutDashboard,
-  Car,
-  Calendar,
-  BarChart3,
-  Settings,
-  FolderOpen,
-  Shield,
-  ShieldCheck,
-  Bell,
-  RefreshCw,
-  Trash2,
-  CheckCircle2,
-  AlertTriangle,
-  Lock,
-  UserCheck,
-  Activity,
-  User,
-  X,
-  Copy,
-  Mail,
-  BarChart2,
-  Search,
-  ChevronLeft,
-  ChevronRight,
-  ArrowRight
-} from 'lucide-react';
-import { GlobalMenu } from './GlobalMenu';
-
-export type AdminTabType =
-  | 'firestore_users'
-  | 'staff'
-  | 'activity_log'
-  | 'overview'
-  | 'vehicles'
-  | 'bookings'
-  | 'reports'
-  | 'settings'
-  | 'notifications';
+export type { AdminTabType } from '../constants/adminNav';
 
 interface AdminDashboardProps {
   vehicles: Vehicle[];
@@ -88,155 +50,118 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   settings,
   onRefreshData,
   onBackToSite,
-  initialTab,
 }) => {
-  const { user, isSuperAdmin, isAdmin, isLoadingAuth } = useAuth();
+  const { user, isSuperAdmin, isAdmin, isLoadingAuth, logout } = useAuth();
+  const { vehiclesReady } = useAppData();
+  const { pathname: currentPath } = useLocation();
 
-  // Role-based Tab Access Policy
-  const isTabAuthorized = (tabId: AdminTabType): boolean => {
-    if (tabId === 'staff' || tabId === 'activity_log') {
-      return Boolean(isSuperAdmin);
-    }
-    if (tabId === 'firestore_users' || tabId === 'settings' || tabId === 'reports' || tabId === 'overview' || tabId === 'vehicles' || tabId === 'notifications') {
-      return Boolean(isAdmin || isSuperAdmin);
-    }
-    if (tabId === 'bookings') {
-      return true; // الموظف والمدير معًا
-    }
-    return false;
-  };
+  const [syncStatus, setSyncStatus] = useState<{ message: string; success: boolean } | null>(null);
 
-  const pathToTabMap: Record<string, AdminTabType> = {
-    '/admin/dashboard': 'overview',
-    '/admin/bookings': 'bookings',
-    '/admin/contracts': 'bookings',
-    '/admin/vehicles': 'vehicles',
-    '/admin/reports': 'reports',
-    '/admin/settings': 'settings',
-    '/admin/notifications': 'notifications',
-    '/admin/users': 'firestore_users',
-    '/admin/staff': 'staff',
-    '/admin/activity': 'activity_log',
-  };
-
-  const getTabFromCurrentPath = (): AdminTabType | null => {
-    if (typeof window === 'undefined') return null;
-    const path = window.location.pathname;
-    for (const [routePath, tabKey] of Object.entries(pathToTabMap)) {
-      if (path === routePath || path.startsWith(routePath)) {
-        return tabKey;
+  const isTabAuthorized = useCallback(
+    (tabId: AdminTabType): boolean => {
+      if (tabId === 'staff' || tabId === 'activity_log') {
+        return Boolean(isSuperAdmin);
       }
-    }
-    return null;
-  };
-
-  // Active Admin Tab - Respect direct path, initialTab if authorized, fallback to overview for admins and bookings for staff
-  const [activeTab, setActiveTab] = useState<AdminTabType>(() => {
-    const fromPath = getTabFromCurrentPath();
-    if (fromPath && isTabAuthorized(fromPath)) {
-      return fromPath;
-    }
-    if (initialTab && isTabAuthorized(initialTab)) {
-      return initialTab;
-    }
-    return isAdmin ? 'overview' : 'bookings';
-  });
-
-  // Ensure activeTab conforms to user's permissions and sync initialTab
-  useEffect(() => {
-    const fromPath = getTabFromCurrentPath();
-    if (fromPath && isTabAuthorized(fromPath)) {
-      setActiveTab(fromPath);
-    } else if (initialTab && isTabAuthorized(initialTab)) {
-      setActiveTab(initialTab);
-    } else if (!isTabAuthorized(activeTab)) {
-      setActiveTab(isAdmin ? 'overview' : 'bookings');
-    }
-  }, [initialTab, isAdmin, isSuperAdmin]);
-
-  // Support browser Back/Forward navigation
-  useEffect(() => {
-    const onPopState = () => {
-      const fromPath = getTabFromCurrentPath();
-      if (fromPath && isTabAuthorized(fromPath)) {
-        setActiveTab(fromPath);
+      if (
+        tabId === 'firestore_users' ||
+        tabId === 'settings' ||
+        tabId === 'reports' ||
+        tabId === 'overview' ||
+        tabId === 'vehicles' ||
+        tabId === 'notifications'
+      ) {
+        return Boolean(isAdmin || isSuperAdmin);
       }
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, [isAdmin, isSuperAdmin]);
+      if (tabId === 'bookings') {
+        return true;
+      }
+      return false;
+    },
+    [isAdmin, isSuperAdmin]
+  );
 
-  // Keep the active tab visible in the horizontally scrolling mobile tab strip
-  useEffect(() => {
-    document
-      .getElementById(`admin-tab-${activeTab}`)
-      ?.scrollIntoView({ block: 'nearest', inline: 'center' });
-  }, [activeTab]);
+  const activeTab = useMemo(() => {
+    const tabFromPath = getAdminTabFromPath(currentPath, { isAdmin: Boolean(isAdmin), isSuperAdmin: Boolean(isSuperAdmin) });
+    if (isTabAuthorized(tabFromPath)) {
+      return tabFromPath;
+    }
+    return isSuperAdmin ? 'firestore_users' : isAdmin ? 'overview' : 'bookings';
+  }, [currentPath, isAdmin, isSuperAdmin, isTabAuthorized]);
 
-  const handleTabChange = (tab: AdminTabType) => {
-    setActiveTab(tab);
+  const handleTabChange = (tab: AdminTabType, searchFilter?: string) => {
     const pathMap: Record<AdminTabType, string> = {
+      overview: '/admin/dashboard',
+      bookings: '/admin/bookings',
+      vehicles: '/admin/vehicles',
+      reports: '/admin/reports',
+      notifications: '/admin/notifications',
       firestore_users: '/admin/users',
       staff: '/admin/staff',
-      activity_log: '/admin/activity',
-      overview: '/admin/dashboard',
-      vehicles: '/admin/vehicles',
-      bookings: '/admin/bookings',
-      reports: '/admin/reports',
+      activity_log: '/admin/activity-log',
       settings: '/admin/settings',
-      notifications: '/admin/notifications',
     };
-    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
-      const targetPath = pathMap[tab];
-      if (window.location.pathname !== targetPath) {
+    const targetPath = pathMap[tab];
+    if (targetPath) {
+      if (searchFilter) {
+        navigate(`${targetPath}?q=${encodeURIComponent(searchFilter)}`);
+      } else {
         navigate(targetPath);
       }
     }
   };
 
-  // Modals state
-  const [showAccountDetails, setShowAccountDetails] = useState(false);
-  const [copiedUid, setCopiedUid] = useState(false);
-  // Vehicle form / inspection are full pages with their own URLs
-  const { pathname: currentPath, search: currentSearch } = useLocation();
+  const [showMobileMore, setShowMobileMore] = useState(false);
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [commandPaletteSearch, setCommandPaletteSearch] = useState('');
+
+  const accountBtnRef = useRef<HTMLButtonElement | null>(null);
+  const mobileMoreBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!showAccountMenu) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowAccountMenu(false);
+        accountBtnRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showAccountMenu]);
+
+  useEffect(() => {
+    if (!showMobileMore) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowMobileMore(false);
+        mobileMoreBtnRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showMobileMore]);
+
   const isNewVehicleRoute = currentPath === '/admin/vehicles/new';
   const editVehicleMatch = matchPath('/admin/vehicles/:id/edit', currentPath);
-  const inspectionMatch = matchPath('/admin/vehicles/:id/inspection', currentPath);
   const contractMatch = matchPath('/admin/contracts/:id', currentPath);
-  const editingVehicle: Vehicle | null | undefined = isNewVehicleRoute
+
+  const editingVehicle = isNewVehicleRoute
     ? null
     : editVehicleMatch
     ? vehicles.find((v) => v.id === editVehicleMatch.id)
-    : undefined; // undefined = no form page, null = new vehicle
-  const inspectionVehicle: Vehicle | null = inspectionMatch
-    ? vehicles.find((v) => v.id === inspectionMatch.id) || null
-    : null;
-  const inspectionBookingId = new URLSearchParams(currentSearch).get('booking') || '';
+    : undefined;
+
   const openVehicleForm = (v: Vehicle | null) =>
     navigate(v ? `/admin/vehicles/${encodeURIComponent(v.id)}/edit` : '/admin/vehicles/new');
-  const openInspection = (v: Vehicle, bookingId = '') =>
-    navigate(
-      `/admin/vehicles/${encodeURIComponent(v.id)}/inspection${bookingId ? `?booking=${encodeURIComponent(bookingId)}` : ''}`
-    );
+
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
   const [isDeletingVehicle, setIsDeletingVehicle] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Aux Data State - Instant cached bootstrap
-  const [, setCustomers] = useState<Customer[]>(() => dataService.getCachedCustomers());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => dataService.getNotifications());
-
-  // Cloud Sync State & Timestamp
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<{ message: string; success: boolean } | null>(null);
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(new Date());
-
-  // Collapsible Sidebar & Command Palette (Ctrl+K)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [commandQuery, setCommandQuery] = useState('');
 
-  // Global Ctrl+K Keyboard Shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -245,71 +170,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
       if (e.key === 'Escape') {
         setShowCommandPalette(false);
+        setShowAccountMenu(false);
+        setShowMobileMore(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const loadAuxData = async () => {
+  const loadAuxData = useCallback(async () => {
     try {
-      const custs = await dataService.getCustomers(true);
-      setCustomers(custs || []);
-
-      if (isAdmin) {
+      if (isAdmin || isSuperAdmin) {
         const notifs = await dataService.getNotifications();
         setNotifications(notifs || []);
       }
     } catch (err) {
       console.warn('Auxiliary admin data loading note:', err);
     }
-  };
+  }, [isAdmin, isSuperAdmin]);
 
   useEffect(() => {
-    loadAuxData();
+    let active = true;
+    queueMicrotask(() => {
+      if (active) loadAuxData();
+    });
 
-    // Subscribe to real-time administrative notifications (admin only)
     let unsubscribeNotifications: (() => void) | undefined;
-    if (isAdmin) {
+    if (isAdmin || isSuperAdmin) {
       unsubscribeNotifications = dataService.subscribeToNotifications((updatedNotifs) => {
         setNotifications(updatedNotifs);
       });
     }
 
     return () => {
-      if (unsubscribeNotifications) {
-        unsubscribeNotifications();
-      }
+      active = false;
+      if (unsubscribeNotifications) unsubscribeNotifications();
     };
-  }, [isAdmin]);
+  }, [isAdmin, isSuperAdmin, loadAuxData]);
 
-  const handleSyncAllWithFirestore = async () => {
-    try {
-      setIsSyncing(true);
-      setSyncStatus(null);
-      const res = await dataService.syncAllSystemData();
-      await onRefreshData();
-      await loadAuxData();
-      setLastSyncedAt(new Date());
-      const successMsg = `تمت المزامنة السحابية بنجاح: تم تأكيد ومزامنة أسطول السيارات (${res.vehicles.total} سيارة) وسجل الحجوزات (${res.bookings.total} حجز) مع قاعدة بيانات Cloud Firestore.`;
-      setSyncStatus({
-        message: successMsg,
-        success: true,
-      });
-      setTimeout(() => {
-        setSyncStatus(null);
-      }, 7000);
-    } catch (err: unknown) {
-      console.error('Sync all error:', err);
-      const errorMsg = `تعذر إتمام المزامنة مع قاعدة البيانات: ${err instanceof Error ? err.message : 'خطأ في الاتصال'}`;
-      setSyncStatus({
-        message: errorMsg,
-        success: false,
-      });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  const vehicleDeleteActiveBookings = useMemo(() => {
+    if (!vehicleToDelete) return [];
+    return bookings.filter(
+      (b) =>
+        b.vehicleId === vehicleToDelete.id &&
+        !b.isDeleted &&
+        ['new', 'reviewing', 'confirmed', 'rented'].includes(b.status)
+    );
+  }, [vehicleToDelete, bookings]);
 
   const confirmDeleteVehicle = async () => {
     if (!vehicleToDelete) return;
@@ -321,42 +228,64 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       await onRefreshData();
       await loadAuxData();
     } catch (err: unknown) {
-      console.error('Failed to delete vehicle:', err);
       setDeleteError(err instanceof Error ? err.message : 'تعذر حذف السيارة من قاعدة البيانات.');
     } finally {
       setIsDeletingVehicle(false);
     }
   };
 
+  const roleText = isSuperAdmin
+    ? ROLE_LABEL.superAdmin
+    : isAdmin
+    ? ROLE_LABEL.admin
+    : ROLE_LABEL.staff;
+
   if (isLoadingAuth) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-cairo" dir="rtl">
+      <div className="min-h-dvh bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-cairo" dir="rtl">
         <div className="text-center space-y-4 max-w-sm w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl">
           <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <h3 className="text-base font-bold text-white">جاري التحقق من صلاحيات الدخول المعتمدة...</h3>
-          <p className="text-xs text-slate-400">يرجى الانتظار ريثما يتم تدقيق مطالبات الأمان المشفرة.</p>
+          <h3 className="text-base font-bold text-white">جاري التحقق من الصلاحيات...</h3>
         </div>
       </div>
     );
   }
 
   const vehicleNotFound = (
-    <div className="min-h-[40vh] flex flex-col items-center justify-center gap-4 text-center">
+    <div className="min-h-[40dvh] flex flex-col items-center justify-center gap-4 text-center">
       <p className="text-slate-300 font-bold">لم يتم العثور على هذه السيارة.</p>
       <button
         type="button"
-        onClick={() => navigate('/admin/vehicles')}
-        className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black"
+        onClick={() => handleTabChange('vehicles')}
+        className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold cursor-pointer"
       >
-        العودة إلى أسطول السيارات
+        العودة لأسطول السيارات
       </button>
     </div>
   );
 
+  const unauthorizedView = (
+    <div className="bg-slate-900 border border-rose-500/30 rounded-3xl p-8 text-center max-w-lg mx-auto space-y-4 shadow-2xl">
+      <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+        <Lock className="w-8 h-8" />
+      </div>
+      <div className="text-xl font-extrabold text-white">غير مصرح لك بالوصول</div>
+      <button type="button" onClick={() => handleTabChange('bookings')} className="px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-extrabold cursor-pointer">العودة للحجوزات</button>
+    </div>
+  );
+
+  const isFleetRestrictedRoute = isNewVehicleRoute || Boolean(editVehicleMatch);
+
   const vehiclePage =
-    isNewVehicleRoute || editVehicleMatch ? (
+    isFleetRestrictedRoute && !(isAdmin || isSuperAdmin) ? (
+      unauthorizedView
+    ) : isNewVehicleRoute || editVehicleMatch ? (
       editingVehicle === undefined ? (
-        vehicleNotFound
+        !vehiclesReady ? (
+          <SkeletonLoader type="card" lines={4} />
+        ) : (
+          vehicleNotFound
+        )
       ) : (
         <VehicleFormModal
           key={editingVehicle?.id || 'new'}
@@ -365,28 +294,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           onSaved={() => {
             onRefreshData();
             loadAuxData();
-            navigate('/admin/vehicles');
+            navigate('/admin/vehicles', { replace: true });
           }}
         />
-      )
-    ) : inspectionMatch ? (
-      inspectionVehicle ? (
-        <InspectionModal
-          key={`${inspectionVehicle.id}:${inspectionBookingId}`}
-          vehicle={inspectionVehicle}
-          bookingId={inspectionBookingId}
-          onClose={() => goBack('/admin/vehicles')}
-          onSaved={() => {
-            onRefreshData();
-            loadAuxData();
-          }}
-        />
-      ) : (
-        vehicleNotFound
       )
     ) : contractMatch ? (
       (() => {
-        const contractBooking = bookings.find((b) => b.id === contractMatch.id);
+        const contractBooking = bookings.find((b) => b.id === contractMatch.id || b.bookingNumber === contractMatch.id);
         return contractBooking ? (
           <RentalContract
             booking={contractBooking}
@@ -395,12 +309,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             onBack={() => goBack('/admin/bookings')}
           />
         ) : (
-          <div className="min-h-[40vh] flex flex-col items-center justify-center gap-4 text-center">
+          <div className="min-h-[40dvh] flex flex-col items-center justify-center gap-4 text-center">
             <p className="text-slate-300 font-bold">لم يتم العثور على هذا الحجز.</p>
             <button
               type="button"
-              onClick={() => navigate('/admin/bookings')}
-              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black"
+              onClick={() => handleTabChange('bookings')}
+              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold cursor-pointer"
             >
               العودة إلى الحجوزات
             </button>
@@ -409,9 +323,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       })()
     ) : null;
 
+  const primaryMobileTabs = ADMIN_NAV_ITEMS.filter((item) =>
+    ['overview', 'bookings', 'vehicles', 'reports'].includes(item.id) && isTabAuthorized(item.id)
+  );
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Global Fixed ☰ Menu */}
+    <div className="min-h-dvh bg-slate-950 text-slate-100 flex flex-col font-cairo" dir="rtl">
       <GlobalMenu
         currentView="admin"
         onNavigate={(v) => {
@@ -423,210 +340,151 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         onOpenProfile={() => navigate('/profile')}
       />
 
-      {/* Top Header Bar */}
-      <header className="relative z-20 bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          <MenuButton />
-
-          <button
-            type="button"
-            onClick={onBackToSite}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all shadow-sm cursor-pointer"
-            title="الرجوع إلى الموقع الرئيسي"
-          >
-            <ArrowRight className="w-4 h-4 text-amber-400" />
-            <span className="hidden sm:inline">الموقع</span>
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm sm:text-lg font-black text-white">
-                لوحة إدارة شاكر لتأجير السيارات
-              </h2>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 flex items-center gap-1 shadow-sm uppercase tracking-wider">
-                <Shield className="w-3 h-3" />
-                {isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Staff'}
-              </span>
-            </div>
+      <header className="relative z-30 bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-3 shadow-md">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <MenuButton />
             <button
               type="button"
-              onClick={() => setShowAccountDetails(true)}
-              className="flex text-[11px] text-slate-400 hover:text-amber-300 items-center gap-1.5 mt-0.5 transition-colors cursor-pointer group text-right"
-              title="عرض تفاصيل الحساب والمعرف (UID)"
+              onClick={onBackToSite}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-bold transition-all cursor-pointer"
             >
-              <User className="w-3 h-3 text-slate-400 group-hover:text-amber-400 transition-colors" />
-              <span>المشرف: <span className="text-slate-300 group-hover:text-amber-300 font-medium underline decoration-slate-700 underline-offset-2 transition-colors">{user?.displayName || user?.email || 'مسؤول النظام'}</span></span>
+              <ArrowRight className="w-4 h-4 text-amber-400" />
+              <span className="hidden sm:inline">الموقع الرئيسي</span>
             </button>
-          </div>
-        </div>
-
-        {/* Global Action Buttons */}
-        <div className="flex items-center gap-2">
-          {/* Quick Command / Search (Ctrl+K) */}
-          <button
-            type="button"
-            onClick={() => setShowCommandPalette(true)}
-            className="flex items-center gap-2 px-3 py-1.5 min-h-[40px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-bold transition-all shadow-sm cursor-pointer"
-            aria-label="بحث سريع"
-            title="بحث شامل في الأسطول والحجوزات والأقسام (Ctrl+K)"
-          >
-            <Search className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden md:inline">بحث سريع</span>
-            <kbd className="hidden md:inline px-1.5 py-0.5 rounded-md bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-400">
-              Ctrl K
-            </kbd>
-          </button>
-
-          {/* Cloud Sync Button with Time */}
-          <button
-            type="button"
-            onClick={handleSyncAllWithFirestore}
-            disabled={isSyncing}
-            className="px-3 py-1.5 min-h-[40px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-all text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
-            aria-label="مزامنة السحابة"
-            title="مزامنة فورية مع قاعدة بيانات Cloud Firestore"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span className="hidden lg:inline">{isSyncing ? 'جاري المزامنة...' : 'مزامنة السحابة'}</span>
-            {lastSyncedAt && !isSyncing && (
-              <span className="text-[10px] text-slate-400 hidden xl:inline font-mono">
-                ({lastSyncedAt.toLocaleTimeString('ar-SY', { hour: '2-digit', minute: '2-digit' })})
+            <div>
+              <p className="text-xs font-extrabold text-white">لوحة إدارة شاكر</p>
+              <span className="px-2 py-0.5 rounded-full text-xs font-extrabold bg-amber-500 text-slate-950 flex items-center gap-1 shadow-sm w-fit">
+                <Shield className="w-2.5 h-2.5" />
+                {roleText}
               </span>
-            )}
-          </button>
+            </div>
+          </div>
 
-          <button
-            type="button"
-            onClick={() => navigate('/profile')}
-            className="px-3 py-1.5 min-h-[40px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700/80 transition-all text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
-            aria-label="حسابي الشخصي"
-            title="حسابي الشخصي وحجوزاتي"
-          >
-            <User className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">حسابي الشخصي</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowCommandPalette(true)}
+              className="flex items-center gap-2 px-3 py-1.5 min-h-[38px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all cursor-pointer"
+            >
+              <Search className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden md:inline">بحث سريع</span>
+              <kbd className="hidden md:inline-block px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-xs font-mono text-slate-400">
+                Ctrl K
+              </kbd>
+            </button>
+            <div className="relative">
+              <button
+                ref={accountBtnRef}
+                type="button"
+                onClick={() => setShowAccountMenu((prev) => !prev)}
+                aria-haspopup="menu"
+                aria-expanded={showAccountMenu}
+                aria-label="قائمة الحساب"
+                className="flex items-center gap-2 px-3 py-1.5 min-h-[38px] rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 text-xs font-bold transition-all cursor-pointer"
+              >
+                <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                  {user?.displayName?.charAt(0) || <User className="w-3.5 h-3.5" />}
+                </div>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showAccountMenu ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showAccountMenu && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="إغلاق قائمة الحساب"
+                    tabIndex={-1}
+                    className="fixed inset-0 z-40 bg-transparent cursor-default w-full h-full border-none"
+                    onClick={() => {
+                      setShowAccountMenu(false);
+                      accountBtnRef.current?.focus();
+                    }}
+                  />
+                  <div
+                    role="menu"
+                    aria-label="خيارات الحساب"
+                    className="absolute end-0 mt-2 w-56 bg-slate-900 border border-slate-800 rounded-2xl p-2 shadow-2xl z-50 space-y-1"
+                  >
+                    <div className="p-3 border-b border-slate-800 space-y-1">
+                      <p className="font-bold text-white text-xs truncate">{user?.displayName || 'مسؤول النظام'}</p>
+                      <p className="text-xs text-slate-400 font-mono truncate" dir="ltr">{user?.email}</p>
+                    </div>
+                    <button
+                      role="menuitem"
+                      type="button"
+                      onClick={() => {
+                        setShowAccountMenu(false);
+                        navigate('/profile');
+                      }}
+                      className="w-full text-right px-3 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                    >
+                      <User className="w-4 h-4 text-amber-400" />
+                      <span>الملف الشخصي</span>
+                    </button>
+                    <button
+                      role="menuitem"
+                      type="button"
+                      onClick={() => {
+                        setShowAccountMenu(false);
+                        logout();
+                      }}
+                      className="w-full text-right px-3 py-2 rounded-xl text-xs font-bold text-rose-400 hover:bg-rose-500/10 flex items-center gap-2 cursor-pointer transition-colors pt-2 border-t border-slate-800"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>تسجيل الخروج</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </header>
 
-      {/* Main Admin Layout: Right Sidebar + Content Area */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col md:flex-row gap-6">
-        {/* Right Sidebar (Navigation) */}
-        <aside className={`w-full ${isSidebarCollapsed ? 'md:w-20' : 'md:w-64 lg:w-72'} shrink-0 md:sticky md:top-4 md:max-h-[calc(100vh-2rem)] md:overflow-y-auto self-start z-20 transition-all duration-300`}>
-          <div className="bg-slate-900/95 border border-slate-800 rounded-2xl md:rounded-3xl p-2 md:p-3 shadow-xl backdrop-blur-sm">
-            <div className="hidden md:flex items-center justify-between px-3 py-2 mb-2 border-b border-slate-800/80">
-              {!isSidebarCollapsed && (
-                <div className="flex items-center gap-2 text-xs font-black text-slate-400">
-                  <LayoutDashboard className="w-4 h-4 text-amber-400" />
-                  <span>أقسام لوحة الإدارة</span>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                className={`p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer ${
-                  isSidebarCollapsed ? 'mx-auto' : ''
-                }`}
-                title={isSidebarCollapsed ? 'توسيع القائمة الجانبية' : 'طي القائمة الجانبية'}
-                aria-label={isSidebarCollapsed ? 'توسيع القائمة' : 'طي القائمة'}
-              >
-                {isSidebarCollapsed ? (
-                  <ChevronLeft className="w-4 h-4 text-amber-400" />
-                ) : (
-                  <ChevronRight className="w-4 h-4" />
-                )}
+      <AdminCommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        onNavigateTab={(tab, searchFilter) => {
+          handleTabChange(tab, searchFilter);
+          if (searchFilter && tab === 'bookings') {
+            setCommandPaletteSearch(searchFilter);
+          }
+        }}
+        vehicles={vehicles}
+        bookings={bookings}
+      />
+
+      <div className="flex-1 max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col md:flex-row gap-6 pb-24 md:pb-8">
+        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-64 lg:w-72'} shrink-0 sticky top-6 max-h-[calc(100dvh-5rem)] overflow-y-auto z-20 transition-all duration-300`}>
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-3 shadow-xl space-y-4">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800">
+              {!isSidebarCollapsed && <span className="text-xs font-extrabold text-slate-400">أقسام لوحة الإدارة</span>}
+              <button type="button" onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer min-h-10 min-w-10 inline-flex items-center justify-center" aria-label={isSidebarCollapsed ? 'توسيع القائمة' : 'طي القائمة'}>
+                {isSidebarCollapsed ? <ChevronLeft className="w-4 h-4 text-amber-400" /> : <ChevronRight className="w-4 h-4" />}
               </button>
             </div>
-
-            <nav className="flex md:flex-col overflow-x-auto md:overflow-visible gap-3 scrollbar-thin py-1 md:py-0">
-              {[
-                {
-                  title: 'التشغيل والعمليات',
-                  items: [
-                    {
-                      id: 'overview' as AdminTabType,
-                      label: 'لوحة المؤشرات العامة',
-                      icon: BarChart2,
-                      badge: bookings.filter((b) => b.status === 'new').length > 0 ? bookings.filter((b) => b.status === 'new').length : undefined,
-                    },
-                    {
-                      id: 'bookings' as AdminTabType,
-                      label: `الحجوزات والتأجير (${bookings.length})`,
-                      icon: Calendar,
-                      badge: bookings.filter((b) => b.status === 'new').length > 0 ? bookings.filter((b) => b.status === 'new').length : undefined,
-                    },
-                    { id: 'vehicles' as AdminTabType, label: `أسطول السيارات (${vehicles.length})`, icon: Car },
-                  ],
-                },
-                {
-                  title: 'التحليل والمتابعة',
-                  items: [
-                    { id: 'reports' as AdminTabType, label: 'التقارير المالية والتشغيلية', icon: BarChart3 },
-                    {
-                      id: 'notifications' as AdminTabType,
-                      label: 'مركز التنبيهات',
-                      icon: Bell,
-                      badge: notifications.filter((n) => !n.read).length > 0 ? notifications.filter((n) => !n.read).length : undefined,
-                    },
-                  ],
-                },
-                {
-                  title: 'الإدارة والنظام',
-                  items: [
-                    { id: 'firestore_users' as AdminTabType, label: 'توثيق الحسابات والمستخدمين', icon: ShieldCheck },
-                    { id: 'staff' as AdminTabType, label: 'إدارة الموظفين والصلاحيات', icon: UserCheck },
-                    { id: 'activity_log' as AdminTabType, label: 'سجل النشاطات', icon: Activity },
-                    { id: 'settings' as AdminTabType, label: 'إعدادات النظام والأسعار', icon: Settings },
-                  ],
-                },
-              ].map((section, sIdx) => {
-                const authorizedItems = section.items.filter((tab) => isTabAuthorized(tab.id));
-                if (authorizedItems.length === 0) return null;
-
+            <nav className="space-y-4">
+              {ADMIN_NAV_SECTIONS.map((sec) => {
+                const secItems = ADMIN_NAV_ITEMS.filter((item) => item.section === sec.id && isTabAuthorized(item.id));
+                if (secItems.length === 0) return null;
                 return (
-                  <div key={sIdx} className="space-y-1 shrink-0 md:shrink max-md:pe-3 max-md:border-e max-md:border-slate-800 last:max-md:border-e-0 last:max-md:pe-0">
-                    {!isSidebarCollapsed && (
-                      <div className="hidden md:block px-3 py-1 text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                        {section.title}
-                      </div>
-                    )}
-                    <div className="flex md:flex-col gap-1.5">
-                      {authorizedItems.map((tab) => {
-                        const Icon = tab.icon;
-                        const isActive = activeTab === tab.id;
-                        return (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            id={`admin-tab-${tab.id}`}
-                            aria-current={isActive ? 'page' : undefined}
-                            onClick={() => handleTabChange(tab.id)}
-                            title={tab.label}
-                            className={`w-auto md:w-full min-h-[44px] ${
-                              isSidebarCollapsed ? 'md:px-2 md:justify-center' : 'px-3.5 justify-between'
-                            } py-2.5 rounded-xl font-bold flex items-center gap-2.5 transition-all shrink-0 md:shrink text-right cursor-pointer relative ${
-                              isActive
-                                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/25 text-xs sm:text-sm font-black'
-                                : 'text-slate-400 hover:text-white hover:bg-slate-800/70 text-xs sm:text-sm'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <Icon className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0" />
-                              {!isSidebarCollapsed && <span className="whitespace-nowrap md:whitespace-normal md:leading-snug text-start">{tab.label}</span>}
-                            </div>
-                            {Boolean(tab.badge) && (
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[11px] font-black shrink-0 ${
-                                  isActive
-                                    ? 'bg-slate-950 text-amber-400'
-                                    : 'bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/30'
-                                } ${isSidebarCollapsed ? 'md:absolute md:-top-1 md:-right-1 md:text-[9px] md:px-1.5' : ''}`}
-                              >
-                                {tab.badge}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
+                  <div key={sec.id} className="space-y-1">
+                    {!isSidebarCollapsed && <div className="px-3 py-1 text-xs font-extrabold uppercase text-slate-400 tracking-wider">{sec.title}</div>}
+                    {secItems.map((nav) => {
+                      const Icon = nav.icon;
+                      const isActive = activeTab === nav.id;
+                      const unreadCount = nav.id === 'notifications' ? notifications.filter((n) => !n.read).length : 0;
+                      return (
+                        <button key={nav.id} type="button" onClick={() => handleTabChange(nav.id)} className={`w-full ${isSidebarCollapsed ? 'px-2 justify-center' : 'px-3.5 justify-between'} py-2.5 rounded-2xl font-bold flex items-center gap-2.5 transition-all text-xs cursor-pointer ${isActive ? 'bg-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800/80'}`}>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Icon className="w-4 h-4 shrink-0" />
+                            {!isSidebarCollapsed && <span className="truncate">{nav.label}</span>}
+                          </div>
+                          {unreadCount > 0 && <span className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${isActive ? 'bg-slate-950 text-amber-400' : 'bg-amber-500 text-slate-950'}`}>{unreadCount}</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -634,494 +492,146 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </aside>
 
-        {/* Main Admin Content Container */}
-        <main className="flex-1 min-w-0 space-y-6 lg:space-y-8">
-          {/* UNAUTHORIZED ACCESS GUARD FALLBACK */}
-          {!isTabAuthorized(activeTab) && (
-            <div className="bg-slate-900/90 border border-rose-500/30 rounded-3xl p-8 sm:p-12 text-center max-w-lg mx-auto my-6 space-y-5 shadow-2xl backdrop-blur-sm">
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
-                <Lock className="w-8 h-8" />
+        <main className="flex-1 min-w-0 space-y-6">
+          {syncStatus && (
+            <div role="status" className={`p-4 rounded-2xl text-xs font-bold flex items-center justify-between gap-3 border ${syncStatus.success ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/10 text-rose-300 border-rose-500/30'}`}>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{syncStatus.message}</span>
               </div>
-              <div className="space-y-2">
-                <h2 className="text-xl font-black text-white">غير مصرح لك بالوصول لهذا القسم</h2>
-                <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-                  {activeTab === 'settings' || activeTab === 'reports' || activeTab === 'overview'
-                    ? 'يتطلب الوصول إلى هذا القسم صلاحيات إدارة عليا (مدير نظام / Admin). دور حسابك الحالي لا يمتلك الإذن الكافي.'
-                    : 'يتطلب الوصول إلى هذا القسم صلاحيات المدير العام للمنظومة (Super Admin).'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleTabChange('bookings')}
-                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 inline-flex items-center gap-2 cursor-pointer"
-              >
-                <span>العودة إلى إدارة الحجوزات</span>
-              </button>
+              <button type="button" onClick={() => setSyncStatus(null)} className="p-1 rounded-lg hover:bg-white/10 min-h-10 min-w-10 inline-flex items-center justify-center cursor-pointer text-slate-300 hover:text-white" aria-label="إغلاق الإشعار"><X className="w-4 h-4" /></button>
             </div>
           )}
 
-          {/* ANIMATED ACTIVE TAB CONTENT */}
-          {vehiclePage ?? (
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.25, ease: 'easeOut' }}
-              className="space-y-6 lg:space-y-8"
-            >
-              {/* TAB 0: OVERVIEW METRICS (Admin Only) */}
-              {isAdmin && activeTab === 'overview' && (
-                <AdminOverview
-                  vehicles={vehicles}
-                  bookings={bookings}
-                  onNavigateTab={handleTabChange}
-                  onOpenAddVehicle={() => openVehicleForm(null)}
-                  onSyncAll={handleSyncAllWithFirestore}
-                  isSyncing={isSyncing}
-                />
-              )}
-
-              {/* TAB 1: BOOKINGS & RENTALS */}
-              {activeTab === 'bookings' && (
-                <AdminBookings
-                  bookings={bookings}
-                  vehicles={vehicles}
-                  onRefreshData={() => {
-                    onRefreshData();
-                    loadAuxData();
-                  }}
-                  onOpenInspection={(v, bookingId) => openInspection(v, bookingId)}
-                  onDeleteBooking={async (bookingId) => {
-                    await dataService.deleteBooking(bookingId);
-                    onRefreshData();
-                    loadAuxData();
-                  }}
-                  isSyncing={isSyncing}
-                  onSyncWithFirestore={handleSyncAllWithFirestore}
-                  syncStatus={syncStatus}
-                />
-              )}
-
-              {/* TAB 2: FLEET VEHICLES */}
-              {activeTab === 'vehicles' && (
-                <AdminVehicles
-                  vehicles={vehicles}
-                  bookings={bookings}
-                  onRefreshData={() => {
-                    onRefreshData();
-                    loadAuxData();
-                  }}
-                  onOpenAddVehicle={() => openVehicleForm(null)}
-                  onOpenEditVehicle={(v) => openVehicleForm(v)}
-                  onDeleteVehicle={(v) => {
-                    setDeleteError(null);
-                    setVehicleToDelete(v);
-                  }}
-                  onOpenInspection={(v) => openInspection(v)}
-                  isSyncing={isSyncing}
-                  onSyncWithFirestore={handleSyncAllWithFirestore}
-                  syncStatus={syncStatus}
-                />
-              )}
-
-              {/* TAB 3: REPORTS (Admin Only) */}
-              {isAdmin && activeTab === 'reports' && (
-                <React.Suspense fallback={<SkeletonLoader type="card" lines={3} />}>
-                  <AdminReports
-                    vehicles={vehicles}
-                    bookings={bookings}
-                  />
-                </React.Suspense>
-              )}
-
-              {/* TAB 4: SETTINGS (Admin Only) */}
-              {isAdmin && activeTab === 'settings' && (
-                <React.Suspense fallback={<SkeletonLoader type="card" lines={3} />}>
-                  <AdminSettings
-                    settings={settings}
-                    vehicles={vehicles}
-                    onSettingsUpdated={onRefreshData}
-                  />
-                </React.Suspense>
-              )}
-
-              {/* TAB 5: NOTIFICATIONS */}
-              {activeTab === 'notifications' && (
-                <AdminNotifications
-                  notifications={notifications}
-                  onRefresh={loadAuxData}
-                />
-              )}
-
-              {/* TAB 6: STAFF ROLES & PERMISSIONS (Super Admin Only) */}
-              {isSuperAdmin && activeTab === 'staff' && (
-                <React.Suspense fallback={<SkeletonLoader type="table" lines={5} />}>
-                  <AdminStaffRoles onBackToOverview={() => handleTabChange('bookings')} />
-                </React.Suspense>
-              )}
-
-              {/* TAB 7: ACCOUNT VERIFICATION & USERS (Admin / Super Admin) */}
-              {(isAdmin || isSuperAdmin) && activeTab === 'firestore_users' && (
-                <React.Suspense fallback={<SkeletonLoader type="table" lines={5} />}>
-                  <AdminUsersFilesView onBackToOverview={() => handleTabChange('bookings')} />
-                </React.Suspense>
-              )}
-
-              {/* TAB 8: ACTIVITY & AUDIT LOG (Super Admin Only) */}
-              {isSuperAdmin && activeTab === 'activity_log' && (
-                <React.Suspense fallback={<SkeletonLoader type="table" lines={5} />}>
-                  <AdminActivityLog onBackToOverview={() => handleTabChange('bookings')} />
-                </React.Suspense>
-              )}
-            </motion.div>
-          </AnimatePresence>
+          {!isTabAuthorized(activeTab) ? (
+            unauthorizedView
+          ) : vehiclePage ?? (
+            <AnimatePresence mode="wait">
+              <motion.div key={activeTab} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.15, ease: 'easeOut' }} className="space-y-6">
+                {isAdmin && activeTab === 'overview' && <AdminOverview vehicles={vehicles} bookings={bookings} onNavigateTab={handleTabChange} />}
+                {activeTab === 'bookings' && <AdminBookings bookings={bookings} vehicles={vehicles} onRefreshData={() => { onRefreshData(); loadAuxData(); }} externalSearch={commandPaletteSearch} />}
+                {activeTab === 'vehicles' && <AdminVehicles vehicles={vehicles} bookings={bookings} onRefreshData={() => { onRefreshData(); loadAuxData(); }} onOpenAddVehicle={() => openVehicleForm(null)} onOpenEditVehicle={(v) => openVehicleForm(v)} onDeleteVehicle={(v) => { setDeleteError(null); setVehicleToDelete(v); }} />}
+                {isAdmin && activeTab === 'reports' && <React.Suspense fallback={<SkeletonLoader type="card" lines={3} />}><AdminReports vehicles={vehicles} bookings={bookings} /></React.Suspense>}
+                {isAdmin && activeTab === 'settings' && <React.Suspense fallback={<SkeletonLoader type="card" lines={3} />}><AdminSettings settings={settings} vehicles={vehicles} onSettingsUpdated={onRefreshData} /></React.Suspense>}
+                {activeTab === 'notifications' && <AdminNotifications notifications={notifications} onRefresh={loadAuxData} />}
+                {isSuperAdmin && activeTab === 'staff' && <React.Suspense fallback={<SkeletonLoader type="table" lines={5} />}><AdminStaffRoles /></React.Suspense>}
+                {(isAdmin || isSuperAdmin) && activeTab === 'firestore_users' && <React.Suspense fallback={<SkeletonLoader type="table" lines={5} />}><AdminUsersFilesView /></React.Suspense>}
+                {isSuperAdmin && activeTab === 'activity_log' && <React.Suspense fallback={<SkeletonLoader type="table" lines={5} />}><AdminActivityLog /></React.Suspense>}
+              </motion.div>
+            </AnimatePresence>
           )}
         </main>
       </div>
 
-      {/* ALL MODALS */}
-      {/* 3. Vehicle Deletion Confirmation Modal with Feedback */}
-      {vehicleToDelete && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
-            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-base font-black text-white">حذف السيارة من الأسطول</h3>
-              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                هل أنت متأكد من رغبتك في حذف السيارة &ldquo;{vehicleToDelete.brand} {vehicleToDelete.model} ({vehicleToDelete.year})&rdquo; من الأسطول النشط؟
-              </p>
-            </div>
-
-            {deleteError && (
-              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold text-right flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
-                <span>{deleteError}</span>
-              </div>
-            )}
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                disabled={isDeletingVehicle}
-                onClick={confirmDeleteVehicle}
-                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/20 disabled:opacity-50"
-              >
-                <span>{isDeletingVehicle ? 'جاري الحذف...' : 'تأكيد الحذف'}</span>
+      <div className="md:hidden fixed inset-x-0 bottom-0 z-40 bg-slate-900 border-t border-slate-800 p-2 shadow-2xl backdrop-blur-md" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <div className="flex items-center justify-around">
+          {primaryMobileTabs.map((nav) => {
+            const Icon = nav.icon;
+            const isActive = activeTab === nav.id;
+            return (
+              <button key={nav.id} type="button" onClick={() => handleTabChange(nav.id)} className={`flex flex-col items-center gap-1 p-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${isActive ? 'text-amber-400 font-extrabold' : 'text-slate-400 hover:text-white'}`}>
+                <Icon className="w-5 h-5" />
+                <span>{nav.label}</span>
               </button>
-              <button
-                type="button"
-                disabled={isDeletingVehicle}
-                onClick={() => {
-                  setVehicleToDelete(null);
-                  setDeleteError(null);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
-              >
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 6. Account Details Modal (تفاصيل الحساب) */}
-      {showAccountDetails && (
-        <div 
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150"
-          onClick={() => {
-            setShowAccountDetails(false);
-            setCopiedUid(false);
-          }}
-        >
-          <div 
-            className="bg-slate-900 border border-slate-800 rounded-3xl max-h-[90vh] overflow-y-auto overscroll-contain p-6 max-w-md w-full space-y-5 shadow-2xl relative"
-            onClick={(e) => e.stopPropagation()}
+            );
+          })}
+          <button
+            ref={mobileMoreBtnRef}
+            type="button"
+            onClick={() => setShowMobileMore(true)}
+            aria-haspopup="dialog"
+            aria-expanded={showMobileMore}
+            aria-label="عرض المزيد من الأقسام"
+            className="flex flex-col items-center gap-1 p-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer"
           >
-            {/* Header with Close button */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center shadow-inner">
-                  <User className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-white">تفاصيل الحساب</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">معلومات حساب المشرف ومعرّف الهوية الرقمية</p>
-                </div>
-              </div>
+            <MoreHorizontal className="w-5 h-5" />
+            <span>المزيد</span>
+          </button>
+        </div>
+      </div>
+
+      {showMobileMore && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+          {/* Backdrop button */}
+          <button
+            type="button"
+            aria-label="إغلاق قائمة المزيد"
+            tabIndex={-1}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm cursor-default w-full h-full border-none"
+            onClick={() => {
+              setShowMobileMore(false);
+              mobileMoreBtnRef.current?.focus();
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="كافة الأقسام والخدمات"
+            className="relative z-10 bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[90dvh] overflow-y-auto overscroll-contain pb-safe"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-extrabold text-white">كافة الأقسام والخدمات</h3>
               <button
                 type="button"
                 onClick={() => {
-                  setShowAccountDetails(false);
-                  setCopiedUid(false);
+                  setShowMobileMore(false);
+                  mobileMoreBtnRef.current?.focus();
                 }}
-                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-                title="إغلاق"
+                className="p-1 text-slate-400 hover:text-white cursor-pointer"
+                aria-label="إغلاق القائمة"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-
-            {/* Account Info Fields */}
-            <div className="space-y-3 text-xs">
-              {/* Name */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
-                <span className="text-slate-400 font-semibold flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5 text-slate-400" />
-                  <span>الاسم:</span>
-                </span>
-                <span className="text-white font-bold text-sm">
-                  {user?.displayName || 'مسؤول النظام'}
-                </span>
-              </div>
-
-              {/* Email */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
-                <span className="text-slate-400 font-semibold flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-slate-400" />
-                  <span>البريد الإلكتروني:</span>
-                </span>
-                <span className="text-slate-200 font-mono text-xs dir-ltr">
-                  {user?.email || '—'}
-                </span>
-              </div>
-
-              {/* Role */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80">
-                <span className="text-slate-400 font-semibold flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-slate-400" />
-                  <span>الدور الوظيفي:</span>
-                </span>
-                <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-amber-500 text-slate-950 flex items-center gap-1 shadow-sm uppercase tracking-wider">
-                  <Shield className="w-3 h-3" />
-                  <span>{isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Staff'}</span>
-                </span>
-              </div>
-
-              {/* UID */}
-              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400 font-semibold">معرّف الحساب (UID):</span>
-                  {user?.uid && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(user.uid);
-                        setCopiedUid(true);
-                        setTimeout(() => setCopiedUid(false), 2000);
-                      }}
-                      className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-sans transition-colors cursor-pointer"
-                    >
-                      {copiedUid ? (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-emerald-400 font-bold">تم النسخ</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>نسخ المعرّف</span>
-                        </>
-                      )}
-                    </button>
-                  )}
-                </div>
-                <div className="font-mono text-amber-300/95 text-xs select-all break-all bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 dir-ltr text-left">
-                  {user?.uid || '—'}
-                </div>
-              </div>
-            </div>
-
-            {/* Footer Action */}
-            <div className="pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAccountDetails(false);
-                  setCopiedUid(false);
-                }}
-                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors cursor-pointer"
-              >
-                إغلاق
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Ctrl+K Quick Command / Search Modal */}
-      {showCommandPalette && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center pt-16 sm:pt-24 p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in"
-          onClick={() => setShowCommandPalette(false)}
-        >
-          <div
-            className="bg-slate-900 border border-slate-700 rounded-3xl max-w-xl w-full shadow-2xl overflow-hidden space-y-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Search Input Bar */}
-            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-slate-800 bg-slate-950">
-              <Search className="w-5 h-5 text-amber-400 shrink-0" />
-              <input
-                type="text"
-                autoFocus
-                value={commandQuery}
-                onChange={(e) => setCommandQuery(e.target.value)}
-                placeholder="ابحث عن سيارة، رقم حجز، اسم عميل، أو قسم..."
-                className="w-full bg-transparent text-sm text-white focus:outline-none placeholder-slate-500 font-medium"
-              />
-              <button
-                type="button"
-                onClick={() => setShowCommandPalette(false)}
-                className="p-1 rounded-lg text-slate-500 hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Results Container */}
-            <div className="p-4 max-h-96 overflow-y-auto space-y-4 text-xs">
-              {(() => {
-                const q = commandQuery.trim().toLowerCase();
-                const matchedTabs = [
-                  { id: 'overview' as const, label: 'لوحة المؤشرات العامة', icon: BarChart2 },
-                  { id: 'bookings' as const, label: 'الحجوزات والتأجير', icon: Calendar },
-                  { id: 'vehicles' as const, label: 'أسطول السيارات', icon: Car },
-                  { id: 'reports' as const, label: 'التقارير المالية والتشغيلية', icon: BarChart3 },
-                  { id: 'notifications' as const, label: 'مركز التنبيهات والإشعارات', icon: Bell },
-                  { id: 'firestore_users' as const, label: 'المستخدمون والملفات (Firestore)', icon: FolderOpen },
-                  { id: 'staff' as const, label: 'إدارة الموظفين والصلاحيات', icon: UserCheck },
-                  { id: 'activity_log' as const, label: 'سجل النشاطات', icon: Activity },
-                  { id: 'settings' as const, label: 'إعدادات النظام والأسعار', icon: Settings },
-                ].filter((t) => isTabAuthorized(t.id) && (!q || t.label.toLowerCase().includes(q)));
-
-                const matchedVehicles = (vehicles || []).filter(
-                  (v) =>
-                    q &&
-                    ((v.brand || '').toLowerCase().includes(q) ||
-                      (v.model || '').toLowerCase().includes(q) ||
-                      (v.plateNumber || '').toLowerCase().includes(q))
-                ).slice(0, 5);
-
-                const matchedBookings = (bookings || []).filter(
-                  (b) =>
-                    q &&
-                    ((b.bookingNumber || '').toLowerCase().includes(q) ||
-                      (b.customerName || '').toLowerCase().includes(q) ||
-                      (b.customerPhone || '').toLowerCase().includes(q))
-                ).slice(0, 5);
-
-                const hasAny = matchedTabs.length > 0 || matchedVehicles.length > 0 || matchedBookings.length > 0;
-
-                if (!hasAny) {
-                  return (
-                    <div className="py-8 text-center text-slate-500">
-                      لم يتم العثور على أي نتائج مطابقة لـ "{commandQuery}"
-                    </div>
-                  );
-                }
-
+            <div className="grid grid-cols-2 gap-2" role="menu">
+              {ADMIN_NAV_ITEMS.filter((item) => isTabAuthorized(item.id)).map((nav) => {
+                const Icon = nav.icon;
+                const isActive = activeTab === nav.id;
                 return (
-                  <div className="space-y-4">
-                    {/* Tabs */}
-                    {matchedTabs.length > 0 && (
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider px-2">أقسام لوحة التحكم</span>
-                        <div className="space-y-1">
-                          {matchedTabs.map((t) => {
-                            const Icon = t.icon;
-                            return (
-                              <button
-                                key={t.id}
-                                onClick={() => {
-                                  handleTabChange(t.id);
-                                  setShowCommandPalette(false);
-                                }}
-                                className="w-full p-2.5 rounded-xl hover:bg-slate-800/80 flex items-center justify-between text-right text-slate-300 hover:text-white transition-colors cursor-pointer group"
-                              >
-                                <div className="flex items-center gap-2.5">
-                                  <Icon className="w-4 h-4 text-amber-400" />
-                                  <span className="font-bold">{t.label}</span>
-                                </div>
-                                <span className="text-[10px] text-slate-500 group-hover:text-amber-400">انتقال سريع ←</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Vehicles */}
-                    {matchedVehicles.length > 0 && (
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider px-2">السيارات المطابقة</span>
-                        <div className="space-y-1">
-                          {matchedVehicles.map((v) => (
-                            <button
-                              key={v.id}
-                              onClick={() => {
-                                handleTabChange('vehicles');
-                                setShowCommandPalette(false);
-                              }}
-                              className="w-full p-2.5 rounded-xl hover:bg-slate-800/80 flex items-center justify-between text-right text-slate-300 hover:text-white transition-colors cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2.5">
-                                <Car className="w-4 h-4 text-blue-400" />
-                                <div>
-                                  <span className="font-bold text-white">{v.brand} {v.model} ({v.year})</span>
-                                  <span className="text-xs text-slate-400 font-mono block">لوحة: {v.plateNumber} • ${v.dailyPrice}/يوم</span>
-                                </div>
-                              </div>
-                              <StatusBadge status={v.status} type="vehicle" size="sm" />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Bookings */}
-                    {matchedBookings.length > 0 && (
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider px-2">الحجوزات المطابقة</span>
-                        <div className="space-y-1">
-                          {matchedBookings.map((b) => (
-                            <button
-                              key={b.id}
-                              onClick={() => {
-                                handleTabChange('bookings');
-                                setShowCommandPalette(false);
-                              }}
-                              className="w-full p-2.5 rounded-xl hover:bg-slate-800/80 flex items-center justify-between text-right text-slate-300 hover:text-white transition-colors cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2.5">
-                                <Calendar className="w-4 h-4 text-amber-400" />
-                                <div>
-                                  <span className="font-bold text-white">حجز #{b.bookingNumber} • {b.customerName}</span>
-                                  <span className="text-[11px] text-slate-400 block">{b.vehicleName} ({b.pickupDate} إلى {b.returnDate})</span>
-                                </div>
-                              </div>
-                              <span className="text-[11px] font-mono font-bold text-amber-400">${b.totalPrice}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    key={nav.id}
+                    role="menuitem"
+                    type="button"
+                    onClick={() => {
+                      handleTabChange(nav.id);
+                      setShowMobileMore(false);
+                      mobileMoreBtnRef.current?.focus();
+                    }}
+                    className={`p-3 rounded-2xl border text-right text-xs font-bold flex items-center gap-2.5 transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-amber-500 text-slate-950 border-amber-500 font-extrabold'
+                        : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{nav.label}</span>
+                  </button>
                 );
-              })()}
-            </div>
-
-            {/* Modal Footer Tip */}
-            <div className="px-5 py-3 border-t border-slate-800 bg-slate-950/60 text-[11px] text-slate-500 flex justify-between items-center">
-              <span>اضغط <kbd className="font-mono bg-slate-900 border border-slate-800 px-1 rounded">Esc</kbd> للإغلاق</span>
-              <span>نظام بحث شاكر المركزي</span>
+              })}
             </div>
           </div>
         </div>
       )}
+
+      <ConfirmModal 
+        isOpen={Boolean(vehicleToDelete)} 
+        title="حذف السيارة" 
+        message={
+          vehicleToDelete
+            ? `هل أنت متأكد من حذف السيارة "${vehicleToDelete.brand} ${vehicleToDelete.model} (${vehicleToDelete.year})"${
+                vehicleDeleteActiveBookings.length > 0
+                  ? `؟\n\n⚠️ تحذير: هذه السيارة مرتبطة بـ (${vehicleDeleteActiveBookings.length}) حجوزات نشطة أو قادمة: [${vehicleDeleteActiveBookings.map((b) => b.bookingNumber || b.id).join('، ')}]. لن يسمح النظام بحذفها قبل إلغاء أو إنهاء هذه الحجوزات.`
+                  : '؟'
+              }${deleteError ? `\n\n❌ تعذر الحذف: ${deleteError}` : ''}`
+            : ''
+        } 
+        confirmLabel="تأكيد الحذف" 
+        cancelLabel="إلغاء" 
+        type="danger" 
+        isLoading={isDeletingVehicle} 
+        onConfirm={confirmDeleteVehicle} 
+        onCancel={() => { setVehicleToDelete(null); setDeleteError(null); }} 
+      />
     </div>
   );
 };

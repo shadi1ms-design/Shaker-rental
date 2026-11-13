@@ -8,17 +8,24 @@ export function getRemaining(): number {
 }
 
 /**
- * Returns true if the booking is active and financially valid (not cancelled or rejected).
+ * Returns true if the booking is active and financially valid:
+ * only non-deleted 'confirmed', 'rented', and 'completed' bookings.
+ * Unconfirmed holds ('new', 'reviewing') and terminal states ('cancelled', 'rejected') are excluded.
  */
 export function isFinanciallyActiveBooking(booking: Booking): boolean {
-  return booking.status !== 'cancelled' && booking.status !== 'rejected';
+  if (booking.isDeleted === true) return false;
+  return (
+    booking.status === 'confirmed' ||
+    booking.status === 'rented' ||
+    booking.status === 'completed'
+  );
 }
 
 /**
- * فصل التأمين المسترد عن الإيراد التشغيلي:
- * - لا يتم المساس بقيمة totalPrice المخزنة في سجل الحجز في Firestore.
- * - الإيراد التشغيلي = totalPrice - insuranceAmount للحجوزات المحتسبة (الفعالة أو المكتملة).
- * - التأمين المسترد (insuranceAmount) أمانة مستردة تُعاد للعميل عند إعادة السيارة بحالتها، وتُعرض منفصلة تماماً عن إيراد الشركة.
+ * Calculates financial metrics for bookings:
+ * - Net revenue = (finalTotal ?? (totalPrice + extraCharges)) - insuranceAmount
+ * - Separates refundable insurance from operational revenue
+ * - Exposes pending review metrics for 'new' and 'reviewing' holds
  */
 export function calculateBookingFinancials(bookings: Booking[]): {
   totalRevenue: number;
@@ -28,23 +35,37 @@ export function calculateBookingFinancials(bookings: Booking[]): {
   completedInsurance: number;
   totalValidBookings: number;
   completedBookingsCount: number;
+  pendingReviewBookingsCount: number;
+  pendingReviewGrossTotal: number;
   // Legacy aliases for non-breaking UI support
   collectedRevenue: number;
   outstandingBalance: number;
 } {
   return bookings.reduce(
     (acc, b) => {
+      if (b.isDeleted === true) return acc;
+
+      // Pending review metrics for unconfirmed requests
+      if (b.status === 'new' || b.status === 'reviewing') {
+        acc.pendingReviewBookingsCount += 1;
+        acc.pendingReviewGrossTotal += Number(b.totalPrice || 0);
+        return acc;
+      }
+
       if (!isFinanciallyActiveBooking(b)) {
         return acc;
       }
-      const totalPrice = Number(b.totalPrice || 0);
+
+      const effectiveTotal =
+        typeof b.finalTotal === 'number'
+          ? b.finalTotal
+          : Number(b.totalPrice || 0) + Number(b.extraCharges || 0);
       const insurance = Number(b.insuranceAmount || 0);
-      // الإيراد = totalPrice - insuranceAmount
-      const netRevenue = Math.max(0, totalPrice - insurance);
+      const netRevenue = Math.max(0, effectiveTotal - insurance);
 
       acc.totalRevenue += netRevenue;
       acc.totalInsurance += insurance;
-      acc.grossTotal += totalPrice;
+      acc.grossTotal += effectiveTotal;
       acc.totalValidBookings += 1;
 
       if (b.status === 'completed') {
@@ -67,6 +88,8 @@ export function calculateBookingFinancials(bookings: Booking[]): {
       completedInsurance: 0,
       totalValidBookings: 0,
       completedBookingsCount: 0,
+      pendingReviewBookingsCount: 0,
+      pendingReviewGrossTotal: 0,
       collectedRevenue: 0,
       outstandingBalance: 0,
     }

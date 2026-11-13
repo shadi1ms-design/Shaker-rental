@@ -18,8 +18,8 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   size = 'sm',
 }) => {
   let label = customLabel || status;
-  let badgeClass = 'bg-slate-800 text-slate-300 border border-slate-700';
-  let dotClass = 'bg-slate-400';
+  let badgeClass = 'bg-status-completed-bg text-status-completed border border-status-completed-border';
+  let dotClass = 'bg-status-completed-dot';
 
   if (type === 'booking') {
     const meta = BOOKING_STATUS_META[status as BookingStatus];
@@ -48,7 +48,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
     badgeClass = customClass;
   }
 
-  const sizeClass = size === 'md' ? 'px-3 py-1 text-xs' : 'px-2.5 py-0.5 text-[11px]';
+  const sizeClass = size === 'md' ? 'px-3 py-1 text-xs' : 'px-2.5 py-0.5 text-xs';
 
   return (
     <span

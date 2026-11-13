@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AppNotification } from '../../types';
 import { dataService } from '../../services/dataService';
+import { ADMIN_TAB_LABEL } from '../../constants/adminNav';
 import {
   Bell,
   CheckCircle2,
@@ -89,12 +90,12 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5">
-            <h3 className="text-xl font-black text-white flex items-center gap-2">
+            <h1 className="text-xl font-extrabold text-white flex items-center gap-2">
               <Bell className="w-5 h-5 text-amber-400" />
-              <span>مركز التنبيهات والإشعارات</span>
-            </h3>
+              <span>{ADMIN_TAB_LABEL.notifications}</span>
+            </h1>
             {unreadCount > 0 && (
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500 text-slate-950">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-500 text-slate-950">
                 {unreadCount} غير مقروء
               </span>
             )}
@@ -150,7 +151,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
           <div className="p-12 text-center text-slate-400 text-xs space-y-2">
             <CheckCircle2 className="w-10 h-10 text-emerald-500/60 mx-auto" />
             <p className="font-bold text-sm text-slate-300">لا توجد تنبيهات في هذا القسم</p>
-            <p className="text-slate-500 text-[11px]">كافة العمليات والإشعارات تمت مراجعتها بنجاح</p>
+            <p className="text-slate-400 text-xs">كافة العمليات والإشعارات تمت مراجعتها بنجاح</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-800/60">
@@ -175,18 +176,18 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
                   <div className="space-y-1.5 flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2">
-                        <h4 className={`text-xs font-bold ${isUnread ? 'text-amber-300 font-black' : 'text-white'}`}>
+                        <h4 className={`text-xs font-bold ${isUnread ? 'text-amber-300 font-extrabold' : 'text-white'}`}>
                           {n.title}
                         </h4>
                         {isUnread && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          <span className="px-2 py-0.5 rounded-full text-xs font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                             جديد
                           </span>
                         )}
                       </div>
-                      <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1 shrink-0">
+                      <span className="text-xs text-slate-400 tabular-nums flex items-center gap-1 shrink-0">
                         <Clock className="w-3 h-3" />
-                        <span>{new Date(n.createdAt).toLocaleString('ar-SY')}</span>
+                        <span>{new Date(n.createdAt).toLocaleString('ar-SY-u-nu-latn')}</span>
                       </span>
                     </div>
 
@@ -198,7 +199,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
                         <button
                           type="button"
                           onClick={() => handleMarkAsRead(n.id)}
-                          className="text-[11px] text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                          className="text-xs text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 transition-colors cursor-pointer"
                         >
                           <Check className="w-3.5 h-3.5" />
                           <span>تعليم كمقروء</span>
@@ -208,7 +209,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
                       <button
                         type="button"
                         onClick={() => handleDelete(n.id)}
-                        className="text-[11px] text-slate-500 hover:text-rose-400 flex items-center gap-1 transition-colors cursor-pointer mr-auto"
+                        className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors cursor-pointer mr-auto"
                         title="حذف التنبيه"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

@@ -2,6 +2,7 @@ import { beforeUserCreated } from 'firebase-functions/v2/identity';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
+import { writeAuditAsync } from './audit';
 
 const db = getFirestore(getApp(), DATABASE_ID);
 
@@ -24,26 +25,39 @@ export const beforeUserCreatedHandler = beforeUserCreated(
       const userSnap = await userRef.get();
 
       if (!userSnap.exists) {
-        await userRef.set({
-          uid: user.uid,
-          email,
-          name: displayName,
-          displayName,
-          phone,
-          role: 'customer',
-          active: true,
-          uploadedFilesCount: 0,
-          createdAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      } else {
-        // Ensure phone is reliably updated if provided
-        if (phone) {
-          await userRef.set({ phone, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        try {
+          await userRef.set({
+            uid: user.uid,
+            email,
+            name: displayName,
+            displayName,
+            phone,
+            role: 'customer',
+            active: true,
+            uploadedFilesCount: 0,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+
+          // Audit Log for user registration via unified writeAuditAsync
+          await writeAuditAsync(db, {
+            action: 'USER_REGISTERED',
+            actorUid: user.uid,
+            actorEmail: email,
+            actorRole: 'customer',
+            actorType: 'customer',
+            entity: 'user',
+            entityId: user.uid,
+            entityName: displayName,
+            targetUserId: user.uid,
+            details: `تسجيل مستخدم جديد في النظام: ${displayName} (${email})`,
+          });
+        } catch (dbWriteErr) {
+          console.error('[beforeUserCreatedHandler] DB write failure, continuing registration:', dbWriteErr);
         }
       }
     } catch (dbErr) {
-      console.error('[beforeUserCreatedHandler] Error provisioning user doc:', dbErr);
+      console.error('[beforeUserCreatedHandler] Error fetching user doc:', dbErr);
     }
 
     // Default customer claims

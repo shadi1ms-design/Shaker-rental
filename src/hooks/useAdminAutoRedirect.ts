@@ -7,17 +7,23 @@ import { navigate, routes } from '../router';
  * The ref prevents trapping the admin in an endless redirect loop afterwards.
  */
 export function useAdminAutoRedirect() {
-  const { isAdmin } = useAuth();
-  const hasAutoNavigatedRef = useRef(false);
+  const { user, isAdmin, isEmployee } = useAuth();
+  const isStaff = isAdmin || isEmployee;
+  const prevUidRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (isAdmin && !hasAutoNavigatedRef.current) {
-      hasAutoNavigatedRef.current = true;
-      if (!window.location.pathname.startsWith('/admin')) {
+    const currentUid = user?.uid || null;
+
+    // Detect new login (user.uid transitions from null to a valid string)
+    if (currentUid && prevUidRef.current === null && isStaff) {
+      const currentPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+      const autoRedirectPaths = ['/', '/login', '/register', '/profile'];
+      if (autoRedirectPaths.includes(currentPath)) {
         navigate(routes.adminDashboard, { replace: true });
       }
-    } else if (!isAdmin) {
-      hasAutoNavigatedRef.current = false;
     }
-  }, [isAdmin]);
+
+    // Reset ref on logout (when user becomes null)
+    prevUidRef.current = currentUid;
+  }, [user?.uid, isStaff]);
 }

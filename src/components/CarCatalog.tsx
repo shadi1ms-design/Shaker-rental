@@ -1,5 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { VehicleImageCarousel } from './common/VehicleImageCarousel';
+import React, { useState, useMemo, useRef } from 'react';
+import { VehicleCard } from './common/VehicleCard';
+import { SearchInput } from './common/SearchInput';
+import { EmptyState } from './common/EmptyState';
+import { SkeletonLoader } from './common/SkeletonLoader';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   Vehicle,
   VehicleCategory,
@@ -8,20 +12,19 @@ import {
   SearchFilters,
   SortField
 } from '../types';
-import { DEFAULT_SETTINGS } from '../services/pricing';
-import { VEHICLE_CATEGORY_LABELS, getVehicleCategoryLabel } from '../constants/vehicleCategories';
+import { VEHICLE_CATEGORY_LABELS } from '../constants/vehicleCategories';
+import { FUEL_LABEL, TRANSMISSION_LABEL } from '../constants/vehicleLabels';
+import { formatMoney, formatArabicVehicleCount, formatArabicVehicleCountShort, formatDateDisplay } from '../utils/format';
+import { openWhatsAppChat } from '../services/whatsapp';
+import { isVehicleLocallyUnavailableForRange, useRangeAvailability } from '../utils/vehicleAvailability';
 import {
-  Users,
-  Fuel,
-  Settings,
-  Sparkles,
-  Search,
   Filter,
   ArrowUpDown,
-  AlertCircle,
-  Clock,
-  Info,
   Calendar,
+  X,
+  SlidersHorizontal,
+  RotateCcw,
+  MessageCircle
 } from 'lucide-react';
 
 interface CarCatalogProps {
@@ -32,7 +35,14 @@ interface CarCatalogProps {
   onViewDetails?: (vehicle: Vehicle) => void;
   selectedCategory?: VehicleCategory | 'all';
   initialFilters?: SearchFilters | null;
+  onClearDates?: () => void;
+  onFilterChange?: (filters: SearchFilters) => void;
 }
+
+const AVAILABILITY_CHIP_LABEL: Record<'available' | 'rented', string> = {
+  available: 'متاحة فوراً',
+  rented: 'مؤجرة حالياً',
+};
 
 export const CarCatalog: React.FC<CarCatalogProps> = ({
   vehicles = [],
@@ -42,8 +52,9 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
   onViewDetails,
   selectedCategory = 'all',
   initialFilters,
+  onClearDates,
+  onFilterChange,
 }) => {
-  // Safe resolved handlers
   const handleBooking = (v: Vehicle) => {
     if (typeof onBookCar === 'function') {
       onBookCar(v);
@@ -73,30 +84,67 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
   const [fuelType, setFuelType] = useState<FuelType | 'all'>('all');
   const [seats, setSeats] = useState<number | 'all'>('all');
   const [availability, setAvailability] = useState<'all' | 'available' | 'rented'>('all');
-  // null = no cap (follows the most expensive vehicle), so no vehicle is hidden by default
   const [maxPriceCap, setMaxPriceCap] = useState<number | null>(null);
-  const [sortBy, setSortBy] = useState<SortField>('price-asc');
+  const [sortBy, setSortBy] = useState<SortField>('recommended');
   const [showFiltersMobile, setShowFiltersMobile] = useState(false);
+  const mobileFilterRef = useRef<HTMLDivElement>(null);
 
-  // Sync category or initialFilters prop if updated from Hero search
-  React.useEffect(() => {
+  useFocusTrap(mobileFilterRef, {
+    isOpen: showFiltersMobile,
+    onClose: () => setShowFiltersMobile(false),
+    lockScroll: true,
+  });
+
+  // Active dates from hero/initialFilters
+  const [activePickupDate, setActivePickupDate] = useState<string | undefined>(initialFilters?.pickupDate);
+  const [activeReturnDate, setActiveReturnDate] = useState<string | undefined>(initialFilters?.returnDate);
+
+  // Sync props at render time (avoids useEffect + setTimeout cascading updates)
+  const [prevInitialFilters, setPrevInitialFilters] = useState(initialFilters);
+  const [prevSelectedCategory, setPrevSelectedCategory] = useState(selectedCategory);
+
+  if (initialFilters !== prevInitialFilters || selectedCategory !== prevSelectedCategory) {
+    setPrevInitialFilters(initialFilters);
+    setPrevSelectedCategory(selectedCategory);
     if (initialFilters?.category) {
       setCategory(initialFilters.category);
-    } else if (selectedCategory) {
+    } else if (selectedCategory !== prevSelectedCategory && selectedCategory) {
       setCategory(selectedCategory);
     }
-    if (initialFilters?.searchQuery) {
-      setSearchQuery(initialFilters.searchQuery);
+    if (initialFilters?.searchQuery !== undefined) {
+      setSearchQuery(initialFilters.searchQuery || '');
     }
-    if (initialFilters?.transmission) {
-      setTransmission(initialFilters.transmission);
+    if (initialFilters?.transmission !== undefined) {
+      setTransmission(initialFilters.transmission || 'all');
     }
-  }, [selectedCategory, initialFilters]);
+    if (initialFilters?.pickupDate !== prevInitialFilters?.pickupDate) {
+      setActivePickupDate(initialFilters?.pickupDate);
+    }
+    if (initialFilters?.returnDate !== prevInitialFilters?.returnDate) {
+      setActiveReturnDate(initialFilters?.returnDate);
+    }
+  }
 
-  // Unique lists for filters
-  const safeVehicles = vehicles || [];
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+  React.useEffect(() => {
+    const t = setTimeout(() => setLoadTimedOut(true), 4000);
+    return () => clearTimeout(t);
+  }, []);
 
-  // Slider bounds follow the real fleet prices instead of a hard-coded 35$-100$ range
+  const safeVehicles = useMemo(() => vehicles || [], [vehicles]);
+
+  const isDateFilterApplied = Boolean(
+    activePickupDate &&
+    activeReturnDate &&
+    activeReturnDate >= activePickupDate
+  );
+
+  const { availabilityMap } = useRangeAvailability(
+    safeVehicles,
+    isDateFilterApplied ? activePickupDate : undefined,
+    isDateFilterApplied ? activeReturnDate : undefined
+  );
+
   const priceBounds = useMemo(() => {
     const prices = safeVehicles.map((v) => Number(v.dailyPrice)).filter((n) => Number.isFinite(n));
     if (prices.length === 0) return { min: 35, max: 100 };
@@ -107,17 +155,38 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
   const maxPrice = maxPriceCap === null ? priceBounds.max : Math.min(Math.max(maxPriceCap, priceBounds.min), priceBounds.max);
 
   const uniqueBrands = useMemo(() => {
-    return Array.from(new Set(safeVehicles.map(v => v.brand)));
+    return Array.from(new Set(safeVehicles.map((v) => v.brand)));
   }, [safeVehicles]);
 
-  // Filter and sort logic
+  const uniqueYears = useMemo(() => {
+    return Array.from(new Set(safeVehicles.map((v) => v.year))).sort((a, b) => b - a);
+  }, [safeVehicles]);
+
+  const uniqueSeats = useMemo(() => {
+    return Array.from(new Set(safeVehicles.map((v) => v.seats))).sort((a, b) => a - b);
+  }, [safeVehicles]);
+
+  const hasPriceFilter = maxPriceCap !== null && maxPriceCap < priceBounds.max;
+
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (category !== 'all') count++;
+    if (searchQuery.trim()) count++;
+    if (selectedBrand !== 'all') count++;
+    if (selectedYear !== 'all') count++;
+    if (transmission !== 'all') count++;
+    if (fuelType !== 'all') count++;
+    if (seats !== 'all') count++;
+    if (availability !== 'all') count++;
+    if (hasPriceFilter) count++;
+    return count;
+  }, [category, searchQuery, selectedBrand, selectedYear, transmission, fuelType, seats, availability, hasPriceFilter]);
+
   const filteredVehicles = useMemo(() => {
     return safeVehicles
       .filter((vehicle) => {
-        // Category
         if (category !== 'all' && vehicle.category !== category) return false;
 
-        // Search Query (brand, model, color)
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
           const match =
@@ -127,27 +196,23 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
           if (!match) return false;
         }
 
-        // Brand
         if (selectedBrand !== 'all' && vehicle.brand !== selectedBrand) return false;
-
-        // Year
         if (selectedYear !== 'all' && vehicle.year !== selectedYear) return false;
-
-        // Transmission
         if (transmission !== 'all' && vehicle.transmission !== transmission) return false;
-
-        // Fuel
         if (fuelType !== 'all' && vehicle.fuelType !== fuelType) return false;
-
-        // Seats
         if (seats !== 'all' && vehicle.seats !== seats) return false;
-
-        // Price
         if (vehicle.dailyPrice > maxPrice) return false;
 
-        // Availability
         if (availability === 'available' && vehicle.status !== 'available') return false;
         if (availability === 'rented' && vehicle.status !== 'rented') return false;
+
+        if (isDateFilterApplied && activePickupDate && activeReturnDate) {
+          if (vehicle.id in availabilityMap) {
+            if (!availabilityMap[vehicle.id]) return false;
+          } else if (isVehicleLocallyUnavailableForRange(vehicle, activePickupDate, activeReturnDate)) {
+            return false;
+          }
+        }
 
         return true;
       })
@@ -155,11 +220,14 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
         if (sortBy === 'price-asc') return a.dailyPrice - b.dailyPrice;
         if (sortBy === 'price-desc') return b.dailyPrice - a.dailyPrice;
         if (sortBy === 'year-desc') return b.year - a.year;
-        if (sortBy === 'popularity') return b.year - a.year; // Fallback
-        return 0;
+
+        // 'recommended': available cars first, then lowest daily price
+        if (a.status === 'available' && b.status !== 'available') return -1;
+        if (b.status === 'available' && a.status !== 'available') return 1;
+        return a.dailyPrice - b.dailyPrice;
       });
   }, [
-    vehicles,
+    safeVehicles,
     category,
     searchQuery,
     selectedBrand,
@@ -169,12 +237,12 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
     seats,
     maxPrice,
     availability,
+    isDateFilterApplied,
+    activePickupDate,
+    activeReturnDate,
+    availabilityMap,
     sortBy,
   ]);
-
-  const getCategoryLabel = (cat: VehicleCategory) => {
-    return getVehicleCategoryLabel(cat);
-  };
 
   const resetFilters = () => {
     setCategory('all');
@@ -186,95 +254,257 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
     setSeats('all');
     setAvailability('all');
     setMaxPriceCap(null);
-    setSortBy('price-asc');
+    setSortBy('recommended');
+  };
+
+  const handleClearActiveDates = () => {
+    setActivePickupDate(undefined);
+    setActiveReturnDate(undefined);
+    if (onClearDates) {
+      onClearDates();
+    }
+    if (onFilterChange) {
+      onFilterChange({
+        category,
+        searchQuery,
+        transmission,
+        pickupDate: undefined,
+        returnDate: undefined,
+      });
+    }
   };
 
   return (
-    <section className="py-12 bg-slate-950 text-slate-100 min-h-screen">
+    <section className="py-10 sm:py-12 bg-slate-950 text-slate-100">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Active Dates Banner / Bar (rendered ONLY when a valid date filter is applied) */}
+        {isDateFilterApplied && activePickupDate && activeReturnDate && (
+          <div className="mb-6 bg-amber-500/10 border border-amber-500/40 rounded-card p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
+            <div className="flex items-center gap-2.5 text-amber-300">
+              <Calendar className="w-5 h-5 text-amber-400 shrink-0" />
+              <span>
+                فترة الحجز المختارة: من <strong className="text-white font-mono inline-block tabular-nums" dir="ltr"><bdi dir="ltr">{formatDateDisplay(activePickupDate)}</bdi></strong> إلى <strong className="text-white font-mono inline-block tabular-nums" dir="ltr"><bdi dir="ltr">{formatDateDisplay(activeReturnDate)}</bdi></strong>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleClearActiveDates}
+              className="min-h-11 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 text-sm font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4 text-rose-400" />
+              <span>إزالة تواريخ الحجز</span>
+            </button>
+          </div>
+        )}
+
         {/* Header Title */}
         <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4 border-b border-slate-800/80 pb-6">
           <div>
-            <div className="inline-flex items-center gap-2 text-amber-400 text-sm font-semibold mb-2">
-              <Sparkles className="w-4 h-4" />
-              <span>أسطول شركة شاكر لتأجير السيارات</span>
-            </div>
-            <h2 className="text-3xl sm:text-4xl font-black text-white">
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-white">
               اختر سيارتك المفضلة
             </h2>
-            <p className="text-slate-400 text-sm mt-1">
-              متاح لدينا {filteredVehicles.length} سيارة جاهزة للتأجير الفوري في دمشق وجرمانا
+            <p className="text-slate-400 text-sm sm:text-base mt-1" aria-live="polite">
+              {formatArabicVehicleCount(filteredVehicles.length)}
             </p>
           </div>
 
-          {/* Quick Sort & Mobile Filter Toggle */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <button
-              onClick={() => setShowFiltersMobile(!showFiltersMobile)}
-              className="lg:hidden px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm font-semibold flex items-center gap-2"
+              type="button"
+              onClick={() => setShowFiltersMobile(true)}
+              className="lg:hidden min-h-11 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm font-semibold flex items-center gap-2 cursor-pointer relative"
+              aria-label="فتح فلاتر البحث"
             >
               <Filter className="w-4 h-4 text-amber-400" />
               <span>الفلاتر والتصنيفات</span>
+              {activeFiltersCount > 0 && (
+                <span className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center tabular-nums">
+                  {activeFiltersCount}
+                </span>
+              )}
             </button>
 
-            <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
-              <ArrowUpDown className="w-4 h-4 text-slate-400" />
+            <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 min-h-11">
+              <ArrowUpDown className="w-4 h-4 text-slate-400 shrink-0" />
               <select
-                value={sortBy || 'price-asc'}
+                value={sortBy || 'recommended'}
                 onChange={(e) => setSortBy(e.target.value as SortField)}
-                className="bg-transparent text-sm text-slate-200 font-medium focus:outline-none cursor-pointer"
+                aria-label="ترتيب السيارات"
+                className="bg-transparent min-h-11 text-sm text-slate-200 font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
               >
+                <option value="recommended" className="bg-slate-900">الأكثر ملاءمة (المتاح أولاً)</option>
                 <option value="price-asc" className="bg-slate-900">السعر: من الأقل للأعلى</option>
                 <option value="price-desc" className="bg-slate-900">السعر: من الأعلى للأقل</option>
                 <option value="year-desc" className="bg-slate-900">الموديل: الأحدث أولاً</option>
-                <option value="popularity" className="bg-slate-900">الأكثر طلباً</option>
               </select>
             </div>
           </div>
         </div>
 
+        {/* Active Filter Chips Bar (Covers EVERY filter counted in activeFiltersCount) */}
+        {activeFiltersCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mb-6 p-4 rounded-card bg-slate-900/60 border border-slate-800 text-sm">
+            <span className="text-slate-300 text-sm font-semibold me-1">الفلاتر النشطة:</span>
+            {category !== 'all' && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold">
+                <span>الفئة: {VEHICLE_CATEGORY_LABELS[category as VehicleCategory]}</span>
+                <button
+                  type="button"
+                  onClick={() => setCategory('all')}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر الفئة"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            {searchQuery.trim() && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold">
+                <span>بحث: "{searchQuery}"</span>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر البحث"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            {selectedBrand !== 'all' && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold">
+                <span>الشركة: {selectedBrand}</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBrand('all')}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر الشركة"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            {selectedYear !== 'all' && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold tabular-nums">
+                <span>السنة: {selectedYear}</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedYear('all')}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر سنة الصنع"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            {transmission !== 'all' && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold">
+                <span>الناقل: {TRANSMISSION_LABEL[transmission]}</span>
+                <button
+                  type="button"
+                  onClick={() => setTransmission('all')}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر ناقل الحركة"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            {fuelType !== 'all' && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold">
+                <span>الوقود: {FUEL_LABEL[fuelType]}</span>
+                <button
+                  type="button"
+                  onClick={() => setFuelType('all')}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر نوع الوقود"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            {seats !== 'all' && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold tabular-nums">
+                <span>المقاعد: {seats}</span>
+                <button
+                  type="button"
+                  onClick={() => setSeats('all')}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر عدد المقاعد"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            {availability !== 'all' && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold">
+                <span>التوفر: {AVAILABILITY_CHIP_LABEL[availability]}</span>
+                <button
+                  type="button"
+                  onClick={() => setAvailability('all')}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر التوفر"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            {hasPriceFilter && (
+              <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold tabular-nums">
+                <span>السعر الأقصى: {formatMoney(maxPrice)}</span>
+                <button
+                  type="button"
+                  onClick={() => setMaxPriceCap(null)}
+                  className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
+                  aria-label="إزالة فلتر السعر الأقصى"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="min-h-11 px-3 text-sm text-rose-400 hover:text-rose-300 underline font-semibold ms-auto cursor-pointer"
+            >
+              مسح الكل
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
-          {/* Sidebar Filters */}
-          <div
-            className={`lg:block ${
-              showFiltersMobile ? 'block' : 'hidden'
-            } bg-slate-900/90 border border-slate-800 rounded-3xl p-6 space-y-6 sticky top-28 backdrop-blur-md`}
-          >
+          {/* Desktop Sidebar Filters */}
+          <div className="hidden lg:block bg-slate-900/90 border border-slate-800 rounded-modal p-6 space-y-6 sticky top-20 max-h-[calc(100dvh-6rem)] overflow-y-auto backdrop-blur-md">
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <span className="font-bold text-white text-base flex items-center gap-2">
                 <Filter className="w-4 h-4 text-amber-400" />
                 تصفية النتائج
               </span>
               <button
+                type="button"
                 onClick={resetFilters}
-                className="text-xs text-amber-400 hover:underline"
+                className="min-h-11 px-2 text-sm text-amber-400 hover:underline font-semibold cursor-pointer"
               >
                 إعادة ضبط
               </button>
             </div>
 
-            {/* Search Input */}
             <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-2">
+              <label htmlFor="desktop-search-input" className="block text-sm font-semibold text-slate-300 mb-2">
                 بحث بالاسم أو الطراز
               </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={searchQuery || ''}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="مثال: أوبتيما، إلنترا، BYD..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 pl-9 text-sm text-white focus:outline-none focus:border-amber-500"
-                />
-                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-              </div>
+              <SearchInput
+                id="desktop-search-input"
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="مثال: أوبتيما، إلنترا، BYD..."
+              />
             </div>
 
-            {/* Category Filter */}
             <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-2">
+              <span className="block text-sm font-semibold text-slate-300 mb-2">
                 فئة السيارة
-              </label>
+              </span>
               <div className="space-y-1.5">
                 {[
                   { id: 'all', label: 'جميع الفئات' },
@@ -284,8 +514,9 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 ].map((item) => (
                   <button
                     key={item.id}
+                    type="button"
                     onClick={() => setCategory(item.id as VehicleCategory | 'all')}
-                    className={`w-full text-right px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                    className={`w-full min-h-11 text-start px-3 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
                       category === item.id
                         ? 'bg-amber-500 text-slate-950 font-bold'
                         : 'text-slate-300 hover:bg-slate-800'
@@ -297,40 +528,38 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               </div>
             </div>
 
-            {/* Price Slider */}
             <div>
               <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-semibold text-slate-400">
+                <label htmlFor="desktop-max-price-range" className="text-sm font-semibold text-slate-300">
                   الحد الأقصى للسعر اليومي
                 </label>
-                <span className="text-amber-400 font-bold text-xs">{maxPrice}$ / يوم</span>
+                <span className="text-amber-400 font-bold text-sm tabular-nums">{formatMoney(maxPrice)} / يوم</span>
               </div>
               <input
+                id="desktop-max-price-range"
                 type="range"
                 min={priceBounds.min}
                 max={priceBounds.max}
                 step="5"
                 value={maxPrice}
                 onChange={(e) => setMaxPriceCap(Number(e.target.value))}
-                className="w-full accent-amber-500 bg-slate-800 h-2 rounded-lg cursor-pointer"
+                className="w-full accent-amber-500 bg-slate-800 h-2 rounded-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               />
-              <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                <span>{priceBounds.min}$</span>
-                <span>{Math.round((priceBounds.min * 2 + priceBounds.max) / 3 / 5) * 5}$</span>
-                <span>{Math.round((priceBounds.min + priceBounds.max * 2) / 3 / 5) * 5}$</span>
-                <span>{priceBounds.max}$</span>
+              <div className="flex justify-between text-sm text-slate-400 mt-1 tabular-nums">
+                <span>{formatMoney(priceBounds.min)}</span>
+                <span>{formatMoney(priceBounds.max)}</span>
               </div>
             </div>
 
-            {/* Brand Filter */}
             <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-2">
+              <label htmlFor="desktop-brand-select" className="block text-sm font-semibold text-slate-300 mb-2">
                 الشركة المصنعة
               </label>
               <select
+                id="desktop-brand-select"
                 value={selectedBrand || 'all'}
                 onChange={(e) => setSelectedBrand(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
               >
                 <option value="all">جميع الشركات</option>
                 {uniqueBrands.map((b) => (
@@ -339,71 +568,82 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               </select>
             </div>
 
-            {/* Transmission & Fuel */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+                <label htmlFor="desktop-year-select" className="block text-sm font-semibold text-slate-300 mb-1.5">
+                  سنة الصنع
+                </label>
+                <select
+                  id="desktop-year-select"
+                  value={selectedYear === 'all' ? 'all' : String(selectedYear)}
+                  onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer tabular-nums"
+                >
+                  <option value="all">الكل</option>
+                  {uniqueYears.map((y) => (
+                    <option key={y} value={String(y)}>{y}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="desktop-seats-select" className="block text-sm font-semibold text-slate-300 mb-1.5">
+                  عدد المقاعد
+                </label>
+                <select
+                  id="desktop-seats-select"
+                  value={seats === 'all' ? 'all' : String(seats)}
+                  onChange={(e) => setSeats(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer tabular-nums"
+                >
+                  <option value="all">الكل</option>
+                  {uniqueSeats.map((s) => (
+                    <option key={s} value={String(s)}>{s} مقاعد</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="desktop-transmission-select" className="block text-sm font-semibold text-slate-300 mb-1.5">
                   ناقل الحركة
                 </label>
                 <select
+                  id="desktop-transmission-select"
                   value={transmission || 'all'}
                   onChange={(e) => setTransmission(e.target.value as TransmissionType | 'all')}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none"
+                  className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
                 >
                   <option value="all">الكل</option>
-                  <option value="automatic">أوتوماتيك</option>
-                  <option value="manual">عادي</option>
+                  <option value="automatic">{TRANSMISSION_LABEL.automatic}</option>
+                  <option value="manual">{TRANSMISSION_LABEL.manual}</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+                <label htmlFor="desktop-fuel-select" className="block text-sm font-semibold text-slate-300 mb-1.5">
                   نوع الوقود
                 </label>
                 <select
+                  id="desktop-fuel-select"
                   value={fuelType || 'all'}
                   onChange={(e) => setFuelType(e.target.value as FuelType | 'all')}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none"
+                  className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
                 >
                   <option value="all">الكل</option>
-                  <option value="petrol">بنزين</option>
-                  <option value="hybrid">هايبرد هجين</option>
-                  <option value="electric">كهرباء</option>
+                  <option value="petrol">{FUEL_LABEL.petrol}</option>
+                  <option value="diesel">{FUEL_LABEL.diesel}</option>
+                  <option value="hybrid">{FUEL_LABEL.hybrid}</option>
+                  <option value="electric">{FUEL_LABEL.electric}</option>
                 </select>
               </div>
             </div>
 
-            {/* Number of seats */}
             <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-2">
-                عدد المقاعد
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { val: 'all', label: 'الكل' },
-                  { val: 5, label: '5 مقاعد' },
-                  { val: 7, label: '7 مقاعد' },
-                ].map((s) => (
-                  <button
-                    key={String(s.val)}
-                    onClick={() => setSeats(s.val as number | 'all')}
-                    className={`py-1.5 text-xs rounded-lg border font-semibold ${
-                      seats === s.val
-                        ? 'bg-amber-500/20 border-amber-500 text-amber-400'
-                        : 'border-slate-800 text-slate-400 hover:bg-slate-800'
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Availability */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-2">
+              <span className="block text-sm font-semibold text-slate-300 mb-2">
                 حالة السيارة
-              </label>
+              </span>
               <div className="flex gap-2">
                 {[
                   { id: 'all', label: 'الكل' },
@@ -412,11 +652,12 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 ].map((a) => (
                   <button
                     key={a.id}
+                    type="button"
                     onClick={() => setAvailability(a.id as 'all' | 'available' | 'rented')}
-                    className={`flex-1 py-1.5 text-xs rounded-lg border font-semibold ${
+                    className={`flex-1 min-h-11 py-2 px-1 text-sm rounded-xl border font-semibold cursor-pointer ${
                       availability === a.id
                         ? 'bg-amber-500/20 border-amber-500 text-amber-400'
-                        : 'border-slate-800 text-slate-400 hover:bg-slate-800'
+                        : 'border-slate-800 text-slate-300 hover:bg-slate-800'
                     }`}
                   >
                     {a.label}
@@ -428,156 +669,223 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
 
           {/* Cars Grid */}
           <div className="lg:col-span-3">
-            {filteredVehicles.length === 0 ? (
-              <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center">
-                <AlertCircle className="w-12 h-12 text-amber-400/80 mx-auto mb-4" />
-                <h3 className="text-lg font-bold text-white mb-2">لا توجد سيارات مطابقة لمعايير البحث</h3>
-                <p className="text-sm text-slate-400 max-w-md mx-auto mb-6">
-                  جرّب تغيير فئة السيارة أو تمديد نطاق السعر أو إلغاء بعض الفلاتر لعرض المزيد من سيارات أسطول شاكر.
-                </p>
-                <button
-                  onClick={resetFilters}
-                  className="px-6 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-sm hover:bg-amber-400 transition-colors"
-                >
-                  عرض جميع السيارات
-                </button>
+            {safeVehicles.length === 0 && !loadTimedOut ? (
+              <SkeletonLoader type="card" lines={6} className="!grid-cols-1 md:!grid-cols-2 xl:!grid-cols-3" />
+            ) : filteredVehicles.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-modal p-12 text-center space-y-4 shadow-xl">
+                <EmptyState
+                  title="لا توجد سيارات مطابقة لمعايير البحث"
+                  description="جرّب تغيير فئة السيارة أو تمديد نطاق السعر أو إلغاء بعض الفلاتر لعرض المزيد من سيارات أسطول شاكر."
+                  actionLabel="مسح الفلاتر"
+                  onAction={resetFilters}
+                />
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => openWhatsAppChat(undefined, 'مرحباً شركة شاكر، أود الاستفسار عن سيارة مطابقة لطلبي')}
+                    className="min-h-11 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm inline-flex items-center gap-2 shadow-md transition-all cursor-pointer"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>اسألنا على واتساب</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                {filteredVehicles.map((vehicle) => {
-                  const isAvailable = vehicle.status === 'available';
-                  const isRented = vehicle.status === 'rented';
-                  const isMaintenance = vehicle.status === 'maintenance';
-
-                  return (
-                    <div
-                      key={vehicle.id}
-                      className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-black/50 hover:-translate-y-1 flex flex-col group"
-                    >
-                      {/* Car Image gallery (swipe between photos) */}
-                      <VehicleImageCarousel vehicle={vehicle}>
-                        {/* Category & Status Badges */}
-                        <div className="absolute top-3 right-3">
-                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-950/85 text-amber-400 border border-amber-500/40 shadow-md">
-                            {getCategoryLabel(vehicle.category)}
-                          </span>
-                        </div>
-
-                        <div className="absolute top-3 left-3">
-                          {isAvailable ? (
-                            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md bg-emerald-950/90 text-emerald-300 border border-emerald-500/50">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                              <span>متاحة الآن</span>
-                            </span>
-                          ) : isRented ? (
-                            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md bg-rose-950/90 text-rose-300 border border-rose-500/50">
-                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                              <span>مؤجرة حالياً</span>
-                            </span>
-                          ) : isMaintenance ? (
-                            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md bg-amber-950/90 text-amber-300 border border-amber-500/50">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                              <span>في الصيانة</span>
-                            </span>
-                          ) : (
-                            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md bg-blue-950/90 text-blue-300 border border-blue-500/50">
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-                              <span>محجوزة</span>
-                            </span>
-                          )}
-                        </div>
-                      </VehicleImageCarousel>
-
-                      {/* Car Details Content */}
-                      <div className="p-5 flex-1 flex flex-col justify-between">
-                        <div>
-                          {/* Title */}
-                          <div className="flex items-start justify-between gap-2 mb-2">
-                            <div>
-                              <span className="text-xs text-slate-400 font-semibold">{vehicle.brand}</span>
-                              <h3 className="text-lg font-bold text-white group-hover:text-amber-400 transition-colors">
-                                {vehicle.model}
-                              </h3>
-                              <span className="text-xs text-slate-400 block mt-0.5">
-                                موديل {vehicle.year} • {vehicle.color}
-                              </span>
-                            </div>
-                            <div className="text-left">
-                              <span className="text-2xl font-black text-amber-400">${vehicle.dailyPrice}</span>
-                              <span className="text-xs text-slate-400 block font-normal">/ يوم</span>
-                            </div>
-                          </div>
-
-                          {/* Quick Spec Icons */}
-                          <div className="grid grid-cols-3 gap-2 py-3 border-y border-slate-800/80 my-3 text-xs text-slate-300">
-                            <div className="flex items-center gap-1.5">
-                              <Users className="w-4 h-4 text-slate-400" />
-                              <span>{vehicle.seats} مقاعد</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <Settings className="w-4 h-4 text-slate-400" />
-                              <span>{vehicle.transmission === 'automatic' ? 'أوتوماتيك' : 'عادي'}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <Fuel className="w-4 h-4 text-slate-400" />
-                              <span>
-                                {vehicle.fuelType === 'hybrid' ? 'هايبرد' : vehicle.fuelType === 'petrol' ? 'بنزين' : vehicle.fuelType}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Member Discount Badge */}
-                          <div className="bg-slate-950/60 rounded-xl p-2.5 mb-4 text-xs flex items-center justify-between border border-slate-800/60">
-                            <span className="text-slate-400 flex items-center gap-1.5">
-                              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                              <span>خصم الأعضاء المسجلين:</span>
-                            </span>
-                            <span className="text-emerald-400 font-bold font-mono">
-                              حتى {DEFAULT_SETTINGS.discountConfig?.percentage || 10}%
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-2 pt-2">
-                          <button
-                            type="button"
-                            onClick={() => handleDetails(vehicle)}
-                            className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors flex items-center justify-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
-                          >
-                            <Info className="w-3.5 h-3.5 text-slate-400" />
-                            <span>التفاصيل</span>
-                          </button>
-
-                          {isAvailable ? (
-                            <button
-                              type="button"
-                              onClick={() => handleBooking(vehicle)}
-                              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
-                            >
-                              <Calendar className="w-3.5 h-3.5" />
-                              <span>احجز الآن</span>
-                            </button>
-                          ) : (
-                            <button
-                              disabled
-                              className="flex-1 py-2.5 rounded-xl bg-slate-800/80 text-rose-300 text-xs font-bold flex items-center justify-center gap-1 border border-rose-500/20 cursor-not-allowed opacity-90"
-                              title="السيارة مؤجرة حالياً أو غير متاحة للحجز"
-                            >
-                              <Clock className="w-3.5 h-3.5 text-rose-400" />
-                              <span>{isRented ? 'مؤجرة حالياً' : 'غير متاحة'}</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {filteredVehicles.map((vehicle) => (
+                  <VehicleCard
+                    key={vehicle.id}
+                    vehicle={vehicle}
+                    variant="catalog"
+                    onViewDetails={handleDetails}
+                    onBook={handleBooking}
+                  />
+                ))}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Mobile Filters Bottom Sheet */}
+      {showFiltersMobile && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="فلاتر البحث وتصنيفات الأسطول"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col justify-end animate-in fade-in duration-200 lg:hidden"
+          onClick={() => setShowFiltersMobile(false)}
+        >
+          <div
+            ref={mobileFilterRef}
+            className="bg-slate-900 border-t border-slate-800 rounded-t-3xl p-6 max-h-[85dvh] overflow-y-auto space-y-6 w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <span className="font-bold text-white text-base flex items-center gap-2">
+                <SlidersHorizontal className="w-5 h-5 text-amber-400" />
+                تصفية النتائج والفلاتر
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowFiltersMobile(false)}
+                className="min-w-11 min-h-11 p-2.5 rounded-full bg-slate-800 text-slate-200 hover:text-white inline-flex items-center justify-center cursor-pointer"
+                aria-label="إغلاق الفلاتر"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div>
+              <label htmlFor="mobile-search-input" className="block text-sm font-semibold text-slate-300 mb-2">
+                بحث بالاسم أو الطراز
+              </label>
+              <SearchInput
+                id="mobile-search-input"
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="مثال: أوبتيما، إلنترا، BYD..."
+              />
+            </div>
+
+            <div>
+              <span className="block text-sm font-semibold text-slate-300 mb-2">
+                فئة السيارة
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: 'all', label: 'جميع الفئات' },
+                  { id: 'light', label: VEHICLE_CATEGORY_LABELS.light },
+                  { id: 'medium', label: VEHICLE_CATEGORY_LABELS.medium },
+                  { id: 'jeep_7seats', label: VEHICLE_CATEGORY_LABELS.jeep_7seats },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setCategory(item.id as VehicleCategory | 'all')}
+                    className={`min-h-11 py-2 px-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                      category === item.id
+                        ? 'bg-amber-500 text-slate-950 font-bold'
+                        : 'bg-slate-950 text-slate-300 border border-slate-800'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <label htmlFor="mobile-max-price-range" className="text-sm font-semibold text-slate-300">
+                  الحد الأقصى للسعر اليومي
+                </label>
+                <span className="text-amber-400 font-bold text-sm tabular-nums">{formatMoney(maxPrice)} / يوم</span>
+              </div>
+              <input
+                id="mobile-max-price-range"
+                type="range"
+                min={priceBounds.min}
+                max={priceBounds.max}
+                step="5"
+                value={maxPrice}
+                onChange={(e) => setMaxPriceCap(Number(e.target.value))}
+                className="w-full accent-amber-500 bg-slate-800 h-2 rounded-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="mobile-year-select" className="block text-sm font-semibold text-slate-300 mb-1.5">
+                  سنة الصنع
+                </label>
+                <select
+                  id="mobile-year-select"
+                  value={selectedYear === 'all' ? 'all' : String(selectedYear)}
+                  onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer tabular-nums"
+                >
+                  <option value="all">الكل</option>
+                  {uniqueYears.map((y) => (
+                    <option key={y} value={String(y)}>{y}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="mobile-seats-select" className="block text-sm font-semibold text-slate-300 mb-1.5">
+                  عدد المقاعد
+                </label>
+                <select
+                  id="mobile-seats-select"
+                  value={seats === 'all' ? 'all' : String(seats)}
+                  onChange={(e) => setSeats(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer tabular-nums"
+                >
+                  <option value="all">الكل</option>
+                  {uniqueSeats.map((s) => (
+                    <option key={s} value={String(s)}>{s} مقاعد</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="mobile-transmission-select" className="block text-sm font-semibold text-slate-300 mb-1.5">
+                  ناقل الحركة
+                </label>
+                <select
+                  id="mobile-transmission-select"
+                  value={transmission || 'all'}
+                  onChange={(e) => setTransmission(e.target.value as TransmissionType | 'all')}
+                  className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
+                >
+                  <option value="all">الكل</option>
+                  <option value="automatic">{TRANSMISSION_LABEL.automatic}</option>
+                  <option value="manual">{TRANSMISSION_LABEL.manual}</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="mobile-fuel-select" className="block text-sm font-semibold text-slate-300 mb-1.5">
+                  نوع الوقود
+                </label>
+                <select
+                  id="mobile-fuel-select"
+                  value={fuelType || 'all'}
+                  onChange={(e) => setFuelType(e.target.value as FuelType | 'all')}
+                  className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
+                >
+                  <option value="all">الكل</option>
+                  <option value="petrol">{FUEL_LABEL.petrol}</option>
+                  <option value="diesel">{FUEL_LABEL.diesel}</option>
+                  <option value="hybrid">{FUEL_LABEL.hybrid}</option>
+                  <option value="electric">{FUEL_LABEL.electric}</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="min-h-11 px-4 py-3 rounded-xl bg-slate-800 text-slate-200 text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>إعادة ضبط</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowFiltersMobile(false)}
+                className="flex-1 min-h-11 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer"
+              >
+                <span>{formatArabicVehicleCountShort(filteredVehicles.length)}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 };

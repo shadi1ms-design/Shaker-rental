@@ -6,23 +6,41 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function hasRole(r) {
-      return isSignedIn() &&
-        (('role' in request.auth.token && request.auth.token.role == r) ||
-         (r in request.auth.token && request.auth.token[r] == true));
+    function hasTokenRole(roles) {
+      return isSignedIn() && ('role' in request.auth.token) && (request.auth.token.role in roles);
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        hasTokenRole(['super_admin', 'superAdmin', 'owner']) ||
+        (request.auth.token.keys().hasAny(['super_admin', 'superAdmin', 'owner']) && (
+          request.auth.token.get('super_admin', false) == true ||
+          request.auth.token.get('superAdmin', false) == true ||
+          request.auth.token.get('owner', false) == true
+        ))
+      );
     }
 
     function isAdmin() {
-      return isSignedIn() && (
-        hasRole('admin') ||
-        hasRole('superAdmin') ||
-        hasRole('super_admin') ||
-        hasRole('owner')
+      return isSuperAdmin() || (
+        isSignedIn() && (
+          hasTokenRole(['admin']) ||
+          (request.auth.token.keys().hasAny(['admin']) && request.auth.token.get('admin', false) == true)
+        )
       );
     }
 
     function isEmployee() {
-      return isAdmin() || hasRole('employee') || hasRole('staff') || hasRole('manager');
+      return isAdmin() || (
+        isSignedIn() && (
+          hasTokenRole(['employee', 'staff', 'manager']) ||
+          (request.auth.token.keys().hasAny(['employee', 'staff', 'manager']) && (
+            request.auth.token.get('employee', false) == true ||
+            request.auth.token.get('staff', false) == true ||
+            request.auth.token.get('manager', false) == true
+          ))
+        )
+      );
     }
 
     // =========================================================================
@@ -61,6 +79,10 @@ service firebase.storage {
       allow read, write: if false;
     }
 
+    match /verification_archive/{allPaths=**} {
+      allow read, write: if false;
+    }
+
     // =========================================================================
     // 3. LEGACY CUSTOMER DOCUMENT PATHS (FROZEN / ADMIN AUDIT ONLY)
     // =========================================================================
@@ -77,7 +99,7 @@ service firebase.storage {
     }
 
     // =========================================================================
-    // 4. DIGITAL CONTRACTS & INSPECTION VIDEOS (<= 100MB)
+    // 4. DIGITAL CONTRACTS & VIDEOS (<= 100MB)
     // =========================================================================
     match /contracts/{contractId}/videos/{videoId} {
       allow read: if isEmployee() || (

@@ -1,12 +1,14 @@
 import { VehicleCategory, AppSettings, PricingCalculation } from '../types';
 
+import { COMPANY_INFO } from '../constants/company';
+
 export const DEFAULT_SETTINGS: AppSettings = {
   id: 'global_settings',
-  companyName: 'شاكر لتأجير السيارات',
-  companyNameEn: 'Shaker Car Rental',
-  companyPhone: '00963944331774',
-  whatsappNumber: '00963944331774',
-  address: 'دمشق – جرمانا، شارع الخضر',
+  companyName: COMPANY_INFO.name,
+  companyNameEn: COMPANY_INFO.nameEn,
+  companyPhone: COMPANY_INFO.phoneRaw,
+  whatsappNumber: COMPANY_INFO.phoneRaw,
+  address: COMPANY_INFO.location,
   currency: '$',
   insurance1to2Days: 500,
   insuranceAbove2Days: 300,
@@ -23,12 +25,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   monthlyRateLight: 800,
   monthlyRateMedium: 1200,
   monthlyRateJeep: 1500,
-  rentalTerms: `1. يلتزم المستأجر بالمحافظة على السيارة وإعادتها بنفس الحالة التي استلمها بها.
-2. يتم سداد التأمين المسترد نقداً أو بتحويل بنكي عند استلام السيارة ويُعاد فور فحص السيارة بعد الإرجاع.
-3. يحظر استخدام السيارة لأغراض السباقات أو التدريب أو نقل المواد المحظورة أو قيادتها خارج الحدود المصرح بها.
-4. يلتزم المستأجر بتزويد السيارة بالوقود المطابق للمواصفات وتحمل تكاليف المخالفات المرورية المسجلة خلال فترة التأجير.
-5. في حال وقوع حادث لا قدر الله، يجب إبلاغ الشركة فوراً والحصول على تقرير شرطة المرور الرسمي.
-6. كل تأخير في تسليم السيارة عن الموعد المحدد يُحسب بسعر ساعة إضافي يعادل 15% من الأجرة اليومية.`,
+  rentalTerms: `1. يلتزم المستأجر بإعادة المركبة في التاريخ والوقت المحددين بحالتها المستلمة.
+2. المركبة مخصصة للاستخدام الشخصي داخل الأراضي السورية ولا يجوز تأجيرها للغير أو الرهن.
+3. المستأجر مسؤول قانونياً ومالياً عن المخالفات المرورية والأضرار الناتجة عن سوء الاستخدام طيلة فترة الإيجار.
+4. يُسترد مبلغ التأمين كاملاً عند إرجاع المركبة سليمة وبعد تسوية أية التزامات مالية.
+5. يمنع قيادة المركبة من قبل أي شخص غير مذكور في هذا العقد دون موافقة خطية مسبقة من الشركة.`,
   updatedAt: new Date().toISOString(),
 };
 
@@ -172,5 +173,5 @@ export function calculateRentalPrice(
 }
 
 export function formatCurrency(amount: number, currency = '$'): string {
-  return `${amount.toLocaleString('ar-SY')} ${currency}`;
+  return `${currency}${amount.toLocaleString('en-US')}`;
 }

@@ -1,11 +1,11 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import type { DocumentReference, DocumentSnapshot } from 'firebase-admin/firestore';
 import { FUNCTION_REGION, DATABASE_ID } from './constants';
-import { isCallerStaff, isCallerAdmin, assertNotRevoked } from './authz';
+import { isCallerStaff, isCallerAdmin, isCallerSuperAdmin } from './authz';
+import { secureCall } from './secureCall';
+import { writeAudit, writeAuditAsync } from './audit';
 import { ttlTimestamp } from './rateLimit';
-import { isUserVerified } from './verificationStatus';
 import {
   calculateRentalDaysDamascus,
   calculateRentalPriceServer,
@@ -17,8 +17,9 @@ import {
   resolveVehicleDocument,
   resolveBookingDocument,
   applyBookingStatusChange,
-  ALLOWED_TRANSITIONS,
+  assertValidBookingStatusTransition,
 } from './bookingHelpers';
+import { formatAndValidatePhone } from './phoneValidation';
 
 const db = getFirestore(getApp(), DATABASE_ID);
 
@@ -30,7 +31,7 @@ function getIpRateLimitKey(ip: string): string {
 function sanitizeString(input: unknown, maxLen = 100): string {
   if (typeof input !== 'string') return '';
   return input
-    .replace(/[<>'"&;`\\]/g, '')
+    .replace(/[<>`\\]/g, '')
     .replace(/[\r\n\t]+/g, ' ')
     .trim()
     .slice(0, maxLen);
@@ -41,26 +42,24 @@ function sanitizeString(input: unknown, maxLen = 100): string {
  * Enforces email verification for password users, IP rate limiting,
  * max 3 pending bookings cap, Damascus timezone calculations, and atomic transactions.
  */
-export const createBookingSecure = onCall(
+export const createBookingSecure = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'user',
+    unauthenticatedMessage: 'يجب تسجيل الدخول قبل إنشاء الحجز.',
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول قبل إنشاء الحجز.');
-    }
-
-    const callerUid = request.auth.uid;
-    const isStaff = isCallerStaff(request.auth.token);
+    const callerUid = request.auth!.uid;
+    const isStaff = isCallerStaff(request.auth!.token);
     const data = request.data || {};
 
     let customerId: string = callerUid;
-    let customerEmail: string = (request.auth.token?.email || '').toLowerCase().trim();
+    let customerEmail: string = (request.auth!.token?.email || '').toLowerCase().trim();
 
-    // 1. Session & account checks (fail-closed): rejects disabled accounts and revoked tokens for
-    //    EVERY caller (customers included), then enforces email verification for password users.
-    const callerRecord = await assertNotRevoked(request);
+    // 1. Session & account checks (fail-closed) already verified by secureCall;
+    //    now enforce email verification for password users.
+    const callerRecord = request.callerRecord!;
     // Check spoofing of customerId/Email if not staff
     if (data.customerId && data.customerId !== callerUid) {
       if (!isStaff) {
@@ -70,7 +69,20 @@ export const createBookingSecure = onCall(
         );
       }
       customerId = String(data.customerId).trim();
-      if (data.customerEmail) customerEmail = String(data.customerEmail).toLowerCase().trim();
+      if (data.customerEmail && typeof data.customerEmail === 'string' && data.customerEmail.trim()) {
+        customerEmail = String(data.customerEmail).toLowerCase().trim();
+      } else {
+        try {
+          const targetUserSnap = await db.collection('users').doc(customerId).get();
+          if (targetUserSnap.exists && targetUserSnap.data()?.email) {
+            customerEmail = String(targetUserSnap.data()!.email).toLowerCase().trim();
+          } else {
+            customerEmail = '';
+          }
+        } catch {
+          customerEmail = '';
+        }
+      }
     }
     if (!isStaff) {
       const isPasswordAuth = callerRecord.providerData.some((p) => p.providerId === 'password');
@@ -82,13 +94,6 @@ export const createBookingSecure = onCall(
       }
     }
 
-    // Check customer verification status for delivery
-    const userSnap = await db.collection('users').doc(customerId).get();
-    const userData = userSnap.data();
-    const customerVerified = isUserVerified(userData);
-    if (data.deliveryLocation && data.deliveryLocation !== '' && !customerVerified && !isStaff) {
-       throw new HttpsError('failed-precondition', 'خدمة التسليم أينما كنت للحسابات الموثقة فقط');
-    }
 
     // 2. Active Bookings Cap: Max 3 active ('new' or 'reviewing') bookings per customer (Requirement 1)
     if (!isStaff) {
@@ -142,7 +147,7 @@ export const createBookingSecure = onCall(
     }
 
     const nowMs = Date.now();
-    const pastToleranceMs = 24 * 60 * 60 * 1000;
+    const pastToleranceMs = 2 * 60 * 60 * 1000;
     if (pickupDateTime < nowMs - pastToleranceMs && !isStaff) {
       throw new HttpsError('invalid-argument', 'لا يمكن إنشاء حجز لتاريخ سابق أو منتهي.');
     }
@@ -164,14 +169,26 @@ export const createBookingSecure = onCall(
     }
 
     const customerName = String(data.customerName || request.auth.token?.name || 'مستأجر').trim().slice(0, 100);
-    const customerPhone = String(data.customerPhone || '').trim().slice(0, 30);
-    const customerWhatsApp = String(data.customerWhatsApp || customerPhone).trim().slice(0, 30);
-    if (!isStaff && customerPhone.replace(/\D/g, '').length < 7) {
-      throw new HttpsError('invalid-argument', 'رقم هاتف صالح مطلوب لإتمام الحجز (7 أرقام على الأقل).');
+    const rawCustomerPhone = String(data.customerPhone || '').trim();
+    let customerPhone: string;
+    try {
+      customerPhone = formatAndValidatePhone(rawCustomerPhone);
+    } catch (phoneErr: any) {
+      throw new HttpsError('invalid-argument', phoneErr?.message || 'رقم هاتف العميل غير صالح.');
     }
-    const customerNationalId = String(data.customerNationalId || '').trim().slice(0, 50);
-    const customerLicenseNumber = String(data.customerLicenseNumber || '').trim().slice(0, 50);
-    const customerAddress = String(data.customerAddress || '').trim().slice(0, 200);
+
+    const rawCustomerWhatsApp = String(data.customerWhatsApp || rawCustomerPhone).trim();
+    let customerWhatsApp: string;
+    try {
+      customerWhatsApp = formatAndValidatePhone(rawCustomerWhatsApp);
+    } catch (waErr: any) {
+      throw new HttpsError('invalid-argument', waErr?.message || 'رقم واتساب العميل غير صالح.');
+    }
+
+    const customerAddress = String(data.customerAddress || '').trim().slice(0, 300);
+    if (customerAddress.length < 20) {
+      throw new HttpsError('invalid-argument', 'يرجى إدخال عنوان الإقامة أو الفندق بالتفصيل (20 حرفاً على الأقل).');
+    }
     const notes = String(data.notes || '').trim().slice(0, 500);
     const withDriver = Boolean(data.withDriver);
     const deliveryLocation = String(data.deliveryLocation || '').trim().slice(0, 150);
@@ -251,7 +268,7 @@ export const createBookingSecure = onCall(
         const settingsRef = db.collection('settings').doc('global');
         const settingsDoc = await transaction.get(settingsRef);
 
-        const counterRef = db.collection('settings').doc('bookingCounter');
+        const counterRef = db.collection('settings').doc('bookingCounterSimple');
         const counterDoc = await transaction.get(counterRef);
 
         const customerRef = db.collection('customers').doc(customerId);
@@ -288,7 +305,11 @@ export const createBookingSecure = onCall(
           );
         }
 
-        // Conflict check using Damascus time
+        const settingsData = settingsDoc.exists ? settingsDoc.data() : null;
+        const bufferMinutes = Number(settingsData?.turnaroundBufferMinutes ?? 60);
+        const bufferMs = bufferMinutes * 60 * 1000;
+
+        // Conflict check using Damascus time including turnaround buffer
         const conflictingDoc = activeBookingsSnap.docs.find((docSnap) => {
           const b = docSnap.data();
           if (b.isDeleted === true || b.status === 'cancelled' || b.status === 'rejected') {
@@ -303,7 +324,8 @@ export const createBookingSecure = onCall(
             return (rawPickup <= b.returnDate && rawReturn >= b.pickupDate);
           }
 
-          return (pickupDateTime < bReturnMs && returnDateTime > bPickupMs);
+          // [bPickupMs - bufferMs, bReturnMs + bufferMs] vs [pickupDateTime, returnDateTime]
+          return (pickupDateTime < (bReturnMs + bufferMs) && returnDateTime > (bPickupMs - bufferMs));
         });
 
         if (conflictingDoc) {
@@ -313,8 +335,6 @@ export const createBookingSecure = onCall(
             `عذراً، هذه السيارة محجوزة مسبقاً في الفترة المطلوبة (من ${conflict.pickupDate} إلى ${conflict.returnDate}). يرجى اختيار سيارة أخرى أو تغيير التواريخ.`
           );
         }
-
-        const settingsData = settingsDoc.exists ? settingsDoc.data() : null;
         const officialDailyPrice = Number(vehicleData.dailyPrice);
         if (isNaN(officialDailyPrice) || officialDailyPrice <= 0) {
           throw new HttpsError('failed-precondition', 'سعر تأجير السيارة اليومي غير محدد أو غير صالح (يجب أن يكون أكبر من صفر).');
@@ -334,11 +354,14 @@ export const createBookingSecure = onCall(
 
         let nextCount = 1;
         if (counterDoc.exists) {
-          nextCount = (counterDoc.data()?.lastNumber || 0) + 1;
+          nextCount = Number(counterDoc.data()?.count || counterDoc.data()?.lastNumber || 0) + 1;
         }
-        const currentYear = new Date().getFullYear();
-        const formattedNumber = `SHK-${currentYear}-${String(nextCount).padStart(6, '0')}`;
-        const newBookingRef = db.collection('bookings').doc();
+        const formattedNumber = String(nextCount);
+        const newBookingRef = db.collection('bookings').doc(String(nextCount));
+        const newBookingSnap = await transaction.get(newBookingRef);
+        if (newBookingSnap.exists) {
+          throw new HttpsError('aborted', 'تعذر إنشاء الحجز، حاول مرة أخرى');
+        }
 
         // Writes
         transaction.set(
@@ -354,7 +377,7 @@ export const createBookingSecure = onCall(
         transaction.set(
           counterRef,
           {
-            lastNumber: nextCount,
+            count: nextCount,
             updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true }
@@ -371,10 +394,7 @@ export const createBookingSecure = onCall(
           customerName,
           customerPhone,
           customerWhatsApp: customerWhatsApp || customerPhone,
-          customerNationalId,
           customerAddress,
-          customerLicenseNumber,
-          customerVerified,
           pickupDate: rawPickup,
           pickupTime,
           returnDate: rawReturn,
@@ -391,6 +411,7 @@ export const createBookingSecure = onCall(
           status: 'new',
           notes,
           isDeleted: false,
+          ...(isStaff ? { isStaffBooking: true } : {}),
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         };
@@ -401,17 +422,17 @@ export const createBookingSecure = onCall(
         const customerProfile: Record<string, unknown> = {
           id: customerId,
           uid: customerId,
-          fullName: customerName,
-          phone: customerPhone,
-          whatsapp: customerWhatsApp || customerPhone,
           updatedAt: FieldValue.serverTimestamp(),
-          totalRentals: FieldValue.increment(1),
         };
-        if (customerEmail) customerProfile.email = customerEmail;
-        if (customerNationalId) customerProfile.nationalId = customerNationalId;
-        if (customerLicenseNumber) customerProfile.drivingLicense = customerLicenseNumber;
-        if (customerAddress) customerProfile.address = customerAddress;
+        const existingCust = customerSnap.exists ? (customerSnap.data() || {}) : {};
+        if (!existingCust.fullName) customerProfile.fullName = customerName;
+        if (!existingCust.phone) customerProfile.phone = customerPhone;
+        if (!existingCust.whatsapp) customerProfile.whatsapp = customerWhatsApp || customerPhone;
+        if (customerEmail && !existingCust.email) customerProfile.email = customerEmail;
+        if (customerAddress && !existingCust.address) customerProfile.address = customerAddress;
+
         if (!customerSnap.exists) {
+          customerProfile.totalRentals = 0;
           customerProfile.totalSpending = 0;
           customerProfile.createdAt = FieldValue.serverTimestamp();
         }
@@ -422,29 +443,29 @@ export const createBookingSecure = onCall(
           id: notificationRef.id,
           type: 'new_booking',
           title: 'طلب حجز جديد عبر الموقع',
-          message: `تم إنشاء حجز برقم ${formattedNumber} للعميل ${customerName} ${customerVerified ? '(✅ عميل موثق)' : '(غير موثق)'} على ${vehicleData.brand} ${vehicleData.model} بمبلغ ${calculatedPricing.totalPrice}$`,
+          message: `تم إنشاء حجز برقم ${formattedNumber} للعميل ${customerName} على ${vehicleData.brand} ${vehicleData.model} بمبلغ ${calculatedPricing.totalPrice}$`,
           bookingId: newBookingRef.id,
           vehicleId: canonicalVehicleId,
           read: false,
           createdAt: FieldValue.serverTimestamp(),
         });
 
-        const auditRef = db.collection('auditLogs').doc();
-        const actorType: 'customer' | 'staff' | 'guest' = isStaff ? 'staff' : 'customer';
-        transaction.set(auditRef, {
-          id: auditRef.id,
-          user: customerEmail || callerUid,
-          userId: callerUid,
+        const actorType: 'customer' | 'staff' = isStaff ? 'staff' : 'customer';
+        writeAudit(db, transaction, {
           actorUid: callerUid,
           actorEmail: customerEmail || null,
           actorType,
-          customerProvidedName: customerName || null,
           action: 'BOOKING_CREATED_SECURE',
-          entity: 'bookings',
+          entity: 'booking',
           entityId: newBookingRef.id,
+          entityName: formattedNumber,
           details: `حجز مؤمن ${formattedNumber} لـ ${vehicleData.brand} ${vehicleData.model} (${rawPickup} إلى ${rawReturn}) بمبلغ ${calculatedPricing.totalPrice}$`,
-          timestamp: new Date().toISOString(),
-          createdAt: FieldValue.serverTimestamp(),
+          metadata: {
+            isStaffBooking: isStaff,
+            customerName: customerName || null,
+            totalPrice: calculatedPricing.totalPrice,
+            vehicleId: canonicalVehicleId,
+          },
         });
 
         return {
@@ -471,21 +492,17 @@ export const createBookingSecure = onCall(
  * Cloud Function: updateBookingStatusSecure (region: asia-south1)
  * Enforces allowed status transitions and cancellation permissions.
  */
-export const updateBookingStatusSecure = onCall(
+export const updateBookingStatusSecure = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'user',
+    unauthenticatedMessage: 'تسجيل الدخول مطلوب لتحديث حالة الحجز.',
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'تسجيل الدخول مطلوب لتحديث حالة الحجز.');
-    }
+    const callerUid = request.auth!.uid;
+    const isStaff = isCallerStaff(request.auth!.token);
 
-    const callerUid = request.auth.uid;
-    const isStaff = isCallerStaff(request.auth.token);
-    if (isStaff) {
-      await assertNotRevoked(request);
-    }
     const data = request.data || {};
     const bookingId = String(data.bookingId || '').trim();
     const newStatus = String(data.status || '').trim();
@@ -507,12 +524,10 @@ export const updateBookingStatusSecure = onCall(
     const bData = preSnap.data()!;
     const currentStatus = String(bData.status || 'new').toLowerCase().trim();
 
-    const allowedNext = ALLOWED_TRANSITIONS[currentStatus] || [];
-    if (!allowedNext.includes(newStatus)) {
-      throw new HttpsError(
-        'failed-precondition',
-        `تحويل حالة الحجز من "${currentStatus}" إلى "${newStatus}" غير مسموح به وفق دورة حياة الحجوزات.`
-      );
+    try {
+      assertValidBookingStatusTransition(currentStatus, newStatus, isStaff);
+    } catch (err: any) {
+      throw new HttpsError('failed-precondition', err.message || 'فشل التحقق من انتقال حالة الحجز.');
     }
 
     const isOwner = bData.customerId === callerUid || bData.userId === callerUid;
@@ -526,10 +541,28 @@ export const updateBookingStatusSecure = onCall(
         throw new HttpsError('permission-denied', 'لا يملك العميل صلاحية تغيير الحالة إلى غير "ملغي".');
       }
 
+      if (data.reason && String(data.reason).length > 300) {
+        throw new HttpsError('invalid-argument', 'سبب الإلغاء يجب ألا يتجاوز 300 حرف.');
+      }
+
+      if (
+        data.mileageAtPickup !== undefined ||
+        data.mileageAtReturn !== undefined ||
+        data.currentMileage !== undefined ||
+        data.extraCharges !== undefined ||
+        data.returnCondition !== undefined ||
+        data.confirmOilOverdue !== undefined
+      ) {
+        throw new HttpsError('permission-denied', 'غير مصرح للعميل بتمرير بيانات تشغيلية أو مالية مع طلب الإلغاء.');
+      }
+
       // Check cancellation rules:
       // If confirmed, allow cancellation only before pickup date with threshold (e.g. 24h before pickup)
       if (currentStatus === 'confirmed') {
         const pickupMs = parseDamascusDateTime(bData.pickupDate, bData.pickupTime || '10:00');
+        if (isNaN(pickupMs)) {
+          throw new HttpsError('failed-precondition', 'تعذر التحقق من موعد الاستلام، تواصل مع الإدارة');
+        }
         const nowMs = Date.now();
         const settingsSnap = await db.collection('settings').doc('global').get();
         const minCancellationHours = Number(settingsSnap.data()?.cancellationLeadHours ?? 24);
@@ -542,23 +575,70 @@ export const updateBookingStatusSecure = onCall(
           );
         }
       }
+    } else {
+      // Validate staff inputs bounds
+      if (data.extraCharges !== undefined && data.extraCharges !== null) {
+        const extra = Number(data.extraCharges);
+        if (!Number.isFinite(extra) || extra < 0 || extra > 10000) {
+          throw new HttpsError('invalid-argument', 'الرسوم الإضافية يجب أن تكون رقماً بين 0 و 10000.');
+        }
+      }
+
+      if (data.returnCondition !== undefined && data.returnCondition !== null) {
+        if (typeof data.returnCondition !== 'string' || data.returnCondition.length > 500) {
+          throw new HttpsError('invalid-argument', 'ملاحظات حالة السيارة يجب ألا تتجاوز 500 حرف.');
+        }
+      }
+
+      for (const field of ['mileageAtPickup', 'mileageAtReturn', 'currentMileage'] as const) {
+        if (data[field] !== undefined && data[field] !== null) {
+          const val = Number(data[field]);
+          if (!Number.isFinite(val) || val < 0 || val > 2000000) {
+            throw new HttpsError('invalid-argument', 'قراءة العداد غير صالحة (0-2000000 كم).');
+          }
+        }
+      }
+    }
+
+    if (newStatus === 'completed') {
+      const providedReturnMileage = data.mileageAtReturn ?? data.currentMileage;
+      if (
+        providedReturnMileage === undefined ||
+        providedReturnMileage === null ||
+        !Number.isFinite(Number(providedReturnMileage))
+      ) {
+        throw new HttpsError('invalid-argument', 'يرجى إدخال قراءة عداد الكيلومترات عند استلام السيارة.');
+      }
     }
 
     const actorLabel = request.auth.token?.email || callerUid;
-    const result = await applyBookingStatusChange(db, targetBookingRef.id, newStatus, actorLabel, {
-      actorUid: callerUid,
-      actorEmail: request.auth.token?.email || null,
-      actorType: isStaff ? 'staff' : 'customer',
-    });
+    try {
+      const result = await applyBookingStatusChange(db, targetBookingRef.id, newStatus as any, actorLabel, {
+        actorUid: callerUid,
+        actorEmail: request.auth.token?.email || null,
+        actorRole: String((request.auth.token as any)?.role || (isStaff ? 'staff' : 'customer')),
+        actorType: isStaff ? 'staff' : 'customer',
+        reason: data.reason ? String(data.reason).slice(0, 300) : undefined,
+        extraCharges: data.extraCharges !== undefined ? Number(data.extraCharges) : undefined,
+        returnCondition: data.returnCondition ? String(data.returnCondition).slice(0, 500) : undefined,
+        mileageAtPickup: data.mileageAtPickup !== undefined ? Number(data.mileageAtPickup) : undefined,
+        mileageAtReturn: data.mileageAtReturn !== undefined ? Number(data.mileageAtReturn) : undefined,
+        currentMileage: data.currentMileage !== undefined ? Number(data.currentMileage) : undefined,
+        confirmOilOverdue: Boolean(data.confirmOilOverdue),
+      });
 
-    if (!result.success) {
-      if (result.message.includes('حجز آخر مؤكد')) {
-        throw new HttpsError('already-exists', result.message);
+      if (!result.success) {
+        if (result.message.includes('حجز آخر مؤكد')) {
+          throw new HttpsError('already-exists', result.message);
+        }
+        throw new HttpsError('failed-precondition', result.message);
       }
-      throw new HttpsError('failed-precondition', result.message);
-    }
 
-    return result;
+      return result;
+    } catch (err: any) {
+      if (err instanceof HttpsError) throw err;
+      throw new HttpsError('failed-precondition', err?.message || 'فشل تحديث حالة الحجز.');
+    }
   }
 );
 
@@ -566,20 +646,16 @@ export const updateBookingStatusSecure = onCall(
  * Cloud Function: sendBookingNotification (region: asia-south1)
  * Enforces server-authoritative read of customerName, vehicleName, totalAmount, status.
  */
-export const sendBookingNotification = onCall(
+export const sendBookingNotification = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'user',
+    unauthenticatedMessage: 'يجب تسجيل الدخول أولاً لإرسال إشعار الحجز.',
   },
   async (request) => {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً لإرسال إشعار الحجز.');
-    }
-
-    await assertNotRevoked(request);
-
-    const callerUid = request.auth.uid;
-    const callerEmail = (request.auth.token?.email || '').toLowerCase().trim();
+    const callerUid = request.auth!.uid;
+    const callerEmail = (request.auth!.token?.email || '').toLowerCase().trim();
     const rawBookingId = request.data?.bookingId;
 
     if (!rawBookingId || typeof rawBookingId !== 'string') {
@@ -696,20 +772,20 @@ export const sendBookingNotification = onCall(
       createdAt: FieldValue.serverTimestamp(),
     });
 
-    const auditRef = db.collection('auditLogs').doc();
-    await auditRef.set({
-      id: auditRef.id,
-      userId: callerUid,
-      user: callerEmail || callerUid,
+    await writeAuditAsync(db, {
       actorUid: callerUid,
       actorEmail: callerEmail || null,
       actorType: isStaff ? 'staff' : 'customer',
       action: 'BOOKING_NOTIFICATION_SENT_SECURE',
-      entity: 'bookings',
+      entity: 'booking',
       entityId: bookingRef.id,
+      entityName: authoritativeBookingNumber,
       details: `إرسال إشعار موثق من السيرفر للحجز ${authoritativeBookingNumber}`,
-      timestamp: new Date().toISOString(),
-      createdAt: FieldValue.serverTimestamp(),
+      metadata: {
+        status: authoritativeStatus,
+        totalAmount: authoritativeTotalAmount,
+        recipientRole: isStaff ? 'all' : 'admin',
+      },
     });
 
     return {
@@ -730,10 +806,11 @@ export const sendBookingNotification = onCall(
  * Cloud Function: getVehicleAvailability (region: asia-south1)
  * Public availability inquiry without exposing PII (Requirement 3)
  */
-export const getVehicleAvailability = onCall(
+export const getVehicleAvailability = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'public',
   },
   async (request) => {
     const { vehicleId, from, to, fromTime = '10:00', toTime = '10:00' } = request.data || {};
@@ -759,6 +836,11 @@ export const getVehicleAvailability = onCall(
     }
 
     const canonicalVehicleId = vRes.data.id || vRes.ref.id;
+
+    // Buffer minutes from global settings
+    const settingsSnap = await db.collection('settings').doc('global').get();
+    const bufferMinutes = Number(settingsSnap.data()?.turnaroundBufferMinutes ?? 60);
+    const bufferMs = bufferMinutes * 60 * 1000;
 
     // Active bookings query
     const activeQuery = db.collection('bookings')
@@ -790,40 +872,37 @@ export const getVehicleAvailability = onCall(
         const bPickupMs = parseDamascusDateTime(b.pickupDate, b.pickupTime || '10:00');
         const bReturnMs = parseDamascusDateTime(b.returnDate, b.returnTime || '10:00');
 
-        if (queryPickupMs < bReturnMs && queryReturnMs > bPickupMs) {
+        if (queryPickupMs < bReturnMs + bufferMs && queryReturnMs + bufferMs > bPickupMs) {
           isAvailable = false;
         }
       }
     }
 
+    const conflictMsg = 'عذراً، السيارة غير متاحة في التواريخ والأوقات المحددة.';
     return {
       available: isAvailable,
       vehicleId: canonicalVehicleId,
       vehicleStatus: vRes.data.status || 'available',
       bookedRanges, // Safe booked intervals without customer names, IDs, phones, or prices
-      message: isAvailable ? 'السيارة متاحة للحجز في التواريخ المحددة.' : 'السيارة محجوزة في هذه الفترة.',
+      ...(isAvailable ? {} : { conflictReason: conflictMsg }),
+      message: isAvailable ? 'السيارة متاحة للحجز في التواريخ المحددة.' : conflictMsg,
     };
   }
 );
 
 /**
  * Cloud Function: deleteBookingSecure (region: asia-south1)
- * Hard delete of a booking. Restricted to Admin / Super Admin.
- * Firestore rules forbid client-side deletes (allow delete: if false),
- * so deletion is performed here with the Admin SDK and fully audited.
+ * Hard delete for unconfirmed/cancelled bookings; soft delete for completed bookings by Super Admin.
+ * Restricted to Admin / Super Admin.
  */
-export const deleteBookingSecure = onCall(
+export const deleteBookingSecure = secureCall(
   {
     region: FUNCTION_REGION,
     enforceAppCheck: true,
+    role: 'admin',
+    permissionDeniedMessage: 'حذف الحجوزات نهائياً مقتصر على مدراء النظام (Admin/Super Admin).',
   },
   async (request) => {
-    await assertNotRevoked(request);
-
-    if (!isCallerAdmin(request.auth!.token)) {
-      throw new HttpsError('permission-denied', 'حذف الحجوزات نهائياً مقتصر على مدراء النظام (Admin/Super Admin).');
-    }
-
     const bookingId = String(request.data?.bookingId || '').trim();
     if (!bookingId) {
       throw new HttpsError('invalid-argument', 'معرف الحجز مطلوب.');
@@ -837,51 +916,86 @@ export const deleteBookingSecure = onCall(
     const callerUid = request.auth!.uid;
     const callerEmail = request.auth!.token?.email || null;
 
-    await db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
       const snap = await transaction.get(bookingRef);
       if (!snap.exists) {
         throw new HttpsError('not-found', 'الحجز المطلوب غير موجود.');
       }
       const b = snap.data()!;
 
-      // If the booking was holding the vehicle (rented), release it when nothing else is active.
-      let vehicleRef: DocumentReference | null = null;
-      let vehicleSnap: DocumentSnapshot | null = null;
-      let othersActive = true;
-      if (b.status === 'rented' && b.vehicleId) {
-        vehicleRef = db.collection('vehicles').doc(String(b.vehicleId));
-        vehicleSnap = await transaction.get(vehicleRef);
-        const activeSnap = await transaction.get(
-          db.collection('bookings')
-            .where('vehicleId', '==', b.vehicleId)
-            .where('status', '==', 'rented')
-        );
-        othersActive = activeSnap.docs.some((d) => d.id !== bookingRef.id);
+      if (b.status === 'rented' || b.status === 'confirmed') {
+        throw new HttpsError('failed-precondition', 'لا يمكن حذف حجز جاري أو مؤكد. يرجى إلغاء الحجز أولاً قبل حذفه.');
       }
 
-      if (vehicleRef && vehicleSnap?.exists && !othersActive && vehicleSnap.data()?.status === 'rented') {
-        transaction.update(vehicleRef, { status: 'available', updatedAt: FieldValue.serverTimestamp() });
+      if (b.status === 'completed') {
+        if (!isCallerSuperAdmin(request.auth!.token)) {
+          throw new HttpsError('permission-denied', 'حذف الحجوزات المكتملة مقتصر على السوبر أدمن فقط (أرشفة ناعمة).');
+        }
+
+        transaction.update(bookingRef, {
+          isDeleted: true,
+          deletedAt: FieldValue.serverTimestamp(),
+          deletedBy: callerUid,
+          deletedByEmail: callerEmail,
+        });
+
+        writeAudit(db, transaction, {
+          actorUid: callerUid,
+          actorEmail: callerEmail,
+          actorType: 'staff',
+          action: 'BOOKING_SOFT_DELETED',
+          entity: 'booking',
+          entityId: bookingRef.id,
+          entityName: String(b.bookingNumber || bookingRef.id),
+          details: `أرشفة ناعمة للحجز المكتمل ${b.bookingNumber || bookingRef.id} بواسطة السوبر أدمن`,
+          metadata: {
+            status: b.status,
+            customerName: b.customerName || null,
+            totalPrice: b.totalPrice ?? 0,
+            finalTotal: b.finalTotal ?? b.totalPrice ?? 0,
+          },
+        });
+
+        return { success: true, bookingId: bookingRef.id, message: 'تم أرشفة الحجز المكتمل بنجاح (حذف ناعم).' };
       }
 
-      transaction.delete(bookingRef);
+      if (['new', 'reviewing', 'cancelled', 'rejected'].includes(b.status)) {
+        const contractRef = db.collection('contracts').doc(`CTR_${bookingRef.id}`);
+        const contractSnap = await transaction.get(contractRef);
 
-      const auditRef = db.collection('auditLogs').doc();
-      transaction.set(auditRef, {
-        id: auditRef.id,
-        user: callerEmail || callerUid,
-        userId: callerUid,
-        actorUid: callerUid,
-        actorEmail: callerEmail,
-        actorType: 'staff',
-        action: 'BOOKING_DELETED',
-        entity: 'bookings',
-        entityId: bookingRef.id,
-        details: `حذف الحجز ${b.bookingNumber || bookingRef.id} (الحالة: ${b.status}، العميل: ${b.customerName || '-'}، المبلغ: ${b.totalPrice ?? 0}$)`,
-        timestamp: new Date().toISOString(),
-        createdAt: FieldValue.serverTimestamp(),
-      });
+        transaction.delete(bookingRef);
+
+        if (contractSnap.exists) {
+          transaction.update(contractRef, {
+            status: 'terminated',
+            terminatedAt: FieldValue.serverTimestamp(),
+            terminationReason: 'deleted',
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+
+        writeAudit(db, transaction, {
+          actorUid: callerUid,
+          actorEmail: callerEmail,
+          actorType: 'staff',
+          action: 'BOOKING_DELETED',
+          entity: 'booking',
+          entityId: bookingRef.id,
+          entityName: String(b.bookingNumber || bookingRef.id),
+          details: `حذف الحجز نهائياً ${b.bookingNumber || bookingRef.id} (الحالة: ${b.status}، العميل: ${b.customerName || '-'}، المبلغ: ${b.totalPrice ?? 0}$)`,
+          metadata: {
+            status: b.status,
+            customerName: b.customerName || null,
+            totalPrice: b.totalPrice ?? 0,
+          },
+        });
+
+        return { success: true, bookingId: bookingRef.id, message: 'تم حذف الحجز نهائياً.' };
+      }
+
+      throw new HttpsError('failed-precondition', `حالة الحجز "${b.status}" غير قابلة للحذف.`);
     });
 
-    return { success: true, bookingId: bookingRef.id, message: 'تم حذف الحجز نهائياً.' };
+    return result;
   }
 );

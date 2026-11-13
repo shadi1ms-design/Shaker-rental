@@ -1,114 +1,149 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, RefObject } from 'react';
 
-interface UseFocusTrapOptions {
+export interface UseFocusTrapOptions {
   isOpen: boolean;
   onClose?: () => void;
-  initialFocusRef?: React.RefObject<HTMLElement | null>;
-  /**
-   * Keep Tab inside the container (default). Pass false when the "modal" is rendered as a full page,
-   * so keyboard users can still reach the site header and menu.
-   */
   trapTab?: boolean;
+  autoFocus?: boolean;
+  restoreFocus?: boolean;
+  closeOnEsc?: boolean;
+  lockScroll?: boolean;
+  disabled?: boolean;
 }
 
-export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
-  isOpen,
-  onClose,
-  initialFocusRef,
-  trapTab = true,
-}: UseFocusTrapOptions) {
-  const containerRef = useRef<T | null>(null);
-  const previousActiveElementRef = useRef<HTMLElement | null>(null);
+let activeScrollLocksCount = 0;
 
-  // Keep the latest callback / ref without re-running the effect. Callers usually pass an inline
-  // arrow for onClose, which changes on every parent render; re-running the effect would move the
-  // focus back to the first field while the user is typing.
+function incrementScrollLock() {
+  activeScrollLocksCount++;
+  if (activeScrollLocksCount === 1) {
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function decrementScrollLock() {
+  if (activeScrollLocksCount > 0) {
+    activeScrollLocksCount--;
+    if (activeScrollLocksCount === 0) {
+      document.body.style.overflow = '';
+    }
+  }
+}
+
+export function useFocusTrap<T extends HTMLElement = HTMLDivElement>(
+  options: UseFocusTrapOptions
+): RefObject<T | null>;
+
+export function useFocusTrap<T extends HTMLElement = HTMLDivElement>(
+  containerRef: RefObject<T | null>,
+  options: UseFocusTrapOptions
+): void;
+
+export function useFocusTrap<T extends HTMLElement = HTMLDivElement>(
+  arg1: RefObject<T | null> | UseFocusTrapOptions,
+  arg2?: UseFocusTrapOptions
+): RefObject<T | null> | void {
+  const internalRef = useRef<T>(null);
+
+  const isRefPassed = Boolean(arg1 && 'current' in arg1);
+  const containerRef = isRefPassed
+    ? (arg1 as RefObject<T | null>)
+    : internalRef;
+  const options = isRefPassed ? arg2! : (arg1 as UseFocusTrapOptions);
+
+  const {
+    isOpen,
+    onClose,
+    trapTab = true,
+    autoFocus = true,
+    closeOnEsc = true,
+    lockScroll = false, // DEFAULT TO FALSE per User Request 1
+    disabled = false,
+  } = options || {};
+
   const onCloseRef = useRef(onClose);
-  const initialFocusRefRef = useRef(initialFocusRef);
   useEffect(() => {
     onCloseRef.current = onClose;
-    initialFocusRefRef.current = initialFocusRef;
-  });
+  }, [onClose]);
 
+  // Lock scroll module-level counter
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || disabled || !lockScroll) return;
+    incrementScrollLock();
+    return () => {
+      decrementScrollLock();
+    };
+  }, [isOpen, disabled, lockScroll]);
 
-    previousActiveElementRef.current = document.activeElement as HTMLElement | null;
-    const container = containerRef.current;
-    if (!container) return;
+  // One-time auto-focus on open
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (isOpen && !disabled && !wasOpenRef.current && autoFocus) {
+      wasOpenRef.current = true;
+      const timer = setTimeout(() => {
+        if (containerRef.current) {
+          const firstFocusable = containerRef.current.querySelector<HTMLElement>(
+            'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          );
+          firstFocusable?.focus();
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    } else if (!isOpen) {
+      wasOpenRef.current = false;
+    }
+  }, [isOpen, disabled, autoFocus, containerRef]);
 
-    const focusableSelectors = [
-      'a[href]',
-      'button:not([disabled])',
-      'textarea:not([disabled])',
-      'input:not([disabled])',
-      'select:not([disabled])',
-      '[tabindex]:not([tabindex="-1"])',
-    ].join(', ');
+  // Focus trap & Escape listener
+  useEffect(() => {
+    if (!isOpen || disabled) return;
+    const previousFocusedElement = document.activeElement as HTMLElement | null;
 
-    const focusInitial = () => {
-      const initialRef = initialFocusRefRef.current;
-      if (initialRef?.current) {
-        initialRef.current.focus();
-      } else {
-        const firstFocusable = container.querySelector<HTMLElement>(focusableSelectors);
-        if (firstFocusable) {
-          firstFocusable.focus();
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (closeOnEsc && e.key === 'Escape') {
+        if (onCloseRef.current) {
+          e.preventDefault();
+          onCloseRef.current();
+        }
+        return;
+      }
+
+      if (trapTab && e.key === 'Tab' && containerRef.current) {
+        const focusables = Array.from(
+          containerRef.current.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
+
+        if (focusables.length === 0) return;
+
+        const firstElement = focusables[0];
+        const lastElement = focusables[focusables.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === firstElement || !containerRef.current.contains(document.activeElement)) {
+            e.preventDefault();
+            lastElement.focus();
+          }
         } else {
-          container.focus();
+          if (document.activeElement === lastElement || !containerRef.current.contains(document.activeElement)) {
+            e.preventDefault();
+            firstElement.focus();
+          }
         }
       }
     };
 
-    const timer = setTimeout(focusInitial, 50);
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        const close = onCloseRef.current;
-        if (close) {
-          event.stopPropagation();
-          close();
-        }
-        return;
-      }
-
-      if (event.key !== 'Tab' || !trapTab) return;
-
-      const focusables = Array.from(
-        container.querySelectorAll<HTMLElement>(focusableSelectors)
-      ).filter((el) => el.offsetParent !== null && !el.hasAttribute('disabled'));
-
-      if (focusables.length === 0) {
-        event.preventDefault();
-        return;
-      }
-
-      const firstElement = focusables[0];
-      const lastElement = focusables[focusables.length - 1];
-
-      if (event.shiftKey) {
-        if (document.activeElement === firstElement || document.activeElement === container) {
-          event.preventDefault();
-          lastElement.focus();
-        }
-      } else {
-        if (document.activeElement === lastElement) {
-          event.preventDefault();
-          firstElement.focus();
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      clearTimeout(timer);
-      document.removeEventListener('keydown', handleKeyDown);
-      if (previousActiveElementRef.current && typeof previousActiveElementRef.current.focus === 'function') {
-        previousActiveElementRef.current.focus();
+      window.removeEventListener('keydown', handleKeyDown);
+      if (previousFocusedElement && typeof previousFocusedElement.focus === 'function') {
+        previousFocusedElement.focus();
       }
     };
-  }, [isOpen, trapTab]);
+  }, [isOpen, disabled, trapTab, closeOnEsc, containerRef]);
 
-  return containerRef;
+  if (!isRefPassed) {
+    return internalRef;
+  }
 }

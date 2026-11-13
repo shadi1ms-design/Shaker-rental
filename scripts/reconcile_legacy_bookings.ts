@@ -104,7 +104,7 @@ function deriveProposedBookingNumber(docId: string, index: number): string {
 }
 
 /**
- * Main inspection logic that compares bookings against vehicles
+ * Main reconciliation analysis logic that compares bookings against vehicles
  */
 export function analyzeBookings(
   bookings: BookingRecord[],
@@ -341,7 +341,7 @@ async function run() {
   // If Admin SDK hit PERMISSION_DENIED (because container sandbox SA has no IAM role on external project)
   // Check known seed and legacy bookings identified in the codebase architecture
   console.log('[Reconciliation] Note: Direct Admin SDK ADC call resulted in PERMISSION_DENIED due to container GCP IAM boundary.');
-  console.log('[Reconciliation] Running inspection on known legacy/seed bookings architecture to provide complete reconciliation dry-run preview...');
+  console.log('[Reconciliation] Running reconciliation analysis on known legacy/seed bookings architecture to provide complete dry-run preview...');
 
   const knownLegacyBookings: BookingRecord[] = [
     {

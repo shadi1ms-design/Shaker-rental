@@ -210,7 +210,17 @@ export const telegramWebhook = onRequest(
         }
       }
 
-      // 5. Extract action and booking ID
+      if (callbackData.startsWith('bk_rent_') || callbackData.startsWith('bk_complete_')) {
+        if (callbackQueryId) {
+          await answerCallbackQuery(botToken, callbackQueryId, {
+            text: 'تسليم واستلام السيارة يتطلب تسجيل قراءة العداد وفحص الزيت من لوحة التحكم مباشرة.',
+            show_alert: true,
+          });
+        }
+        res.status(200).send('ok');
+        return;
+      }
+
       let actionType = '';
       let bookingId = '';
 
@@ -220,12 +230,6 @@ export const telegramWebhook = onRequest(
       } else if (callbackData.startsWith('bk_reject_')) {
         actionType = 'reject';
         bookingId = callbackData.replace('bk_reject_', '').trim();
-      } else if (callbackData.startsWith('bk_rent_')) {
-        actionType = 'rent';
-        bookingId = callbackData.replace('bk_rent_', '').trim();
-      } else if (callbackData.startsWith('bk_complete_')) {
-        actionType = 'complete';
-        bookingId = callbackData.replace('bk_complete_', '').trim();
       }
 
       if (!actionType || !bookingId) {

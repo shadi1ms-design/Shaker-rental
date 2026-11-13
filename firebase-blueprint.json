@@ -99,6 +99,33 @@
       },
       "required": ["id", "contractNumber", "bookingId", "vehicleId", "status"]
     },
+    "Inspection": {
+      "title": "Inspection",
+      "description": "Immutable legal vehicle inspection audit log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "bookingId": { "type": "string", "maxLength": 128 },
+        "bookingNumber": { "type": "string", "maxLength": 64 },
+        "vehicleId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["pickup", "return"] },
+        "odometer": { "type": "number" },
+        "fuelLevel": { "type": "number" },
+        "checklist": { "type": "object" },
+        "customerAcknowledgement": { "type": "string", "maxLength": 200 },
+        "inspectorUid": { "type": "string", "maxLength": 128 },
+        "inspectorEmail": { "type": "string", "maxLength": 150 },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["active", "voided"] },
+        "voidReason": { "type": "string", "maxLength": 1000 },
+        "voidedAt": { "type": "string", "format": "date-time" },
+        "voidedBy": { "type": "string", "maxLength": 128 },
+        "supersedes": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingId", "vehicleId", "type", "odometer", "fuelLevel", "checklist", "customerAcknowledgement", "status"]
+    },
     "VehicleInspection": {
       "title": "VehicleInspection",
       "description": "Handover and return condition inspection",
@@ -230,9 +257,13 @@
       "schema": "Contract",
       "description": "Rental contracts generated for bookings"
     },
+    "/inspections/{inspectionId}": {
+      "schema": "Inspection",
+      "description": "Immutable legal vehicle inspection audit logs"
+    },
     "/vehicleInspections/{inspectionId}": {
       "schema": "VehicleInspection",
-      "description": "Vehicle pickup and return inspection logs"
+      "description": "Legacy vehicle pickup and return inspection logs"
     },
     "/settings/{settingsId}": {
       "schema": "Settings",

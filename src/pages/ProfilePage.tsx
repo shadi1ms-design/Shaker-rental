@@ -1,13 +1,12 @@
 import React from 'react';
-import { PageHeaderBanner } from '../components/common/PageHeaderBanner';
 import { PageTransition } from '../components/routing/PageTransition';
 import { SuspenseFallback } from '../components/routing/Spinners';
 import { useAppData } from '../contexts/DataContext';
 import { useBookFirstVehicle } from '../hooks/useBookFirstVehicle';
 import { navigate, routes } from '../router';
 
-const UserProfileModal = React.lazy(() =>
-  import('../components/UserProfileModal').then((m) => ({ default: m.UserProfileModal })),
+const ProfileView = React.lazy(() =>
+  import('../components/ProfileView').then((m) => ({ default: m.ProfileView })),
 );
 
 /** /profile (wrapped by <RequireAuth> in App). */
@@ -17,9 +16,8 @@ export const ProfilePage: React.FC = () => {
 
   return (
     <PageTransition>
-      <PageHeaderBanner themeKey="profile" />
       <React.Suspense fallback={<SuspenseFallback />}>
-        <UserProfileModal
+        <ProfileView
           isOpen
           bookings={bookings}
           onClose={() => navigate(routes.home)}

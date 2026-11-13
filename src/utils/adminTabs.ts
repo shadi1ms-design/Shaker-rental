@@ -17,7 +17,6 @@ export function getAdminTabFromPath(path: string, { isAdmin, isSuperAdmin }: Rol
   if (path.includes('/admin/calendar')) return 'bookings';
   if (path.includes('/admin/rentals')) return 'bookings';
   if (path.includes('/admin/contracts')) return 'bookings';
-  if (path.includes('/admin/maintenance')) return adminOr('vehicles');
   if (path.includes('/admin/reports')) return adminOr('reports');
   if (path.includes('/admin/settings')) return adminOr('settings');
   if (path.includes('/admin/notifications')) return adminOr('notifications');

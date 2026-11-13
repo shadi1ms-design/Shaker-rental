@@ -1,5 +1,5 @@
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
-import { storage, isFirebaseConfigured } from '../firebase/config';
+import { getStorageInstance, isFirebaseConfigured } from '../firebase/config';
 import { getArabicErrorMessage } from '../utils/firebaseErrorHandler';
 import { validateUploadedFile } from '../utils/security';
 
@@ -107,7 +107,7 @@ export const storageService = {
    * Checks if Firebase Storage is connected and available
    */
   isAvailable(): boolean {
-    return Boolean(isFirebaseConfigured && storage);
+    return Boolean(isFirebaseConfigured);
   },
 
   /**
@@ -124,8 +124,9 @@ export const storageService = {
     onProgress?: (progressPercent: number) => void;
     customMetadata?: Record<string, string>;
   }): Promise<{ downloadUrl: string; storagePath: string }> {
-    // 1. Explicit Local / Demo Mode Fallback (ONLY when Firebase is completely unconfigured)
-    if (!this.isAvailable() || !storage) {
+    const storageInst = await getStorageInstance();
+    // 1. Explicit Local / Demo Mode Fallback (ONLY when Firebase Storage is unavailable)
+    if (!storageInst) {
       console.warn('Firebase Storage is not initialized, using local DataURL payload (Demo/Development mode).');
       const dataUrl = await readFileAsDataURL(file);
       onProgress?.(100);
@@ -134,7 +135,7 @@ export const storageService = {
 
     // 2. Connected Firebase Storage Mode - Strictly enforce Cloud storage and fail fast on errors
     try {
-      const storageRef = ref(storage, storagePath);
+      const storageRef = ref(storageInst, storagePath);
       const metadata = {
         contentType: (file as File).type || 'application/octet-stream',
         ...(customMetadata ? { customMetadata } : {}),
@@ -251,7 +252,7 @@ export const storageService = {
   },
 
   /**
-   * Uploads a vehicle handover inspection video
+   * Uploads a vehicle handover contract video
    */
   async uploadContractVideo(
     file: File,
@@ -291,6 +292,15 @@ export const storageService = {
     vehicleId?: string,
     onProgress?: (percent: number) => void
   ): Promise<StorageUploadResult> {
+    if (
+      file.type === 'image/heic' ||
+      file.type === 'image/heif' ||
+      file.name.toLowerCase().endsWith('.heic') ||
+      file.name.toLowerCase().endsWith('.heif')
+    ) {
+      throw new Error('صيغة HEIC غير مدعومة، يرجى رفع JPG/PNG/WebP.');
+    }
+
     const validation = validateUploadedFile(file.name, file.size, file.type, 'document');
     if (!validation.valid) {
       throw new Error(validation.error || 'ملف الصورة غير صالح للرفع.');
@@ -327,9 +337,10 @@ export const storageService = {
     if (storagePath.startsWith('http://') || storagePath.startsWith('https://') || storagePath.startsWith('data:')) {
       return storagePath;
     }
-    if (!this.isAvailable() || !storage) return '';
+    const storageInst = await getStorageInstance();
+    if (!storageInst) return '';
     try {
-      const fileRef = ref(storage, storagePath);
+      const fileRef = ref(storageInst, storagePath);
       return await getDownloadURL(fileRef);
     } catch (err) {
       console.error('Error fetching download URL for path:', storagePath, err);
@@ -341,10 +352,11 @@ export const storageService = {
    * Deletes a file from Firebase Storage
    */
   async deleteFile(storagePath: string): Promise<void> {
-    if (!this.isAvailable() || !storage) return;
+    const storageInst = await getStorageInstance();
+    if (!storageInst) return;
 
     try {
-      const fileRef = ref(storage, storagePath);
+      const fileRef = ref(storageInst, storagePath);
       await deleteObject(fileRef);
     } catch (err) {
       console.warn('Could not delete file from Firebase Storage:', err);

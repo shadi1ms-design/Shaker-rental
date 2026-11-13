@@ -15,100 +15,69 @@
  * - Super admin designation is protected and cannot be assigned via standard setUserRole.
  */
 
+import { getApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import type { UserRecord } from 'firebase-admin/auth';
+import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
-import { DESIGNATED_SUPER_ADMIN_UID } from './constants';
+import { DATABASE_ID, DESIGNATED_SUPER_ADMIN_UID } from './constants';
+import {
+  isCallerSuperAdmin,
+  isCallerAdmin,
+  isCallerStaff,
+  getRoleRank,
+  getUserRoleFromClaims,
+  isSuperAdminRole,
+  isAdminRole,
+  isEmployeeOnlyRole,
+  isStaffRole,
+  normalizeRoleName,
+  SUPER_ADMIN_ROLE_ALIASES,
+  SUPER_ADMIN_BOOLEAN_CLAIMS,
+  ADMIN_ROLE_ALIASES,
+  ADMIN_BOOLEAN_CLAIMS,
+  STAFF_ROLE_ALIASES,
+  STAFF_BOOLEAN_CLAIMS,
+} from './roles';
+import type { UserRoleName } from './roles';
 
-export type UserRoleName = 'customer' | 'employee' | 'admin' | 'super_admin';
+export type { UserRoleName };
+export {
+  isCallerSuperAdmin,
+  isCallerAdmin,
+  isCallerStaff,
+  getRoleRank,
+  getUserRoleFromClaims,
+  isSuperAdminRole,
+  isAdminRole,
+  isEmployeeOnlyRole,
+  isStaffRole,
+  normalizeRoleName,
+  SUPER_ADMIN_ROLE_ALIASES,
+  SUPER_ADMIN_BOOLEAN_CLAIMS,
+  ADMIN_ROLE_ALIASES,
+  ADMIN_BOOLEAN_CLAIMS,
+  STAFF_ROLE_ALIASES,
+  STAFF_BOOLEAN_CLAIMS,
+};
+
+if (!DESIGNATED_SUPER_ADMIN_UID) {
+  console.warn('[SECURITY WARNING] DESIGNATED_SUPER_ADMIN_UID is empty in environment! Root Super Admin protection may be degraded.');
+}
 
 /**
- * Extracts and checks if token custom claims confer Super Admin status.
- * Matches firestore.rules isSuperAdmin() logic exactly.
+ * ملاحظة معمارية: مصدر الحقيقة (Source of Truth) للصلاحيات هو الحقل `role` في Custom Claims
+ * والمعرّف مركزياً في `functions/src/roles.ts`.
+ * أما الحقول المنطقية القديمة (booleans: admin, super_admin, superAdmin, owner, employee, staff, manager)
+ * فهي مدعومة للتوافق العكسي فقط (Backward Compatibility).
  */
-export function isCallerSuperAdmin(authOrToken?: any): boolean {
-  const token = authOrToken?.token || authOrToken;
-  if (!token || typeof token !== 'object') return false;
 
-  const role = typeof token.role === 'string' ? token.role.toLowerCase().trim() : '';
-  if (['super_admin', 'superadmin', 'owner'].includes(role)) {
-    return true;
+function getDesignatedSuperAdminUid(): string {
+  const envVal = process.env.DESIGNATED_SUPER_ADMIN_UID;
+  if (envVal !== undefined) {
+    return envVal.trim();
   }
-
-  return (
-    token.super_admin === true ||
-    token.superAdmin === true ||
-    token.owner === true
-  );
-}
-
-/**
- * Extracts and checks if token custom claims confer Admin status.
- * Matches firestore.rules isAdmin() logic exactly.
- */
-export function isCallerAdmin(authOrToken?: any): boolean {
-  if (isCallerSuperAdmin(authOrToken)) return true;
-
-  const token = authOrToken?.token || authOrToken;
-  if (!token || typeof token !== 'object') return false;
-
-  const role = typeof token.role === 'string' ? token.role.toLowerCase().trim() : '';
-  if (role === 'admin') {
-    return true;
-  }
-
-  return token.admin === true;
-}
-
-/**
- * Extracts and checks if token custom claims confer Employee / Staff status.
- * Matches firestore.rules isEmployee() logic exactly.
- */
-export function isCallerStaff(authOrToken?: any): boolean {
-  if (isCallerAdmin(authOrToken)) return true;
-
-  const token = authOrToken?.token || authOrToken;
-  if (!token || typeof token !== 'object') return false;
-
-  const role = typeof token.role === 'string' ? token.role.toLowerCase().trim() : '';
-  if (['employee', 'staff', 'manager'].includes(role)) {
-    return true;
-  }
-
-  return (
-    token.employee === true ||
-    token.staff === true ||
-    token.manager === true
-  );
-}
-
-/**
- * Returns numeric hierarchy rank for role comparisons:
- * super_admin = 4, admin = 3, employee = 2, customer = 1
- */
-export function getRoleRank(roleName?: string | null): number {
-  if (!roleName) return 1;
-  const r = String(roleName).toLowerCase().trim();
-  if (['super_admin', 'superadmin', 'owner'].includes(r)) return 4;
-  if (r === 'admin') return 3;
-  if (['employee', 'staff', 'manager'].includes(r)) return 2;
-  return 1;
-}
-
-/**
- * Resolves normalized UserRoleName from Firebase Auth Custom Claims
- */
-export function getUserRoleFromClaims(claims?: Record<string, any> | null): UserRoleName {
-  if (!claims || typeof claims !== 'object') return 'customer';
-
-  const role = typeof claims.role === 'string' ? claims.role.toLowerCase().trim() : '';
-  if (['super_admin', 'superadmin', 'owner'].includes(role)) return 'super_admin';
-  if (claims.super_admin === true || claims.superAdmin === true || claims.owner === true) return 'super_admin';
-
-  if (role === 'admin' || claims.admin === true) return 'admin';
-  if (['employee', 'staff', 'manager'].includes(role) || claims.employee === true || claims.staff === true || claims.manager === true) return 'employee';
-
-  return 'customer';
+  return (DESIGNATED_SUPER_ADMIN_UID || '').trim();
 }
 
 /**
@@ -126,6 +95,14 @@ export function canManageUserRole(
   targetUid: string,
   newRole: string
 ): { allowed: boolean; reason?: string } {
+  const designatedSuperAdminUid = getDesignatedSuperAdminUid();
+  if (!designatedSuperAdminUid) {
+    return {
+      allowed: false,
+      reason: 'إعداد الخادم ناقص: لم يتم ضبط معرّف المدير العام الرئيسي (DESIGNATED_SUPER_ADMIN_UID).',
+    };
+  }
+
   if (callerUid === targetUid) {
     return { allowed: false, reason: 'لا يمكن تعديل صلاحيات حسابك الخاص.' };
   }
@@ -142,7 +119,7 @@ export function canManageUserRole(
 
   // Super admin role cannot be assigned via setUserRole
   const normalizedNewRole = String(newRole).toLowerCase().trim();
-  if (['super_admin', 'superadmin', 'owner'].includes(normalizedNewRole)) {
+  if (isSuperAdminRole(newRole) || isSuperAdminRole(normalizedNewRole)) {
     return {
       allowed: false,
       reason: 'لا يمكن منح صلاحية المدير العام (Super Admin) عبر واجهة تعديل الأدوار.',
@@ -162,7 +139,7 @@ export function canManageUserRole(
   const targetRank = getRoleRank(targetCurrentRole);
 
   // Protected root Super Admin
-  if (targetUid === DESIGNATED_SUPER_ADMIN_UID) {
+  if (targetUid === designatedSuperAdminUid) {
     return {
       allowed: false,
       reason: 'لا يمكن تعديل صلاحيات الحساب الرئيسي للنظام (Designated Super Admin).',
@@ -219,6 +196,14 @@ export function canManageAccountLifecycle(
   targetUid: string,
   action: 'toggle' | 'delete'
 ): { allowed: boolean; reason?: string } {
+  const designatedSuperAdminUid = getDesignatedSuperAdminUid();
+  if (!designatedSuperAdminUid) {
+    return {
+      allowed: false,
+      reason: 'إعداد الخادم ناقص: لم يتم ضبط معرّف المدير العام الرئيسي (DESIGNATED_SUPER_ADMIN_UID).',
+    };
+  }
+
   if (callerUid === targetUid) {
     return {
       allowed: false,
@@ -247,7 +232,7 @@ export function canManageAccountLifecycle(
     }
   }
 
-  if (targetUid === DESIGNATED_SUPER_ADMIN_UID) {
+  if (targetUid === designatedSuperAdminUid) {
     return {
       allowed: false,
       reason: 'لا يمكن اتخاذ هذا الإجراء على حساب المدير العام الرئيسي للنظام.',
@@ -305,3 +290,88 @@ export async function assertNotRevoked(request: any): Promise<UserRecord> {
 
   return userRecord;
 }
+
+export const assertCallerActiveAndValidToken = assertNotRevoked;
+
+const MFA_CONFIG_CACHE_TTL_MS = 60 * 1000;
+
+interface MfaConfigCache {
+  value: boolean;
+  expiresAt: number;
+}
+
+let mfaConfigCache: MfaConfigCache | null = null;
+
+export function clearAdminMfaCache(): void {
+  mfaConfigCache = null;
+}
+
+export function setAdminMfaCacheValue(value: boolean, ttlMs: number = MFA_CONFIG_CACHE_TTL_MS): void {
+  mfaConfigCache = {
+    value: Boolean(value),
+    expiresAt: Date.now() + ttlMs,
+  };
+}
+
+/**
+ * Reads requireAdminMfa from Firestore document system_config/security with a 60s cache.
+ * Falls back to process.env.REQUIRE_ADMIN_MFA (default false) if document does not exist.
+ * Fails closed (returns true) if reading fails.
+ */
+export async function getRequireAdminMfa(dbOverride?: any): Promise<boolean> {
+  const now = Date.now();
+  if (mfaConfigCache && now < mfaConfigCache.expiresAt) {
+    return mfaConfigCache.value;
+  }
+
+  try {
+    const firestoreDb = dbOverride || getFirestore(getApp(), DATABASE_ID);
+    const docSnap = await firestoreDb.collection('system_config').doc('security').get();
+    let resolved: boolean;
+    if (docSnap && docSnap.exists) {
+      const data = typeof docSnap.data === 'function' ? docSnap.data() : docSnap.data;
+      if (typeof data?.requireAdminMfa === 'boolean') {
+        resolved = data.requireAdminMfa;
+      } else {
+        resolved = String(process.env.REQUIRE_ADMIN_MFA || '').toLowerCase().trim() === 'true';
+      }
+    } else {
+      resolved = String(process.env.REQUIRE_ADMIN_MFA || '').toLowerCase().trim() === 'true';
+    }
+    mfaConfigCache = {
+      value: resolved,
+      expiresAt: Date.now() + MFA_CONFIG_CACHE_TTL_MS,
+    };
+    return resolved;
+  } catch (err) {
+    console.error('[authz] Failed reading system_config/security for MFA enforcement; failing closed:', err);
+    return true;
+  }
+}
+
+/**
+ * If MFA enforcement is enabled and the caller is Admin or Super Admin,
+ * rejects with permission-denied unless request.auth.token.firebase.sign_in_second_factor is present.
+ */
+export async function assertAdminMfa(request: any, dbOverride?: any): Promise<void> {
+  const token = request?.auth?.token;
+  if (!isCallerAdmin(token)) {
+    return;
+  }
+
+  const requireMfa = await getRequireAdminMfa(dbOverride);
+  if (!requireMfa) {
+    return;
+  }
+
+  const secondFactor = token?.firebase?.sign_in_second_factor;
+  if (!secondFactor || typeof secondFactor !== 'string' || !secondFactor.trim()) {
+    throw new HttpsError(
+      'permission-denied',
+      'يشترط تفعيل المصادقة الثنائية (2FA) وتسجيل الدخول بالرمز الثنائي لتنفيذ هذه العملية الإدارية الحساسة.'
+    );
+  }
+}
+
+
+

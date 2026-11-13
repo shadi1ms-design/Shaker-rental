@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { isUserVerified as serverIsUserVerified } from '../functions/src/verificationStatus';
-import { isUserVerified as clientIsUserVerified } from '../src/utils/verification';
+import {
+  isUserVerified as clientIsUserVerified,
+  getVerificationState,
+} from '../src/utils/verification';
 
 describe('verification-status unit tests', () => {
   const testFunctions = [
@@ -39,6 +42,50 @@ describe('verification-status unit tests', () => {
       });
     });
   }
+
+  describe('getVerificationState', () => {
+    it('1) returns "verified" when verification request status is verified', () => {
+      expect(getVerificationState({ verified: false, verificationStatus: 'not_started' }, { status: 'verified' })).toBe('verified');
+      expect(getVerificationState(null, { status: 'verified' })).toBe('verified');
+    });
+
+    it('2) returns "pending_review" when verification request status is pending_review', () => {
+      expect(getVerificationState({ verified: false }, { status: 'pending_review' })).toBe('pending_review');
+      expect(getVerificationState(undefined, { status: 'pending_review' })).toBe('pending_review');
+    });
+
+    it('3) returns "rejected" when verification request status is rejected', () => {
+      expect(getVerificationState({ verified: true }, { status: 'rejected' })).toBe('rejected');
+      expect(getVerificationState(null, { status: 'rejected' })).toBe('rejected');
+    });
+
+    it('4) returns "unverified" when request status is not_started even with a legacy verified user', () => {
+      expect(
+        getVerificationState(
+          { verified: true, verificationStatus: 'verified' },
+          { status: 'not_started' }
+        )
+      ).toBe('unverified');
+      expect(getVerificationState({ verified: true }, { status: 'unsubmitted' })).toBe('unverified');
+    });
+
+    it('5) returns "verified" when no request exists and user has verified === true or verificationStatus === "verified"', () => {
+      expect(getVerificationState({ verified: true }, null)).toBe('verified');
+      expect(getVerificationState({ verificationStatus: 'verified' }, undefined)).toBe('verified');
+    });
+
+    it('6) returns "unverified" when no request exists and user has no verification fields (or null/undefined)', () => {
+      expect(getVerificationState({}, null)).toBe('unverified');
+      expect(getVerificationState(null, null)).toBe('unverified');
+      expect(getVerificationState(undefined, undefined)).toBe('unverified');
+    });
+
+    it('7) falls back to user.verificationStatus for pending_review and rejected when no request exists', () => {
+      expect(getVerificationState({ verificationStatus: 'pending_review' }, null)).toBe('pending_review');
+      expect(getVerificationState({ verificationStatus: 'rejected' }, undefined)).toBe('rejected');
+      expect(getVerificationState({ verificationStatus: 'not_started' }, null)).toBe('unverified');
+    });
+  });
 });
 
 describe('bookingFunctions.ts transaction order & pattern check', () => {
@@ -47,7 +94,7 @@ describe('bookingFunctions.ts transaction order & pattern check', () => {
 
   it('ensures all transaction.get occur before any transaction.set/update/delete', () => {
     const startMarker = 'return await db.runTransaction(async (transaction) => {';
-    const endMarker = 'transaction.set(auditRef';
+    const endMarker = 'writeAudit(db, transaction';
 
     const startIndex = bookingCode.indexOf(startMarker);
     expect(startIndex).toBeGreaterThan(-1);

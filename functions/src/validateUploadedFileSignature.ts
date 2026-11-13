@@ -4,17 +4,18 @@
  * Inspects uploaded file magic bytes asynchronously upon object finalization.
  * 
  * SCOPE & COVERAGE:
- * - Public media paths: 'vehicles/' and 'public/' (JPEG, PNG, WEBP).
+ * -Public media paths: 'vehicles/' and 'public/' (JPEG, PNG, WEBP).
  * - Document & user upload paths: 'users/', 'uploads/', and 'contracts/' (PDF, JPEG, PNG, WEBP, <= 25MB).
- * - Video inspection paths: 'contracts/{contractId}/videos/' (MP4/ftyp, WebM/1A45DFA3, MOV, <= 100MB).
+ * - Video paths: 'contracts/{contractId}/videos/' (MP4/ftyp, WebM/1A45DFA3, MOV, <= 100MB).
  * - Exports validation functions for direct unit testing (Requirement 4).
  */
 
 import { initializeApp, getApps, getApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { onObjectFinalized } from 'firebase-functions/v2/storage';
 import { DATABASE_ID, DEFAULT_STORAGE_BUCKET, STORAGE_TRIGGER_REGION } from './constants';
+import { writeAuditAsync } from './audit';
 
 if (!getApps().length) {
   initializeApp();
@@ -22,7 +23,7 @@ if (!getApps().length) {
 const db = getFirestore(getApp(), DATABASE_ID);
 
 export const MAX_DOCUMENT_SIZE_BYTES = 25 * 1024 * 1024; // 25MB for docs/images
-export const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;   // 100MB for inspection videos
+export const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;   // 100MB for contract videos
 
 /**
  * Validates whether the given buffer matches known image signatures (JPEG, PNG, WEBP)
@@ -136,15 +137,15 @@ export const validateUploadedFileSignature = onObjectFinalized(
     const filePath = object.name;
     const bucketName = object.bucket;
     const isTargetPublicPath = filePath.startsWith('vehicles/') || filePath.startsWith('public/');
-    const isInspectionVideoPath = filePath.startsWith('contracts/') && filePath.includes('/videos/');
+    const isContractVideoPath = filePath.startsWith('contracts/') && filePath.includes('/videos/');
     const isVerificationPath = filePath.startsWith('verification_pending/') || filePath.startsWith('verification_vault/');
     const isDocumentPath =
       (filePath.startsWith('users/') ||
        filePath.startsWith('uploads/') ||
        filePath.startsWith('contracts/')) &&
-      !isInspectionVideoPath;
+      !isContractVideoPath;
 
-    if (!isTargetPublicPath && !isDocumentPath && !isInspectionVideoPath && !isVerificationPath) {
+    if (!isTargetPublicPath && !isDocumentPath && !isContractVideoPath && !isVerificationPath) {
       return;
     }
 
@@ -157,20 +158,23 @@ export const validateUploadedFileSignature = onObjectFinalized(
 
       const fileSize = Number(object.size || 0);
 
-      // 1. Inspection Video Validation (<= 100MB, mp4/webm/quicktime)
-      if (isInspectionVideoPath) {
+      // 1. Contract Video Validation (<= 100MB, mp4/webm/quicktime)
+      if (isContractVideoPath) {
         if (fileSize <= 0 || fileSize > MAX_VIDEO_SIZE_BYTES) {
-          console.warn(`[Security Alert] Deleting inspection video exceeding 100MB: ${filePath} (${fileSize} bytes)`);
+          console.warn(`[Security Alert] Deleting contract video exceeding 100MB: ${filePath} (${fileSize} bytes)`);
           await file.delete({ ignoreNotFound: true });
-          await db.collection('auditLogs').add({
+          await writeAuditAsync(db, {
             action: 'SUSPICIOUS_VIDEO_SIZE_VIOLATION',
             actorUid: null,
             actorEmail: null,
             actorType: 'system',
-            filePath,
-            fileSizeBytes: fileSize,
-            timestamp: FieldValue.serverTimestamp(),
-            createdAt: FieldValue.serverTimestamp(),
+            entity: 'contract',
+            entityId: filePath,
+            details: `حذف فيديو عقد لتجاوز الحجم المسموح: ${filePath} (${fileSize} bytes)`,
+            metadata: {
+              filePath,
+              fileSizeBytes: fileSize,
+            },
           });
           return;
         }
@@ -179,7 +183,7 @@ export const validateUploadedFileSignature = onObjectFinalized(
         const allowedVideoExts = ['.mp4', '.webm', '.mov', '.quicktime', '.mkv'];
         const hasValidExt = allowedVideoExts.some((ext) => lowerPath.endsWith(ext));
         if (!hasValidExt) {
-          console.warn(`[Security Alert] Deleting inspection video with invalid extension: ${filePath}`);
+          console.warn(`[Security Alert] Deleting contract video with invalid extension: ${filePath}`);
           await file.delete({ ignoreNotFound: true });
           return;
         }
@@ -188,15 +192,18 @@ export const validateUploadedFileSignature = onObjectFinalized(
         if (!isValidVideoSignature(buffer)) {
           console.warn(`[Security Alert] Deleting file with invalid video signature: ${filePath}`);
           await file.delete({ ignoreNotFound: true });
-          await db.collection('auditLogs').add({
+          await writeAuditAsync(db, {
             action: 'SUSPICIOUS_VIDEO_SIGNATURE_MISMATCH',
             actorUid: null,
             actorEmail: null,
             actorType: 'system',
-            filePath,
-            detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
-            timestamp: FieldValue.serverTimestamp(),
-            createdAt: FieldValue.serverTimestamp(),
+            entity: 'contract',
+            entityId: filePath,
+            details: `حذف ملف فيديو عقد بسبب عدم تطابق التوقيع الرقمي: ${filePath}`,
+            metadata: {
+              filePath,
+              detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
+            },
           });
           return;
         }
@@ -226,14 +233,17 @@ export const validateUploadedFileSignature = onObjectFinalized(
         if (!isJpeg) {
           console.warn(`[Security Alert] Deleting verification doc with invalid JPEG magic bytes: ${filePath}`);
           await file.delete({ ignoreNotFound: true });
-          await db.collection('auditLogs').add({
+          await writeAuditAsync(db, {
             action: 'SUSPICIOUS_VERIFICATION_DOC_SIGNATURE',
             actorUid: null,
             actorType: 'system',
-            filePath,
-            detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
-            timestamp: FieldValue.serverTimestamp(),
-            createdAt: FieldValue.serverTimestamp(),
+            entity: 'verification',
+            entityId: filePath,
+            details: `حذف وثيقة توثيق لعدم تطابق توقيع JPEG: ${filePath}`,
+            metadata: {
+              filePath,
+              detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
+            },
           });
           return;
         }
@@ -248,13 +258,17 @@ export const validateUploadedFileSignature = onObjectFinalized(
             if (pendingFiles.length > 2) {
               console.warn(`[Security Alert] Pending verification cap exceeded for ${ownerUid}, deleting excess: ${filePath}`);
               await file.delete({ ignoreNotFound: true });
-              await db.collection('auditLogs').add({
+              await writeAuditAsync(db, {
                 action: 'VERIFICATION_QUOTA_EXCEEDED',
                 actorUid: ownerUid,
                 actorType: 'system',
-                filePath,
-                timestamp: FieldValue.serverTimestamp(),
-                createdAt: FieldValue.serverTimestamp(),
+                entity: 'verification',
+                entityId: ownerUid,
+                targetUserId: ownerUid,
+                details: `حذف ملف توثيق معلّق لتجاوز الحد الأقصى للملفات: ${filePath}`,
+                metadata: {
+                  filePath,
+                },
               });
             }
           }
@@ -286,15 +300,18 @@ export const validateUploadedFileSignature = onObjectFinalized(
         if (!isValid) {
           console.warn(`[Security Alert] Deleting document with invalid signature: ${filePath}`);
           await file.delete({ ignoreNotFound: true });
-          await db.collection('auditLogs').add({
+          await writeAuditAsync(db, {
             action: 'SUSPICIOUS_FILE_SIGNATURE_MISMATCH',
             actorUid: null,
             actorEmail: null,
             actorType: 'system',
-            filePath,
-            detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
-            timestamp: FieldValue.serverTimestamp(),
-            createdAt: FieldValue.serverTimestamp(),
+            entity: 'system',
+            entityId: filePath,
+            details: `حذف مستند مرفوع لعدم تطابق التوقيع الرقمي: ${filePath}`,
+            metadata: {
+              filePath,
+              detectedSignatureHex: buffer ? buffer.toString('hex') : 'empty',
+            },
           });
           return;
         }
@@ -324,13 +341,17 @@ export const validateUploadedFileSignature = onObjectFinalized(
             } catch (cleanupErr) {
               console.warn('[validateUploadedFileSignature] Orphan record cleanup failed:', cleanupErr);
             }
-            await db.collection('auditLogs').add({
+            await writeAuditAsync(db, {
               action: 'UPLOAD_QUOTA_EXCEEDED',
               actorUid: ownerUid,
               actorType: 'system',
-              filePath,
-              timestamp: FieldValue.serverTimestamp(),
-              createdAt: FieldValue.serverTimestamp(),
+              entity: 'user',
+              entityId: ownerUid,
+              targetUserId: ownerUid,
+              details: `حذف ملف مرفوع لتجاوز الحد الأقصى المسموح للمستخدم: ${filePath}`,
+              metadata: {
+                filePath,
+              },
             });
           }
         }

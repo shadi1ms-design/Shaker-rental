@@ -54,20 +54,18 @@ service cloud.firestore {
       );
     }
 
-    // Health check and connection test document
-    match /test/{docId} {
-      allow read, write: if isEmployee();
-    }
-
     // Users collection: users/{userId}
     match /users/{userId} {
       allow read: if isEmployee() || (isSignedIn() && request.auth.uid == userId);
       allow create: if isSignedIn() && request.auth.uid == userId &&
         request.resource.data.keys().hasOnly([
-          'id', 'uid', 'email', 'displayName', 'name', 'phone', 'role', 'photoURL',
+          'id', 'uid', 'email', 'displayName', 'name', 'phone', 'address', 'role', 'photoURL',
           'createdAt', 'updatedAt', 'active', 'verificationStatus', 'verified',
           'identityVerified', 'fcmTokens', 'fcmLastUpdated', 'uploadedFilesCount'
-        ]) && (
+        ]) &&
+        (!('address' in request.resource.data) || (request.resource.data.address is string && request.resource.data.address.size() <= 300)) &&
+        (!('name' in request.resource.data) || (request.resource.data.name is string && request.resource.data.name.size() <= 100)) &&
+        (!('displayName' in request.resource.data) || (request.resource.data.displayName is string && request.resource.data.displayName.size() <= 100)) && (
         (!('role' in request.resource.data) || request.resource.data.role in ['customer', 'user']) &&
         (!('verificationStatus' in request.resource.data) || request.resource.data.verificationStatus in ['pending', 'manual_review', 'unverified']) &&
         (!('verified' in request.resource.data) || request.resource.data.verified == false) &&
@@ -77,7 +75,12 @@ service cloud.firestore {
         (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted == false) &&
         (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == false) &&
         (!('isStaff' in request.resource.data) || request.resource.data.isStaff == false) &&
-        (!('active' in request.resource.data) || request.resource.data.active == true)
+        (!('active' in request.resource.data) || request.resource.data.active == true) &&
+        (!isEmployee() || (
+          !('verificationStatus' in request.resource.data) &&
+          !('verified' in request.resource.data) &&
+          !('identityVerified' in request.resource.data)
+        ))
       );
       // Customers can no longer change their phone number: 'phone' may only be written
       // while it is still empty/missing (first-time registration or backfill). Admins can still edit it.
@@ -85,9 +88,12 @@ service cloud.firestore {
         isSignedIn() &&
         request.auth.uid == userId &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'displayName', 'phone', 'photoURL', 'updatedAt',
+          'name', 'displayName', 'phone', 'address', 'photoURL', 'updatedAt',
           'fcmTokens', 'fcmLastUpdated'
         ]) &&
+        (!('address' in request.resource.data) || (request.resource.data.address is string && request.resource.data.address.size() <= 300)) &&
+        (!('name' in request.resource.data) || (request.resource.data.name is string && request.resource.data.name.size() <= 100)) &&
+        (!('displayName' in request.resource.data) || (request.resource.data.displayName is string && request.resource.data.displayName.size() <= 100)) &&
         (
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['phone']) ||
           resource.data.get('phone', '') == '' ||
@@ -104,10 +110,15 @@ service cloud.firestore {
     }
 
     // Server-Authoritative Identity Verification Requests: verificationRequests/{userId}
-    // Only Admin and Owner can read. Client writes are completely forbidden.
+    // Only Admins and Customer Owners (!isEmployee) can read. Client writes are completely forbidden.
     match /verificationRequests/{userId} {
-      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow read: if isAdmin() || (isSignedIn() && !isEmployee() && request.auth.uid == userId);
       allow write: if false;
+    }
+
+    // Archived verification requests (preserved on staff promotion; server-only)
+    match /verificationRequestsArchive/{archiveId} {
+      allow read, write: if false;
     }
 
     // Verification temporary sessions (internal Cloud Function nonce tracking)
@@ -131,36 +142,39 @@ service cloud.firestore {
     // Public vehicles document CANNOT include plateNumber, currentMileage (which belong strictly to internal/details)
     match /vehicles/{vehicleId} {
       allow read: if true;
-      allow create, update: if isAdmin() &&
-        !request.resource.data.keys().hasAny(['plateNumber', 'currentMileage']);
-      allow delete: if isAdmin();
+      allow create, update, delete: if false;
 
       match /_internal/{docId} {
         allow read, write: if isAdmin();
       }
 
       match /internal/{docId} {
-        allow read, write: if isEmployee();
+        allow read, write: if isAdmin();
       }
     }
 
     // Bookings collection:
     // Direct client creation blocked (enforced via createBookingSecure).
-    // Employee updates restricted strictly to notes, deliveryLocation, and updatedAt.
+    // Employee updates restricted strictly to notes (<= 500), deliveryLocation (<= 150), and updatedAt.
+    // Block updates if booking is soft-deleted (isDeleted == true).
     // Status changes (including customer cancellation) are executed exclusively via updateBookingStatusSecure.
     match /bookings/{bookingId} {
       allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
       allow create: if false;
-      allow update: if (
-        isEmployee() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'notes', 'deliveryLocation', 'updatedAt'
-        ])
-      ) || (
-        isSignedIn() &&
-        resource.data.customerId == request.auth.uid &&
-        resource.data.status in ['cancelled', 'rejected', 'completed'] &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenFromCustomer', 'updatedAt'])
+      allow update: if resource.data.get('isDeleted', false) != true && (
+        (
+          isEmployee() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'notes', 'deliveryLocation', 'updatedAt'
+          ]) &&
+          (!('notes' in request.resource.data) || (request.resource.data.notes is string && request.resource.data.notes.size() <= 500)) &&
+          (!('deliveryLocation' in request.resource.data) || (request.resource.data.deliveryLocation is string && request.resource.data.deliveryLocation.size() <= 150))
+        ) || (
+          isSignedIn() &&
+          resource.data.customerId == request.auth.uid &&
+          resource.data.status in ['cancelled', 'rejected', 'completed'] &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenFromCustomer', 'updatedAt'])
+        )
       );
       allow delete: if false; // Hard delete forbidden on bookings
     }
@@ -168,10 +182,17 @@ service cloud.firestore {
     // Customers CRM collection
     match /customers/{customerId} {
       allow read: if isEmployee() || (isSignedIn() && request.auth.uid == customerId);
-      allow create: if (isEmployee() || (
+      allow create: if isEmployee() || (
         isSignedIn() && 
         request.auth.uid == customerId && 
         request.resource.data.id == customerId &&
+        request.resource.data.keys().hasOnly([
+          'id', 'uid', 'name', 'fullName', 'email', 'phone', 'address', 'city', 'createdAt', 'updatedAt'
+        ]) &&
+        (!('notes' in request.resource.data)) &&
+        (!('tags' in request.resource.data)) &&
+        (!('nationalId' in request.resource.data)) &&
+        (!('licenseNumber' in request.resource.data)) &&
         (!('role' in request.resource.data) || request.resource.data.role in ['customer', 'user']) &&
         (!('totalSpending' in request.resource.data) || request.resource.data.totalSpending == 0) &&
         (!('totalRentals' in request.resource.data) || request.resource.data.totalRentals == 0) &&
@@ -181,24 +202,25 @@ service cloud.firestore {
         (!('verifiedBy' in request.resource.data)) &&
         (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted == false) &&
         (!('isBlacklisted' in request.resource.data) || request.resource.data.isBlacklisted == false)
-      )) && request.resource.data.keys().hasOnly([
-        'id', 'uid', 'name', 'fullName', 'email', 'phone', 'nationalId',
-        'licenseNumber', 'address', 'city', 'role', 'totalSpending',
-        'totalRentals', 'verificationStatus', 'verified', 'isDeleted',
-        'isBlacklisted', 'createdAt', 'updatedAt', 'notes', 'tags', 'lastRentalDate'
-      ]);
-      allow update: if isAdmin();
+      );
+      allow update: if isEmployee() && (
+        isAdmin() ||
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'totalSpending', 'totalRentals', 'nationalId', 'licenseNumber', 'notes', 'tags'
+        ])
+      );
       allow delete: if isAdmin();
+
+      // Sensitive internal customer data - staff only
+      match /internal/{docId} {
+        allow read, write: if isEmployee();
+      }
     }
 
     // Legal Rental Contracts collection
     match /contracts/{contractId} {
       allow read: if isEmployee() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow write: if isAdmin();
-    }
-
-    match /vehicleInspections/{inspectionId} {
-      allow read, write: if isAdmin();
+      allow write: if false;
     }
 
     match /notifications/{notificationId} {

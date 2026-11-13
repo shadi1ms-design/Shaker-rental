@@ -1,7 +1,7 @@
 import { httpsCallable } from 'firebase/functions';
-import { functions, isFirebaseConfigured } from '../firebase/config';
+import { functions, isFirebaseConfigured, waitAppCheckReady } from '../firebase/config';
 import { getArabicErrorMessage } from '../utils/firebaseErrorHandler';
-import { IdentityVerificationParams, IdentityVerificationResult, SettingsPayload } from '../types';
+import { IdentityVerificationParams, IdentityVerificationResult, SettingsPayload, ContractResponsePayload, Vehicle } from '../types';
 
 export interface FunctionCallResult<T = unknown> {
   success: boolean;
@@ -25,6 +25,9 @@ class FunctionsService {
 
     if (isFirebaseConfigured && functions) {
       try {
+        // Wait for App Check initialization before first call (H7)
+        await waitAppCheckReady();
+
         const callable = httpsCallable<TInput, TOutput>(functions, name);
         const res = await callable(payload);
         return {
@@ -78,12 +81,51 @@ class FunctionsService {
     return this.invokeCallable('createBookingSecure', params);
   }
 
-  public async updateBookingStatusSecure(params: { bookingId: string; status: string; bookingNumber?: string }): Promise<FunctionCallResult<{ success?: boolean }>> {
-    return this.invokeCallable('updateBookingStatusSecure', params);
+  public async updateBookingStatusSecure(params: {
+    bookingId: string;
+    status?: string;
+    nextStatus?: string;
+    bookingNumber?: string;
+    reason?: string;
+    extraCharges?: number;
+    returnCondition?: string;
+    mileageAtPickup?: number;
+    mileageAtReturn?: number;
+    currentMileage?: number;
+    confirmOilOverdue?: boolean;
+  }): Promise<FunctionCallResult<{ success?: boolean; status?: string; mileageAtPickup?: number; mileageAtReturn?: number }>> {
+    const resolvedStatus = params.status || params.nextStatus || '';
+    return this.invokeCallable('updateBookingStatusSecure', {
+      ...params,
+      status: resolvedStatus,
+      nextStatus: resolvedStatus,
+    });
   }
 
   public async deleteBookingSecure(params: { bookingId: string; bookingNumber?: string }): Promise<FunctionCallResult<{ success?: boolean }>> {
     return this.invokeCallable('deleteBookingSecure', params);
+  }
+
+  public async deleteBookingByAdmin(params: { bookingIds: string[] }): Promise<FunctionCallResult<{ success: boolean; deletedCount: number }>> {
+    const start = Date.now();
+    const ids = Array.isArray(params.bookingIds) ? params.bookingIds.filter(Boolean) : [];
+    let deletedCount = 0;
+    let lastError: string | undefined;
+    for (const bookingId of ids) {
+      const res = await this.deleteBookingSecure({ bookingId });
+      if (res.success) {
+        deletedCount++;
+      } else {
+        lastError = res.error;
+      }
+    }
+    return {
+      success: deletedCount > 0,
+      data: { success: deletedCount > 0, deletedCount },
+      error: deletedCount === 0 ? lastError || 'تعذر حذف الحجوزات المحددة.' : undefined,
+      source: 'live_cloud_function',
+      executionTimeMs: Date.now() - start,
+    };
   }
 
   public async sendBookingNotification(params: { bookingId: string; [key: string]: unknown }): Promise<FunctionCallResult<{ success?: boolean }>> {
@@ -94,7 +136,7 @@ class FunctionsService {
     return this.invokeCallable('getVehicleAvailability', params);
   }
 
-  public async generateRentalContractPdf(params: { contractId?: string; bookingId?: string }): Promise<FunctionCallResult<{ contract?: unknown; contractId?: string }>> {
+  public async generateRentalContractPdf(params: { contractId?: string; bookingId?: string }): Promise<FunctionCallResult<{ contract?: ContractResponsePayload; contractId?: string; verificationCode?: string; contractNumber?: string; message?: string }>> {
     return this.invokeCallable('generateRentalContractPdf', params);
   }
 
@@ -106,7 +148,21 @@ class FunctionsService {
     return this.invokeCallable<SettingsPayload, { success?: boolean; settings?: unknown }>('updateSettingsSecure', params);
   }
 
-  public async verifyContractCode(params: { contractNumber: string; verificationCode: string }): Promise<FunctionCallResult<{ verified?: boolean; contract?: unknown }>> {
+  public async verifyContractCode(params: { contractNumber: string; verificationCode: string }): Promise<FunctionCallResult<{
+    isValid: boolean;
+    contractNumber?: string;
+    bookingNumber?: string;
+    vehicleName?: string;
+    pickupDate?: string;
+    returnDate?: string;
+    status?: string;
+    terminationReason?: string;
+    issuedAt?: string;
+    customerName?: string;
+    totalAmount?: number;
+    contentHashPrefix?: string;
+    message?: string;
+  }>> {
     return this.invokeCallable('verifyContractCode', params);
   }
 
@@ -124,6 +180,14 @@ class FunctionsService {
 
   public async syncMyRole(): Promise<FunctionCallResult<{ role: string }>> {
     return this.invokeCallable('syncMyRole', {});
+  }
+
+  public async setAdminMfaRequirement(params: {
+    requireAdminMfa?: boolean;
+    enabled?: boolean;
+    action?: 'get';
+  }): Promise<FunctionCallResult<{ success: boolean; requireAdminMfa: boolean; message?: string }>> {
+    return this.invokeCallable('setAdminMfaRequirement', params);
   }
 
   public async initiateVerificationSession(): Promise<FunctionCallResult<{ sessionId: string; nonce: string; expiresAt: string }>> {
@@ -177,6 +241,23 @@ class FunctionsService {
   public async verifyCustomerIdentity(params: IdentityVerificationParams): Promise<FunctionCallResult<IdentityVerificationResult>> {
     return this.invokeCallable<IdentityVerificationParams, IdentityVerificationResult>('verifyCustomerIdentity', params);
   }
+
+  public async addVehicle(params: {
+    id?: string;
+    vehicleData?: Record<string, unknown>;
+    vehicle?: Record<string, unknown>;
+  } & Record<string, unknown>): Promise<FunctionCallResult<{ id: string; vehicle?: unknown }>> {
+    return this.invokeCallable('addVehicle', params);
+  }
+
+  public async updateVehicle(params: { id: string; updates: Record<string, unknown> }): Promise<FunctionCallResult<{ success: boolean; vehicle?: Vehicle }>> {
+    return this.invokeCallable('updateVehicle', params);
+  }
+
+  public async deleteVehicle(params: { id: string }): Promise<FunctionCallResult<{ success: boolean }>> {
+    return this.invokeCallable('deleteVehicle', params);
+  }
 }
 
 export const functionsService = new FunctionsService();
+

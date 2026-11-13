@@ -7,6 +7,10 @@ export interface ToastMessage {
   title?: string;
   message: string;
   duration?: number;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
 
 interface ToastProps {
@@ -49,22 +53,34 @@ export const Toast: React.FC<ToastProps> = ({ toast, onClose }) => {
   const current = styleMap[toast.type];
 
   return (
-    <div className="fixed bottom-6 left-6 z-50 max-w-sm w-full animate-in slide-in-from-bottom-4 duration-200">
+    <div className="fixed bottom-6 start-6 z-50 max-w-sm inset-x-4 sm:inset-x-auto sm:w-full animate-in slide-in-from-bottom-4 duration-200">
       <div
-        className={`p-4 rounded-2xl border shadow-2xl backdrop-blur-md flex items-start gap-3 ${current.bg}`}
+        className={`p-4 rounded-card border shadow-2xl backdrop-blur-md flex items-start gap-3 ${current.bg}`}
       >
         {current.icon}
-        <div className="space-y-0.5 min-w-0 flex-1 text-xs">
-          {toast.title && <h5 className="font-bold text-white text-xs">{toast.title}</h5>}
+        <div className="space-y-0.5 min-w-0 flex-1 text-sm">
+          {toast.title && <h5 className="font-bold text-white text-sm">{toast.title}</h5>}
           <p className="leading-relaxed">{toast.message}</p>
         </div>
+        {toast.action && (
+          <button
+            type="button"
+            onClick={() => {
+              toast.action?.onClick();
+              onClose();
+            }}
+            className="shrink-0 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm transition-colors cursor-pointer min-h-11 inline-flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+          >
+            {toast.action.label}
+          </button>
+        )}
         <button
           type="button"
           onClick={onClose}
-          className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/40 transition-colors cursor-pointer"
+          className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/40 transition-colors cursor-pointer min-h-11 min-w-11 inline-flex items-center justify-center"
           aria-label="إغلاق التنبيه"
         >
-          <X className="w-3.5 h-3.5" />
+          <X className="w-4 h-4" />
         </button>
       </div>
     </div>

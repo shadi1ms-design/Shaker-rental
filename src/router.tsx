@@ -125,6 +125,7 @@ export type RouteName =
   | 'profile'
   | 'dashboard'
   | 'admin'
+  | 'verifyContract'
   | 'notFound';
 
 export interface ResolvedRoute {
@@ -149,6 +150,7 @@ const ROUTE_TABLE: RouteDef[] = [
   { name: 'register', patterns: ['/register'] },
   { name: 'profile', patterns: ['/profile'] },
   { name: 'dashboard', patterns: ['/dashboard'] },
+  { name: 'verifyContract', patterns: ['/verify-contract'] },
   { name: 'admin', patterns: ['/admin', '/admin/*'] },
 ];
 
@@ -202,18 +204,7 @@ export function navigateToView(view: string): void {
   else navigate(routes.home);
 }
 
-/** "من نحن" (☰ menu): go to the home page and scroll to the company footer section. */
+/** "من نحن" (☰ menu): go to the home page and scroll to the about us section. */
 export function goToAboutUs(): void {
-  const alreadyHome = window.location.pathname.replace(/\/+$/, '') === '';
-  navigate(routes.home, { scroll: false });
-  let tries = 0;
-  const scrollWhenReady = () => {
-    const el = document.getElementById('about-us');
-    if (el) {
-      el.scrollIntoView({ behavior: alreadyHome ? 'smooth' : 'auto', block: 'start' });
-    } else if (tries++ < 30) {
-      setTimeout(scrollWhenReady, 50);
-    }
-  };
-  setTimeout(scrollWhenReady, 80);
+  navigate(routes.home + '#about-us', { scroll: false });
 }

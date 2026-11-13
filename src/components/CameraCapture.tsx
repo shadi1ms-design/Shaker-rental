@@ -81,12 +81,13 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
-    setPreview(null);
-    startStream();
+    setTimeout(() => {
+      setPreview(null);
+      startStream();
+    }, 0);
     return () => {
       stopStream();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   useEffect(() => {
@@ -181,7 +182,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
       aria-modal="true"
       aria-label={title || 'التقاط صورة الوثيقة'}
     >
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+      <div className="w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95dvh]">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 bg-slate-950/70 border-b border-slate-800">
           <div className="flex items-center gap-2">
@@ -192,13 +193,13 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
               <h3 className="text-sm font-bold text-white">
                 {title || 'التقاط صورة الوثيقة'}
               </h3>
-              {docLabel && <p className="text-[11px] text-amber-400 font-medium">{docLabel}</p>}
+              {docLabel && <p className="text-xs text-amber-400 font-medium">{docLabel}</p>}
             </div>
           </div>
           <button
             type="button"
             onClick={close}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition min-h-11 min-w-11 inline-flex items-center justify-center cursor-pointer"
             aria-label="إغلاق"
           >
             <X className="w-5 h-5" />
@@ -228,7 +229,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
                   <span className="absolute -bottom-1 -left-1 w-5 h-5 border-b-4 border-l-4 border-amber-400 rounded-bl-md" />
 
                   <div className="absolute top-2 inset-x-0 flex items-center justify-center">
-                    <span className="px-2.5 py-0.5 rounded-full bg-black/70 text-[10px] text-amber-300 font-semibold backdrop-blur-sm border border-amber-500/30">
+                    <span className="px-2.5 py-0.5 rounded-full bg-black/70 text-xs text-amber-300 font-semibold backdrop-blur-sm border border-amber-500/30">
                       ضع البطاقة بالكامل داخل هذا الإطار
                     </span>
                   </div>
@@ -253,7 +254,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
                 <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-400" />
                 <div className="flex-1">
                   <div className="font-bold">جودة الصورة ممتازة ومعتمدة</div>
-                  <div className="text-[11px] text-emerald-400/80">
+                  <div className="text-xs text-emerald-400/80">
                     الدقة: {preview.quality.width}×{preview.quality.height} • حدة المعالم: {preview.quality.blurScore}
                   </div>
                 </div>
@@ -263,18 +264,18 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
                 <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-400" />
                 <div className="flex-1">
                   <div className="font-bold">الصورة غير مقبولة: يرجى إعادة التصوير</div>
-                  <div className="text-[11px] text-rose-300/90 mt-0.5">{preview.quality.message}</div>
+                  <div className="text-xs text-rose-300/90 mt-0.5">{preview.quality.message}</div>
                 </div>
               </div>
             )
           ) : (
             /* Checklist of Rules before capture */
-            <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 space-y-1">
+            <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 space-y-1">
               <div className="font-bold text-amber-400 flex items-center gap-1.5 mb-1 text-xs">
                 <ShieldCheck className="w-3.5 h-3.5" />
                 شروط قبول وثائق التوثيق:
               </div>
-              <ul className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-slate-400 list-disc list-inside">
+              <ul className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs text-slate-400 list-disc list-inside">
                 <li>الوثيقة كاملة داخل الإطار</li>
                 <li>تجنب لمعان وانعكاس الفلاش</li>
                 <li>جميع البيانات واضحة ومقروءة</li>
@@ -298,7 +299,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
               <button
                 type="button"
                 onClick={retake}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 text-slate-200 text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-700 transition"
+                className="flex-1 min-h-11 px-4 py-2.5 rounded-xl bg-slate-800 text-slate-200 text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-700 transition"
               >
                 <RefreshCw className="w-4 h-4" /> إعادة الالتقاط
               </button>
@@ -306,7 +307,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
                 type="button"
                 onClick={confirm}
                 disabled={!preview.quality.passed}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-black flex items-center justify-center gap-2 hover:bg-amber-400 transition disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-amber-500/20"
+                className="flex-1 min-h-11 px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-sm font-extrabold flex items-center justify-center gap-2 hover:bg-amber-400 transition disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-amber-500/20"
               >
                 <Check className="w-4 h-4" /> اعتماد الوثيقة
               </button>
@@ -315,7 +316,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
             <button
               type="button"
               onClick={startStream}
-              className="w-full px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold flex items-center justify-center gap-2"
+              className="w-full min-h-11 px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-sm font-bold flex items-center justify-center gap-2"
             >
               <RefreshCw className="w-4 h-4" /> إعادة تشغيل الكاميرا
             </button>
@@ -324,7 +325,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
               <button
                 type="button"
                 onClick={close}
-                className="px-4 py-2 text-xs text-slate-400 hover:text-white transition"
+                className="px-4 py-2 min-h-11 text-sm text-slate-400 hover:text-white transition"
               >
                 إلغاء
               </button>
@@ -332,7 +333,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({
                 type="button"
                 onClick={takePhoto}
                 disabled={!ready || isProcessing}
-                className="px-8 py-3 rounded-2xl bg-amber-500 text-slate-950 text-sm font-black flex items-center gap-2 hover:bg-amber-400 transition disabled:opacity-50 shadow-lg shadow-amber-500/25 active:scale-95"
+                className="px-8 py-3 min-h-11 rounded-xl bg-amber-500 text-slate-950 text-sm font-extrabold flex items-center gap-2 hover:bg-amber-400 transition disabled:opacity-50 shadow-lg shadow-amber-500/25 active:scale-95"
               >
                 {isProcessing ? (
                   <>

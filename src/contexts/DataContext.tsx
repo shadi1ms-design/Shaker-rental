@@ -1,7 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { dataService } from '../services/dataService';
 import { setOfficialWhatsAppNumber } from '../services/whatsapp';
+import { applyDerivedVehicleStatus } from '../utils/vehicleStatus';
 import type { AppSettings, Booking, SearchFilters, Vehicle } from '../types';
 
 interface DataContextType {
@@ -32,10 +33,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isStaffAuthorized = isAdmin || isEmployee;
 
   // Core data - immediate cache bootstrap for 0ms initial render
-  const [vehicles, setVehicles] = useState<Vehicle[]>(() => dataService.getCachedVehicles());
+  const [rawVehicles, setRawVehicles] = useState<Vehicle[]>(() => dataService.getCachedVehicles());
   const [bookings, setBookings] = useState<Booking[]>(() => dataService.getCachedBookings());
   const [settings, setSettings] = useState<AppSettings>(() => dataService.getCachedSettings());
   const [vehiclesReady, setVehiclesReady] = useState<boolean>(() => dataService.getCachedVehicles().length > 0);
+
+  const lastAppliedVehiclesVersionRef = useRef<number>(0);
+  const lastAppliedVehiclesTimestampRef = useRef<number>(0);
+
+  // Derived dynamic status recalculates whenever rawVehicles OR bookings change
+  const vehicles = useMemo(() => applyDerivedVehicleStatus(rawVehicles, bookings), [rawVehicles, bookings]);
 
   const [activeBookingFilters, setActiveBookingFilters] = useState<SearchFilters | undefined>(undefined);
   const [lastCreatedBooking, setLastCreatedBooking] = useState<Booking | null>(null);
@@ -45,10 +52,39 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOfficialWhatsAppNumber(settings?.whatsappNumber);
   }, [settings?.whatsappNumber]);
 
+  const handleVehiclesUpdate = useCallback((newVehicles: Vehicle[]) => {
+    const versioned = newVehicles as Vehicle[] & { _version?: number; _timestamp?: number };
+    const ver = versioned._version || 0;
+    const ts = versioned._timestamp || Date.now();
+
+    if (ver > 0 && ver < lastAppliedVehiclesVersionRef.current) {
+      return;
+    }
+    if (ts < lastAppliedVehiclesTimestampRef.current) {
+      return;
+    }
+
+    if (ver > 0) lastAppliedVehiclesVersionRef.current = ver;
+    lastAppliedVehiclesTimestampRef.current = ts;
+    setRawVehicles(newVehicles);
+  }, []);
+
   const refreshData = useCallback(async () => {
+    const fetchStart = Date.now();
     try {
       const [vList, sSettings] = await Promise.all([dataService.getVehicles(), dataService.getSettings()]);
-      setVehicles(vList);
+      const versioned = vList as Vehicle[] & { _version?: number; _timestamp?: number };
+      const vVer = versioned._version || 0;
+      const vTs = versioned._timestamp || fetchStart;
+
+      if (
+        (vVer === 0 || vVer >= lastAppliedVehiclesVersionRef.current) &&
+        vTs >= lastAppliedVehiclesTimestampRef.current
+      ) {
+        if (vVer > 0) lastAppliedVehiclesVersionRef.current = vVer;
+        lastAppliedVehiclesTimestampRef.current = vTs;
+        setRawVehicles(vList);
+      }
       setSettings(sSettings);
 
       if (isStaffAuthorized) {
@@ -61,15 +97,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
-      setVehiclesReady(true);
+      if (vehiclesReady !== true) setVehiclesReady(true);
     }
-  }, [userId, isStaffAuthorized]);
+  }, [userId, isStaffAuthorized, vehiclesReady]);
 
   // Initial fetch + real-time listeners
   useEffect(() => {
-    refreshData();
+    setTimeout(() => refreshData(), 0);
 
-    const unsubscribeVehicles = dataService.subscribeToVehicles(setVehicles);
+    const unsubscribeVehicles = dataService.subscribeToVehicles(handleVehiclesUpdate);
 
     let unsubscribeBookings = () => {};
     if (isStaffAuthorized) {
@@ -82,12 +118,26 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       unsubscribeVehicles();
       unsubscribeBookings();
     };
-  }, [userId, isStaffAuthorized, refreshData]);
+  }, [userId, isStaffAuthorized, refreshData, handleVehiclesUpdate]);
+
+  // Re-fetch vehicles with internal details immediately when staff permissions resolve
+  useEffect(() => {
+    if (isStaffAuthorized) {
+      dataService
+        .getVehicles(true)
+        .then(handleVehiclesUpdate)
+        .catch((err) => {
+          console.warn('Error refetching internal vehicle details on staff auth resolution:', err);
+        });
+    }
+  }, [isStaffAuthorized, handleVehiclesUpdate]);
 
   // Restore persisted recent booking on auth load
   useEffect(() => {
     if (!userId) {
-      setLastCreatedBooking(null);
+      if (lastCreatedBooking !== null) {
+        setTimeout(() => setLastCreatedBooking(null), 0);
+      }
       return;
     }
     try {
@@ -95,11 +145,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.id) {
-          setLastCreatedBooking((prev) => prev || (parsed as Booking));
+          setTimeout(() => {
+            setLastCreatedBooking((prev) => prev || (parsed as Booking));
+          }, 0);
         }
       }
     } catch {}
-  }, [userId]);
+  }, [userId, lastCreatedBooking]);
 
   // Dismiss the banner once staff change the status away from 'new' / 'reviewing'
   useEffect(() => {
@@ -108,7 +160,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       (b) => b.id === lastCreatedBooking.id || b.bookingNumber === lastCreatedBooking.bookingNumber,
     );
     if (found && found.status !== 'new' && found.status !== 'reviewing') {
-      setLastCreatedBooking(null);
+      if (lastCreatedBooking !== null) {
+        setTimeout(() => setLastCreatedBooking(null), 0);
+      }
       try {
         localStorage.removeItem(recentBookingKey(userId));
       } catch {}

@@ -1,19 +1,7 @@
 export type VehicleCategory = 'light' | 'medium' | 'jeep_7seats';
-
-export type VehicleStatus = 'available' | 'reserved' | 'rented' | 'maintenance' | 'inactive';
-
-export type BookingStatus =
-  | 'new'          // طلب جديد
-  | 'reviewing'    // قيد المراجعة
-  | 'confirmed'    // مؤكد
-  | 'rented'       // جاري التأجير
-  | 'completed'    // مكتمل
-  | 'cancelled'    // ملغي
-  | 'rejected';    // مرفوض
-
-export type FuelType = 'petrol' | 'diesel' | 'hybrid' | 'electric';
 export type TransmissionType = 'automatic' | 'manual';
-export type UserRole = 'super_admin' | 'superAdmin' | 'admin' | 'employee' | 'customer';
+export type FuelType = 'petrol' | 'diesel' | 'hybrid' | 'electric';
+export type VehicleStatus = 'available' | 'reserved' | 'rented' | 'maintenance' | 'inactive';
 
 export interface Vehicle {
   id: string;
@@ -28,149 +16,129 @@ export interface Vehicle {
   dailyPrice: number;
   plateNumber: string;
   currentMileage: number;
+  lastOilChangeMileage?: number;
+  oilChangeIntervalKm?: number;
   status: VehicleStatus;
+  /** The true database status before derived 'rented' status overrides it */
+  storedStatus?: VehicleStatus;
   imageUrl: string;
   images?: string[];
   features: string[];
   description: string;
-  isDeleted?: boolean;
   createdAt?: string;
   updatedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
+  _internalDetailsLoaded?: boolean;
 }
+
+export type SortField = 'recommended' | 'price-asc' | 'price-desc' | 'year-desc' | 'year-asc' | 'name-asc' | string;
+
+export interface SearchFilters {
+  pickupDate?: string;
+  returnDate?: string;
+  pickupTime?: string;
+  returnTime?: string;
+  category?: VehicleCategory | 'all';
+  transmission?: TransmissionType | 'all';
+  fuelType?: FuelType | 'all';
+  searchQuery?: string;
+  sortBy?: SortField;
+  onlyAvailable?: boolean;
+}
+
+export type BookingStatus =
+  | 'new'
+  | 'reviewing'
+  | 'confirmed'
+  | 'rented'
+  | 'completed'
+  | 'cancelled'
+  | 'rejected';
 
 export interface Booking {
   id: string;
   bookingNumber: string;
   vehicleId: string;
-  vehicleName: string;
+  vehicleName?: string;
   vehicleCategory?: VehicleCategory;
+  customerId?: string;
   customerName: string;
   customerPhone: string;
   customerWhatsApp: string;
-  customerNationalId?: string;
-  customerAddress?: string;
-  customerLicenseNumber?: string;
-  customerId?: string;
   customerEmail?: string;
-  pickupDate: string; // YYYY-MM-DD
-  pickupTime: string; // HH:mm
-  returnDate: string; // YYYY-MM-DD
-  returnTime: string; // HH:mm
+  customerAddress?: string;
+  customerVerified?: boolean;
+  pickupDate: string; // ISO YYYY-MM-DD
+  returnDate: string; // ISO YYYY-MM-DD
+  pickupTime?: string; // HH:mm
+  returnTime?: string; // HH:mm
   rentalDays: number;
   dailyPrice: number;
   basePrice: number;
   discountAmount: number;
   insuranceAmount: number;
   driverFee?: number;
+  totalPrice: number;
   withDriver?: boolean;
   deliveryLocation?: string;
-  totalPrice: number;
-  status: BookingStatus;
   notes?: string;
-  isDeleted?: boolean;
+  status: BookingStatus;
+  mileageAtPickup?: number;
+  mileageAtReturn?: number;
+  pickupCondition?: string;
+  returnCondition?: string;
+  extraCharges?: number;
+  finalTotal?: number;
+  handoverAt?: string;
+  handoverByUid?: string;
+  handoverByEmail?: string;
+  returnedAt?: string;
+  returnedByUid?: string;
+  returnedByEmail?: string;
+  cancellationReason?: string;
+  rejectionReason?: string;
+  statusReason?: string;
   hiddenFromCustomer?: boolean;
-  customerVerified?: boolean;
   createdAt: string;
   updatedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
+  createdByType?: 'customer' | 'staff' | 'system';
+  createdByUid?: string;
+  createdByEmail?: string;
+  updatedByUid?: string;
+  updatedByEmail?: string;
 }
 
 export interface Customer {
   id: string;
   fullName: string;
   phone: string;
-  whatsapp?: string;
+  whatsapp: string;
+  email?: string;
   nationalId?: string;
-  drivingLicense?: string;
+  licenseNumber?: string;
   nationality?: string;
   address?: string;
+  notes?: string;
+  isBlacklisted?: boolean;
   totalRentals: number;
   totalSpending: number;
-  notes?: string;
-  verificationStatus?: 'pending' | 'manual_review' | 'verified' | 'rejected';
-  verified?: boolean;
-  verifiedAt?: string;
-  verifiedBy?: string;
-  verificationNotes?: string;
-  documents?: {
-    idFront?: string;
-    idBack?: string;
-    drivingLicense?: string;
-    passport?: string;
-  };
+  createdAt: string;
+  updatedAt?: string;
   isDeleted?: boolean;
-  createdAt: string;
-  updatedAt?: string;
+  deletedAt?: string;
 }
 
-export interface ContractAttachment {
-  id: string;
-  name: string;
-  url: string;
-  type: 'image' | 'pdf' | 'document' | 'other';
-  size?: number;
-  uploadedAt: string;
-}
-
-export interface ContractVideo {
-  id: string;
-  name: string;
-  url: string;
-  size?: number;
-  uploadedAt: string;
-  notes?: string;
-}
-
-export interface Contract {
-  id: string;
-  contractNumber: string;
-  bookingId: string;
-  vehicleId: string;
-  vehicleName?: string;
-  customerId: string;
-  customerName?: string;
-  customerPhone?: string;
-  termsAndConditions: string;
-  status: 'active' | 'closed' | 'terminated';
-  mileageAtPickup: number;
-  fuelAtPickup: string;
-  mileageAtReturn?: number;
-  fuelAtReturn?: string;
-  attachments?: ContractAttachment[];
-  video?: ContractVideo;
-  createdAt: string;
-  updatedAt?: string;
-}
-
-
-
-export type CleanlinessStatus = 'excellent' | 'good' | 'fair' | 'dirty';
-
-export interface VehicleInspection {
-  id: string;
-  bookingId: string;
-  vehicleId: string;
-  type: 'pickup' | 'return';
-  exteriorCondition?: string;
-  interiorCondition?: string;
-  tiresCondition?: string;
-  bodyCondition?: Record<string, string>;
-  cleanliness?: string;
-  existingDamages?: string;
-  newDamages?: string;
-  inspectorName?: string;
-  fuelLevel: 'empty' | 'quarter' | 'half' | 'three_quarters' | 'full';
-  mileage: number;
-  damages?: string[];
-  photos?: string[];
-  inspectorNotes?: string;
-  createdAt: string;
-}
+export type DiscountScope = 'all' | 'specific' | 'categories' | 'vehicles';
 
 export interface DiscountConfig {
   enabled: boolean;
-  percentage: number; // 1 to 25 %
-  scope: 'all' | 'specific'; // 'all' vehicles or 'specific' vehicles
-  vehicleIds: string[]; // List of vehicle IDs if scope === 'specific'
+  percentage: number;
+  scope: DiscountScope;
+  categories?: VehicleCategory[];
+  vehicleIds: string[];
   title?: string;
 }
 
@@ -182,81 +150,157 @@ export interface AppSettings {
   whatsappNumber: string;
   address: string;
   currency: string;
-  insurance1to2Days: number;
-  insuranceAbove2Days: number;
-  insuranceShortTerm?: number;
-  insuranceLongTerm?: number;
-  discountConfig?: DiscountConfig;
+  /** @deprecated استخدام insuranceShortTerm بدلاً منها، يُقرأ كاحتياطي فقط */
+  insurance1to2Days?: number;
+  /** @deprecated استخدام insuranceLongTerm بدلاً منها، يُقرأ كاحتياطي فقط */
+  insuranceAbove2Days?: number;
+  insuranceShortTerm: number;
+  insuranceLongTerm: number;
+  driverDailyRate?: number;
+  cancellationLeadHours?: number;
   monthlyRateLight: number;
   monthlyRateMedium: number;
   monthlyRateJeep: number;
-  driverDailyRate?: number;
+  discountConfig?: DiscountConfig;
   rentalTerms: string;
-  cancellationLeadHours?: number;
   updatedAt?: string;
 }
 
-export interface SearchFilters {
-  category?: VehicleCategory | 'all';
-  pickupDate?: string;
-  returnDate?: string;
-  pickupTime?: string;
-  returnTime?: string;
-  transmission?: TransmissionType | 'all';
-  searchQuery?: string;
-}
+export type SettingsPayload = Partial<AppSettings> & Record<string, unknown>;
 
 export interface PricingCalculation {
   rentalDays: number;
   dailyPrice: number;
   basePrice: number;
   discountAmount: number;
-  // System 1: Duration/Period Discount (Weekly & Monthly)
   durationDiscountAmount: number;
   durationDiscountType: 'none' | 'weekly' | 'monthly' | 'proportional';
   durationDiscountDescription: string;
-  // System 2: Dynamic Member Account Discount (1% - 25%)
   memberDiscountAmount: number;
   memberDiscountPercentage: number;
   memberDiscountEligible: boolean;
   memberDiscountApplied: boolean;
   potentialMemberSavings: number;
-  // Totals & Insurance
   insuranceAmount: number;
+  driverFee?: number;
   subtotal: number;
   totalPrice: number;
-  pricingType: 'daily' | 'weekly' | 'monthly' | 'proportional';
+  pricingType: 'daily' | 'monthly';
   explanation: string;
 }
 
-export interface AuditLog {
-  id: string;
-  user: string;
-  action: string;
-  entity: string;
-  entityId: string;
-  timestamp: string;
-  details?: string;
-  actorUid?: string | null;
-  actorEmail?: string | null;
-  actorType?: 'customer' | 'staff' | 'guest' | 'system';
-  customerProvidedName?: string | null;
+export type PricingCalculationResult = PricingCalculation;
+
+export type UserRole =
+  | 'customer'
+  | 'employee'
+  | 'admin'
+  | 'super_admin'
+  | 'superAdmin'
+  | 'staff'
+  | 'manager'
+  | 'owner';
+
+export type VerificationStatus =
+  | 'not_started'
+  | 'unsubmitted'
+  | 'pending'
+  | 'pending_review'
+  | 'manual_review'
+  | 'verified'
+  | 'rejected';
+
+export interface AuthUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  phone?: string;
+  address?: string;
+  photoURL?: string;
+  role: UserRole;
+  createdAt?: string;
+  emailVerified?: boolean;
+  isPasswordProvider?: boolean;
+  verified?: boolean;
+  verificationStatus?: VerificationStatus;
 }
 
-export interface AppNotification {
-  id: string;
-  type: 'new_booking' | 'booking_confirmed' | 'booking_cancelled' | 'upcoming_rental' | 'rental_return' | 'overdue_rental_alert';
-  title: string;
-  message: string;
-  bookingId?: string;
-  vehicleId?: string;
-  read: boolean;
+export interface UserAccount {
+  id?: string;
+  uid: string;
+  email: string;
+  password?: string;
+  displayName: string;
+  phone?: string;
+  address?: string;
+  role: UserRole;
   createdAt: string;
+  emailVerified?: boolean;
+  isPasswordProvider?: boolean;
+  verified?: boolean;
+  verificationStatus?: VerificationStatus;
 }
 
-export type VerificationStatus = 'not_started' | 'pending_review' | 'verified' | 'rejected';
-export type IdentityDocChoice = 'national_id' | 'passport';
-export type VerificationDocKey = 'driver_license' | 'identity';
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  phone: string;
+  address?: string;
+  photoURL?: string;
+  role: UserRole;
+  createdAt: string;
+  verified?: boolean;
+  verificationStatus?: VerificationStatus;
+  verifiedAt?: string;
+}
+
+export type DocumentCategory = 'driver_license' | 'passport' | 'national_id' | 'contract' | 'other';
+
+export interface UserFileRecord {
+  id: string;
+  userId: string;
+  userEmail: string;
+  fileName: string;
+  storagePath: string;
+  downloadUrl?: string;
+  fileType: string;
+  fileSize: number;
+  category: DocumentCategory;
+  uploadedAt: string;
+  checksum?: string;
+  verified?: boolean;
+}
+
+export interface FirestoreUser {
+  id: string;
+  uid: string;
+  email: string;
+  displayName: string;
+  phone: string;
+  address?: string;
+  role: UserRole;
+  disabled?: boolean;
+  accountDisabled?: boolean;
+  createdAt: string;
+  lastLoginAt?: string;
+  uploadedFilesCount?: number;
+  files?: UserFileRecord[];
+  verified?: boolean;
+  verificationStatus?: VerificationStatus;
+  verificationSubmittedAt?: string;
+  verifiedAt?: string;
+  verificationNotes?: string;
+  idCardFrontUrl?: string;
+  idCardBackUrl?: string;
+  driverLicenseUrl?: string;
+  foreignerEntrySealUrl?: string;
+  passportUrl?: string;
+  identityDocChoice?: IdentityDocChoice;
+}
+
+export type IdentityDocType = 'national_id' | 'passport';
+export type IdentityDocChoice = IdentityDocType;
 
 export interface DocQualityMetric {
   width: number;
@@ -267,140 +311,289 @@ export interface DocQualityMetric {
   message?: string;
 }
 
-export interface VerificationDocItem {
+export interface CapturedDocumentMeta {
+  slot?: 'id_front' | 'id_back' | 'passport' | 'license_front' | 'license_back' | 'selfie' | 'driver_license' | 'identity';
   storagePath: string;
-  uploadedAt: string;
-  sizeBytes: number;
+  downloadUrl?: string;
+  capturedAt?: string;
+  uploadedAt?: string;
+  checksumSha256?: string;
   sha256?: string;
-  quality?: DocQualityMetric;
-  docType: VerificationDocKey;
-  subType?: IdentityDocChoice;
-}
-
-export interface VerificationRequest {
-  id: string; // matches userId
-  userId: string;
-  userEmail: string;
-  userName?: string;
-  userPhone?: string;
-  status: VerificationStatus;
-  identityDocType: IdentityDocChoice;
-  docs: {
-    driver_license?: VerificationDocItem;
-    identity?: VerificationDocItem;
-  };
-  submittedAt?: string | null;
-  reviewedAt?: string | null;
-  reviewedBy?: string | null;
-  reviewedByEmail?: string | null;
-  rejectionReason?: string | null;
-  attempt: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface UserFileRecord {
-  id: string;
-  userId: string;
-  userEmail?: string;
-  fileName: string;
-  storagePath: string;
-  fileType: string;
-  fileSize: number; // in bytes
-  category?: 'national_id' | 'driver_license' | 'passport' | 'contract' | 'other';
-  verified?: boolean;
-  status?: VerificationStatus | 'pending' | 'manual_review' | 'uploaded';
-  uploadedAt: string; // ISO date-time string
-}
-
-export interface FirestoreUser {
-  id: string;
-  uid: string;
-  email: string;
-  displayName: string;
-  phone?: string;
-  role: UserRole;
-  accountDisabled?: boolean;
-  disabled?: boolean;
-  createdAt: string;
-  uploadedFilesCount?: number;
-  files?: UserFileRecord[];
-  verificationStatus?: VerificationStatus;
-  verified?: boolean;
-  identityVerified?: boolean;
-  verifiedAt?: string | null;
-  verifiedBy?: string | null;
-  verificationNotes?: string;
-}
-
-export interface AuthUser {
-  uid: string;
-  email: string;
-  displayName: string;
-  phone?: string;
-  role: UserRole;
-  accountDisabled?: boolean;
-  disabled?: boolean;
-  createdAt?: string;
-  emailVerified?: boolean;
-  isPasswordProvider?: boolean;
-  verificationStatus?: VerificationStatus;
-  verified?: boolean;
-}
-
-export type UserAccount = AuthUser;
-
-export interface FilterOptions {
-  category: VehicleCategory | 'all';
-  priceRange: [number, number];
-  brand: string;
-  year: number | 'all';
-  transmission: TransmissionType | 'all';
-  fuelType: FuelType | 'all';
-  seats: number | 'all';
-  availability: 'all' | 'available' | 'rented';
-  searchQuery: string;
-}
-
-export type SortField = 'price-asc' | 'price-desc' | 'year-desc' | 'popularity';
-
-export interface SettingsPayload {
-  [key: string]: unknown;
-}
-
-export interface IdentityVerificationParams {
-  action?: 'initiate_session' | 'submit_document' | 'submit_request' | 'review' | 'revoke' | 'purge' | 'get_url' | 'set_status' | 'review_decision';
-  targetUserId?: string;
-  status?: VerificationStatus | 'pending' | 'manual_review';
-  notes?: string;
-  rejectionReason?: string;
-  identityDocType?: IdentityDocChoice;
-  docType?: VerificationDocKey;
-  nonce?: string;
-  imageBase64?: string;
-  clientQuality?: {
+  width?: number;
+  height?: number;
+  fileSize?: number;
+  sizeBytes?: number;
+  blurScore?: number;
+  brightnessScore?: number;
+  quality?: {
     width: number;
     height: number;
     blurScore: number;
     brightness?: number;
   };
-  storagePath?: string;
-  documentType?: string;
+  userAgent?: string;
+  captureMethod?: 'live_camera';
+}
+
+export interface VerificationRequest {
+  id?: string;
+  userId: string;
+  userEmail?: string;
+  userName?: string;
+  userPhone?: string;
+  address?: string;
+  identityDocType: IdentityDocType;
+  status: VerificationStatus;
+  attempt?: number;
+  docs?: {
+    driver_license?: CapturedDocumentMeta & { sizeBytes: number };
+    identity?: CapturedDocumentMeta & { sizeBytes: number };
+  };
+  documents?: {
+    idFront?: CapturedDocumentMeta;
+    idBack?: CapturedDocumentMeta;
+    passport?: CapturedDocumentMeta;
+    licenseFront?: CapturedDocumentMeta;
+    licenseBack?: CapturedDocumentMeta;
+    selfie?: CapturedDocumentMeta;
+  };
+  autoChecks?: {
+    allLiveCamera: boolean;
+    blurPassed: boolean;
+    lightingPassed: boolean;
+    resolutionPassed: boolean;
+    passedAll: boolean;
+    failureReasons: string[];
+  };
+  submittedAt: string | null;
+  reviewedAt?: string | null;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  updatedAt?: string;
+}
+
+export interface IdentityVerificationParams {
+  userId?: string;
+  targetUid?: string;
+  nationalId?: string;
+  licenseNumber?: string;
+  identityDocType?: IdentityDocType;
+  [key: string]: unknown;
 }
 
 export interface IdentityVerificationResult {
-  success: boolean;
+  verified: boolean;
+  status?: VerificationStatus;
   message?: string;
-  error?: string;
-  nonce?: string;
-  expiresAt?: string;
-  signedUrl?: string;
-  verificationStatus?: VerificationStatus;
-  request?: VerificationRequest;
-  quality?: DocQualityMetric;
+  [key: string]: unknown;
 }
 
-export interface AuthUserData extends Partial<FirestoreUser> {
-  uid: string;
+export interface StaffMember {
+  id: string;
+  uid?: string;
+  fullName: string;
   email: string;
+  phone: string;
+  role: 'super_admin' | 'admin' | 'manager' | 'staff';
+  jobTitle: string;
+  permissions: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
+}
+
+export interface AppNotification {
+  id: string;
+  type:
+    | 'new_booking'
+    | 'booking_confirmed'
+    | 'booking_cancelled'
+    | 'upcoming_rental'
+    | 'rental_return'
+    | 'overdue_rental_alert'
+    | 'booking'
+    | 'return'
+    | 'system'
+    | 'verification'
+    | string;
+  title: string;
+  message: string;
+  bookingId?: string;
+  vehicleId?: string;
+  relatedId?: string;
+  targetRole?: 'admin' | 'customer' | 'all';
+  targetUserId?: string;
+  read: boolean;
+  isRead?: boolean;
+  createdAt: string;
+}
+
+export type NotificationItem = AppNotification;
+
+export interface AuditLog {
+  id: string;
+  action: string;
+  entityType?: 'vehicle' | 'booking' | 'customer' | 'settings' | 'staff' | 'user' | 'verification' | string;
+  entity?: string;
+  entityId?: string;
+  entityName?: string;
+  actorId?: string;
+  actorUid?: string | null;
+  actorName?: string;
+  actorEmail?: string | null;
+  actorRole?: string;
+  actorType?: 'customer' | 'staff' | 'system' | string;
+  targetUid?: string;
+  targetEmail?: string;
+  previousRole?: string;
+  newRole?: string;
+  details?: unknown;
+  createdAt: string;
+  timestamp?: string;
+}
+
+export type AuditLogEntry = AuditLog;
+
+// ==========================================
+// Cloud Functions Request & Response Types
+// ==========================================
+
+export interface FunctionResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  code?: string;
+}
+
+export interface CreateBookingPayload {
+  vehicleId: string;
+  customerId?: string;
+  customerEmail?: string;
+  customerName: string;
+  customerPhone: string;
+  customerWhatsApp?: string;
+  customerAddress: string;
+  pickupDate: string;
+  returnDate: string;
+  pickupTime?: string;
+  returnTime?: string;
+  withDriver?: boolean;
+  deliveryLocation?: string;
+  notes?: string;
+}
+
+export interface CreateBookingResponse {
+  bookingId: string;
+  bookingNumber: string;
+  status: BookingStatus;
+  totalPrice: number;
+  createdAt: string;
+  booking?: Booking;
+}
+
+export interface UpdateBookingStatusPayload {
+  bookingId: string;
+  bookingNumber?: string;
+  status: BookingStatus;
+  reason?: string;
+  extraCharges?: number;
+  returnCondition?: string;
+  mileageAtPickup?: number;
+  mileageAtReturn?: number;
+  currentMileage?: number;
+}
+
+export interface VerifyUserRequestPayload {
+  userId: string;
+  identityDocType: IdentityDocType;
+  documents: VerificationRequest['documents'];
+}
+
+export interface ReviewVerificationPayload {
+  userId: string;
+  decision: 'verified' | 'rejected' | 'manual_review';
+  rejectionReason?: string;
+  notes?: string;
+}
+
+export interface SetStaffRolePayload {
+  targetUid: string;
+  targetEmail: string;
+  role: UserRole;
+  permissions?: string[];
+  isActive?: boolean;
+}
+
+export interface GenerateContractPayload {
+  bookingId: string;
+  language?: 'ar' | 'en';
+}
+
+export interface ContractResponsePayload {
+  contractId: string;
+  contractNumber: string;
+  bookingId: string;
+  bookingNumber: string;
+  verificationCode: string;
+  status: 'issued' | 'active' | 'closed' | 'terminated';
+  terminationReason?: 'cancelled' | 'rejected' | 'deleted';
+  terminatedAt?: string;
+  terminatedByUid?: string;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  vehicleId: string;
+  vehicleName: string;
+  vehicleYear?: number;
+  vehicleColor?: string;
+  plateNumber?: string;
+  pickupDate: string;
+  returnDate: string;
+  pickupTime: string;
+  returnTime: string;
+  rentalDays: number;
+  dailyPrice: number;
+  basePrice: number;
+  discountAmount: number;
+  insuranceAmount: number;
+  driverFee: number;
+  totalPrice: number;
+  extraCharges?: number;
+  finalTotal?: number;
+  withDriver: boolean;
+  deliveryLocation: string;
+  mileageAtPickup?: number;
+  mileageAtReturn?: number;
+  termsAndConditions: string[];
+  issuedAt: string;
+  closedAt?: string;
+}
+
+export interface GenerateContractResponse {
+  contractId: string;
+  bookingNumber: string;
+  generatedAt: string;
+  contractHtml?: string;
+  downloadUrl?: string;
+  contract?: ContractResponsePayload;
+}
+
+export interface VerifyContractPayload {
+  contractNumber: string;
+  verificationCode: string;
+}
+
+export interface VerifyContractResponse {
+  isValid: boolean;
+  contractNumber?: string;
+  bookingNumber?: string;
+  vehicleName?: string;
+  pickupDate?: string;
+  returnDate?: string;
+  status?: string;
+  issuedAt?: string;
+  message?: string;
 }

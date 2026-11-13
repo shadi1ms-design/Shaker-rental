@@ -1,8 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { Vehicle, Booking } from '../types';
+import { getFleetStatusCounts } from '../utils/vehicleStatus';
 import { isFinanciallyActiveBooking } from '../utils/bookingCalculations';
-import { todayLocalISO } from '../utils/dateUtils';
+import { isTodayLocal, isWithinLastDaysLocal, isThisMonthLocal, todayLocalISO } from '../utils/dateUtils';
 import { VEHICLE_CATEGORY_LABELS } from '../constants/vehicleCategories';
+import { ADMIN_TAB_LABEL } from '../constants/adminNav';
+import { formatMoney, formatDateDisplay } from '../utils/format';
 import {
   BarChart3,
   Download,
@@ -41,75 +44,93 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
 }) => {
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all'>('month');
 
-  const safeVehicles = vehicles || [];
-  const safeBookings = bookings || [];
+  const safeVehicles = useMemo(() => vehicles || [], [vehicles]);
+  const safeBookings = useMemo(() => bookings || [], [bookings]);
 
-  // Filter bookings based on selected period
+  // Filter bookings based on selected period in Damascus local timezone
   const filteredBookings = useMemo(() => {
-    const now = new Date();
     return safeBookings.filter((b) => {
-      const bDate = new Date(b.createdAt);
+      if (b.isDeleted === true) return false;
+      if (!b.createdAt) return period === 'all';
       if (period === 'today') {
-        return bDate.toDateString() === now.toDateString();
+        return isTodayLocal(b.createdAt);
       }
       if (period === 'week') {
-        const oneWeekAgo = new Date();
-        oneWeekAgo.setDate(now.getDate() - 7);
-        return bDate >= oneWeekAgo;
+        return isWithinLastDaysLocal(b.createdAt, 7);
       }
       if (period === 'month') {
-        return bDate.getMonth() === now.getMonth() && bDate.getFullYear() === now.getFullYear();
+        return isThisMonthLocal(b.createdAt);
       }
       return true;
     });
   }, [safeBookings, period]);
 
-  // فصل التأمين المسترد عن الإيراد التشغيلي:
-  // - لا يتم المساس بقيمة totalPrice المخزنة في سجلات الحجوزات.
-  // - الإيراد = totalPrice - insuranceAmount للحجوزات المحتسبة.
-  // - مبالغ التأمين المستردة تمثل أمانات مستردة للعملاء وتُعرض كرقم منفصل.
-  const { totalRevenue, totalInsurance, totalGross } = useMemo(() => {
+  const { totalRevenue, totalInsurance, totalGross, pendingReviewCount, pendingReviewGross } = useMemo(() => {
     return filteredBookings.reduce(
       (acc, b) => {
+        if (b.status === 'new' || b.status === 'reviewing') {
+          acc.pendingReviewCount += 1;
+          acc.pendingReviewGross += Number(b.totalPrice || 0);
+          return acc;
+        }
         if (!isFinanciallyActiveBooking(b)) return acc;
-        const total = Number(b.totalPrice || 0);
+        const effectiveTotal =
+          typeof b.finalTotal === 'number'
+            ? b.finalTotal
+            : Number(b.totalPrice || 0) + Number(b.extraCharges || 0);
         const ins = Number(b.insuranceAmount || 0);
-        const netRev = Math.max(0, total - ins);
+        const netRev = Math.max(0, effectiveTotal - ins);
         acc.totalRevenue += netRev;
         acc.totalInsurance += ins;
-        acc.totalGross += total;
+        acc.totalGross += effectiveTotal;
         return acc;
       },
-      { totalRevenue: 0, totalInsurance: 0, totalGross: 0 }
+      {
+        totalRevenue: 0,
+        totalInsurance: 0,
+        totalGross: 0,
+        pendingReviewCount: 0,
+        pendingReviewGross: 0,
+      }
     );
   }, [filteredBookings]);
 
-  // Fleet utilization
-  const rentedVehiclesCount = safeVehicles.filter((v) => v.status === 'rented').length;
-  const availableVehiclesCount = safeVehicles.filter((v) => v.status === 'available').length;
-  const maintenanceVehiclesCount = safeVehicles.filter((v) => v.status === 'maintenance').length;
-  const utilizationRate = safeVehicles.length > 0 ? Math.round((rentedVehiclesCount / safeVehicles.length) * 100) : 0;
+  // Fleet utilization via unified getFleetStatusCounts
+  const fleetCounts = useMemo(() => getFleetStatusCounts(safeVehicles), [safeVehicles]);
+  const rentedVehiclesCount = fleetCounts.rented;
+  const availableVehiclesCount = fleetCounts.available;
+  const maintenanceVehiclesCount = fleetCounts.maintenance;
+  const reservedOrInactiveCount = fleetCounts.reservedOrInactive;
+  const utilizationRate = fleetCounts.total > 0 ? Math.round((rentedVehiclesCount / fleetCounts.total) * 100) : 0;
 
-  // Category breakdown: net revenue (totalPrice - insuranceAmount)
+  // Category breakdown: net revenue
   const categoryRevenue = useMemo(() => {
     const map: Record<string, number> = { light: 0, medium: 0, jeep_7seats: 0 };
     filteredBookings.forEach((b) => {
       if (!isFinanciallyActiveBooking(b)) return;
       const cat = b.vehicleCategory || 'medium';
-      const netRev = Math.max(0, (b.totalPrice || 0) - (b.insuranceAmount || 0));
+      const effectiveTotal =
+        typeof b.finalTotal === 'number'
+          ? b.finalTotal
+          : Number(b.totalPrice || 0) + Number(b.extraCharges || 0);
+      const netRev = Math.max(0, effectiveTotal - (b.insuranceAmount || 0));
       map[cat] = (map[cat] || 0) + netRev;
     });
     return map;
   }, [filteredBookings]);
 
-  // 1. Timeline Chart Data (Revenue over time: totalPrice - insuranceAmount)
+  // Timeline Chart Data
   const timelineData = useMemo(() => {
     const map = new Map<string, { date: string; revenue: number; bookingsCount: number }>();
     filteredBookings.forEach((b) => {
       if (!isFinanciallyActiveBooking(b)) return;
       const rawDate = b.pickupDate || (b.createdAt ? b.createdAt.split('T')[0] : 'غير محدد');
       const curr = map.get(rawDate) || { date: rawDate, revenue: 0, bookingsCount: 0 };
-      const netRev = Math.max(0, (b.totalPrice || 0) - (b.insuranceAmount || 0));
+      const effectiveTotal =
+        typeof b.finalTotal === 'number'
+          ? b.finalTotal
+          : Number(b.totalPrice || 0) + Number(b.extraCharges || 0);
+      const netRev = Math.max(0, effectiveTotal - (b.insuranceAmount || 0));
       curr.revenue += netRev;
       curr.bookingsCount += 1;
       map.set(rawDate, curr);
@@ -118,7 +139,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
     return sorted.length > 0 ? sorted : [{ date: todayLocalISO(), revenue: 0, bookingsCount: 0 }];
   }, [filteredBookings]);
 
-  // 2. Category Chart Data
+  // Category Chart Data
   const categoryChartData = useMemo(() => {
     return [
       { name: VEHICLE_CATEGORY_LABELS.light, revenue: categoryRevenue.light, fill: '#10b981' },
@@ -127,18 +148,16 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
     ];
   }, [categoryRevenue]);
 
-  // 3. Fleet Utilization Chart Data (Donut)
+  // Fleet Utilization Chart Data
   const fleetPieData = useMemo(() => {
     return [
       { name: 'متاحة للتأجير', value: availableVehiclesCount, color: '#10b981' },
       { name: 'مؤجرة حالياً', value: rentedVehiclesCount, color: '#3b82f6' },
       { name: 'في الصيانة', value: maintenanceVehiclesCount, color: '#f43f5e' },
+      { name: 'محجوزة / غير نشطة', value: reservedOrInactiveCount, color: '#64748b' },
     ].filter(item => item.value > 0);
-  }, [availableVehiclesCount, rentedVehiclesCount, maintenanceVehiclesCount]);
+  }, [availableVehiclesCount, rentedVehiclesCount, maintenanceVehiclesCount, reservedOrInactiveCount]);
 
-  /**
-   * Sanitizes cell content for CSV export against CSV Formula Injection (CWE-1236)
-   */
   const sanitizeCSVCell = (val: unknown): string => {
     if (val === null || val === undefined) return '""';
     let str = String(val).trim();
@@ -149,66 +168,43 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
   };
 
   const handleExportCSV = () => {
-    // تصدير CSV يتضمن عمودي الإيراد والتأمين المسترد بوضوح
-    const headers = [
-      'رقم الحجز',
-      'العميل',
-      'السيارة',
-      'تاريخ الاستلام',
-      'تاريخ الإعادة',
-      'المدة',
-      'الإيراد',
-      'التأمين المسترد',
-      'المبلغ الإجمالي',
-      'الحالة',
-    ];
-    const rows = filteredBookings.map((b) => {
-      const total = Number(b.totalPrice || 0);
-      const ins = Number(b.insuranceAmount || 0);
-      const netRev = Math.max(0, total - ins);
-      return [
-        sanitizeCSVCell(b.bookingNumber),
-        sanitizeCSVCell(b.customerName),
-        sanitizeCSVCell(b.vehicleName),
-        sanitizeCSVCell(b.pickupDate),
-        sanitizeCSVCell(b.returnDate),
-        sanitizeCSVCell(b.rentalDays),
-        sanitizeCSVCell(netRev),
-        sanitizeCSVCell(ins),
-        sanitizeCSVCell(total),
-        sanitizeCSVCell(b.status),
-      ];
-    });
+    const headers = ['رقم الحجز', 'اسم المستأجر', 'السيارة', 'تاريخ الاستلام', 'تاريخ الإرجاع', 'عدد الأيام', 'الإجمالي'];
+    const rows = filteredBookings.map((b) => [
+      sanitizeCSVCell(b.bookingNumber),
+      sanitizeCSVCell(b.customerName),
+      sanitizeCSVCell(b.vehicleName),
+      sanitizeCSVCell(b.pickupDate),
+      sanitizeCSVCell(b.returnDate),
+      sanitizeCSVCell(b.rentalDays),
+      sanitizeCSVCell(b.totalPrice),
+    ]);
 
-    const csvContent = '\uFEFF' + [headers.map(sanitizeCSVCell).join(','), ...rows.map(e => e.join(','))].join('\n');
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    const fileDate = todayLocalISO();
-    link.download = `shaker_rentals_report_${period}_${fileDate}.csv`;
+    link.setAttribute('href', url);
+    link.setAttribute('download', `shaker-reports-${todayLocalISO()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   return (
-    <div className="space-y-6 text-slate-100">
-      {/* Header and Controls */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
+    <div className="space-y-6">
+      {/* Header & Controls */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6 shadow-xl">
         <div>
-          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-white flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-amber-400" />
-            <span>التقارير المالية والتشغيلية للأسطول</span>
-          </h3>
+            <span>{ADMIN_TAB_LABEL.reports}</span>
+          </h1>
           <p className="text-xs text-slate-400 mt-1">
             متابعة الإيرادات، التأمينات المستردة، مخططات بيانية تفاعلية، ونسبة إشغال الأسطول
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Period selector */}
           <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
             {(
               [
@@ -255,14 +251,13 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
 
       {/* Top 4 KPI metric cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* فصل التأمين المسترد عن الإيراد */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
           <div className="flex items-center justify-between text-slate-400 text-xs">
             <span>إجمالي الإيراد التشغيلي</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-2xl font-black text-white font-mono">${totalRevenue.toLocaleString()}</div>
-          <div className="text-[11px] text-emerald-400 font-semibold">صافي الأجرة (إجمالي العقود: ${totalGross.toLocaleString()})</div>
+          <div className="text-2xl font-extrabold text-white tabular-nums">{formatMoney(totalRevenue)}</div>
+          <div className="text-xs text-emerald-400 font-semibold">صافي الأجرة (إجمالي العقود: {formatMoney(totalGross)})</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
@@ -270,8 +265,8 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
             <span>التأمينات المستردة</span>
             <Clock className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="text-2xl font-black text-amber-400 font-mono">${totalInsurance.toLocaleString()}</div>
-          <div className="text-[11px] text-slate-400">أمانات محتجزة للمستأجرين تُعاد عند الإرجاع</div>
+          <div className="text-2xl font-extrabold text-amber-400 tabular-nums">{formatMoney(totalInsurance)}</div>
+          <div className="text-xs text-slate-400">أمانات محتجزة للمستأجرين تُعاد عند الإرجاع</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
@@ -279,30 +274,41 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
             <span>نسبة إشغال أسطول السيارات</span>
             <Car className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="text-2xl font-black text-amber-400 font-mono">{utilizationRate}%</div>
-          <div className="text-[11px] text-slate-400">{rentedVehiclesCount} سيارة مؤجرة من أصل {safeVehicles.length}</div>
+          <div className="text-2xl font-extrabold text-amber-400 tabular-nums">{utilizationRate}%</div>
+          <div className="text-xs text-slate-400">{rentedVehiclesCount} سيارة مؤجرة من أصل {safeVehicles.length}</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
           <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span>عدد العمليات النشطة</span>
+            <span>العمليات المعتمدة / قيد المراجعة</span>
             <Layers className="w-4 h-4 text-blue-400" />
           </div>
-          <div className="text-2xl font-black text-blue-400 font-mono">{filteredBookings.length}</div>
-          <div className="text-[11px] text-slate-400">حجوزات خلال الفترة المحددة</div>
+          <div className="text-2xl font-extrabold text-blue-400 tabular-nums">
+            {filteredBookings.filter(isFinanciallyActiveBooking).length}
+            {pendingReviewCount > 0 && (
+              <span className="text-xs font-bold text-amber-400 mr-2">
+                (+{pendingReviewCount} قيد المراجعة)
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-slate-400">
+            {pendingReviewCount > 0
+              ? `${pendingReviewCount} حجز قيد المراجعة بقيمة ${formatMoney(pendingReviewGross)}`
+              : 'كافة الحجوزات معتمدة أو مكتملة'}
+          </div>
         </div>
       </div>
 
       {/* RECHARTS INTERACTIVE VISUALIZATIONS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Chart 1: Revenue Over Time (Area Chart) */}
+        {/* Chart 1: Revenue Over Time */}
         <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-bold text-white flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-amber-400" />
-              <span>المسار الزمني للإيرادات والمقبوضات ($)</span>
+              <span>المسار الزمني للإيرادات والمقبوضات</span>
             </h4>
-            <span className="text-[11px] text-slate-400">مخطط بياني تفاعلي</span>
+            <span className="text-xs text-slate-400">مخطط بياني تفاعلي</span>
           </div>
 
           <div className="h-64 w-full" dir="ltr">
@@ -330,7 +336,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                     color: '#fff',
                   }}
                   formatter={(value: unknown, name: unknown) => [
-                    `$${Number(value).toLocaleString()}`,
+                    formatMoney(Number(value)),
                     String(name) === 'revenue' ? 'الإيراد الإجمالي' : 'المحصل فعلياً',
                   ]}
                 />
@@ -350,13 +356,15 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-bold text-white flex items-center gap-2">
               <PieChartIcon className="w-4 h-4 text-emerald-400" />
-              <span>حالة وجاهزية الأسطول</span>
+              <span>جاهزية الأسطول</span>
             </h4>
-            <span className="text-[11px] text-slate-400">{safeVehicles.length} مركبة</span>
+            <span className="text-xs text-slate-400">{safeVehicles.length} مركبة</span>
           </div>
 
-          <div className="h-52 w-full flex items-center justify-center" dir="ltr">
-            {fleetPieData.length > 0 ? (
+          <div className="h-48 w-full flex items-center justify-center">
+            {safeVehicles.length === 0 ? (
+              <span className="text-xs text-slate-400">لا توجد بيانات للأسطول</span>
+            ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -378,41 +386,43 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                       borderColor: '#334155',
                       borderRadius: '12px',
                       fontSize: '12px',
+                      color: '#fff',
                     }}
-                    formatter={(val: unknown) => [`${String(val)} سيارة`, 'العدد']}
                   />
                 </PieChart>
               </ResponsiveContainer>
-            ) : (
-              <div className="text-xs text-slate-500">لا توجد سيارات مسجلة</div>
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center pt-2 border-t border-slate-800 text-xs">
             <div>
-              <span className="text-[10px] text-emerald-400 block font-semibold">● متاحة</span>
-              <span className="text-sm font-bold font-mono text-white">{availableVehiclesCount}</span>
+              <span className="text-xs text-emerald-400 block font-semibold">● متاحة</span>
+              <span className="text-sm font-bold tabular-nums text-white">{availableVehiclesCount}</span>
             </div>
             <div>
-              <span className="text-[10px] text-blue-400 block font-semibold">● مؤجرة</span>
-              <span className="text-sm font-bold font-mono text-white">{rentedVehiclesCount}</span>
+              <span className="text-xs text-blue-400 block font-semibold">● مؤجرة</span>
+              <span className="text-sm font-bold tabular-nums text-white">{rentedVehiclesCount}</span>
             </div>
             <div>
-              <span className="text-[10px] text-rose-400 block font-semibold">● صيانة</span>
-              <span className="text-sm font-bold font-mono text-white">{maintenanceVehiclesCount}</span>
+              <span className="text-xs text-rose-400 block font-semibold">● صيانة</span>
+              <span className="text-sm font-bold tabular-nums text-white">{maintenanceVehiclesCount}</span>
+            </div>
+            <div>
+              <span className="text-xs text-slate-400 block font-semibold">● محجوزة/غير نشطة</span>
+              <span className="text-sm font-bold tabular-nums text-white">{reservedOrInactiveCount}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Chart 3: Revenue by Vehicle Category (Bar Chart) */}
+      {/* Chart 3: Revenue by Vehicle Category */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-bold text-white flex items-center gap-2">
             <Car className="w-4 h-4 text-blue-400" />
-            <span>توزيع الإيرادات حسب فئة المركبة ($)</span>
+            <span>توزيع الإيرادات حسب فئة المركبة</span>
           </h4>
-          <span className="text-[11px] text-slate-400">مقارنة فئات الأسطول</span>
+          <span className="text-xs text-slate-400">مقارنة فئات الأسطول</span>
         </div>
 
         <div className="h-48 w-full" dir="ltr">
@@ -429,7 +439,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                   fontSize: '12px',
                   color: '#fff',
                 }}
-                formatter={(val: unknown) => [`$${Number(val).toLocaleString()}`, 'الإيرادات']}
+                formatter={(val: unknown) => [formatMoney(Number(val)), 'الإيرادات']}
               />
               <Bar dataKey="revenue" radius={[8, 8, 0, 0]}>
                 {categoryChartData.map((entry, index) => (
@@ -448,7 +458,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
           <span className="text-xs text-slate-400 font-normal">مرتبة حسب تاريخ الإنشاء</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-right border-collapse">
+          <table className="w-full text-sm text-right border-collapse">
             <thead>
               <tr className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
                 <th className="p-3">رقم الحجز</th>
@@ -463,14 +473,14 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
             <tbody className="divide-y divide-slate-800">
               {filteredBookings.map((b) => (
                 <tr key={b.id} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="p-3 font-mono font-bold text-amber-400">{b.bookingNumber}</td>
+                  <td className="p-3 tabular-nums font-bold text-amber-400">{b.bookingNumber}</td>
                   <td className="p-3 font-medium text-white">{b.customerName}</td>
                   <td className="p-3 text-slate-300">{b.vehicleName}</td>
-                  <td className="p-3 text-slate-400 font-mono">{b.pickupDate} إلى {b.returnDate}</td>
+                  <td className="p-3 text-slate-400 tabular-nums"><span dir="ltr" className="inline-block font-mono">{formatDateDisplay(b.pickupDate)}</span> إلى <span dir="ltr" className="inline-block font-mono">{formatDateDisplay(b.returnDate)}</span></td>
                   <td className="p-3 text-slate-300">{b.rentalDays} أيام</td>
-                  <td className="p-3 font-bold text-white font-mono">${b.totalPrice}</td>
+                  <td className="p-3 font-bold text-white tabular-nums">{formatMoney(b.totalPrice)}</td>
                   <td className="p-3">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-300">
                       {b.status}
                     </span>
                   </td>
