@@ -1,14 +1,24 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { Calendar, CheckCircle2, MessageCircle } from 'lucide-react';
 import { AppHeader } from '../components/AppHeader';
 import { Footer } from '../components/Footer';
 import { GlobalMenu } from '../components/GlobalMenu';
 import { BackContext } from '../contexts/BackContext';
 import { useAppData } from '../contexts/DataContext';
-import { useBookFirstVehicle } from '../hooks/useBookFirstVehicle';
+import { useBrowseFleet } from '../hooks/useBrowseFleet';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
-import { goBack, getMenuSection, navigate, navigateToView, routes, type ResolvedRoute } from '../router';
+import {
+  getCanonicalPath,
+  getMenuSection,
+  goBack,
+  navigate,
+  routes,
+  useLocation,
+  type ResolvedRoute,
+} from '../router';
 import { getPageMeta } from '../routes/pageMeta';
+import { STARTING_DAILY_PRICE } from '../constants/company';
 import { openWhatsAppChat } from '../services/whatsapp';
 
 interface SiteLayoutProps {
@@ -36,19 +46,64 @@ function goBackFrom(route: ResolvedRoute): void {
 
 /** Shared chrome of the public site: menu, AppHeader, booking banner, WhatsApp button and footer. */
 export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
-  const { vehicles, lastCreatedBooking, dismissLastBooking } = useAppData();
-  const bookFirstVehicle = useBookFirstVehicle();
+  const { vehicles, vehiclesReady, lastCreatedBooking, dismissLastBooking } = useAppData();
+  const browseFleet = useBrowseFleet();
+  const { pathname } = useLocation();
   const mobileCtaBarRef = useRef<HTMLDivElement>(null);
+  const mainContentRef = useRef<HTMLElement>(null);
+  const prevPathnameRef = useRef<string | null>(null);
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
 
   const routeVehicleId = route.params.id;
   const routeVehicle = routeVehicleId ? vehicles.find((v) => v.id === routeVehicleId) || null : null;
+  const isMissingVehicle = Boolean(routeVehicleId && vehiclesReady && !routeVehicle);
   const meta = getPageMeta(route.name, routeVehicle);
-  useDocumentTitle(meta.docTitle, meta.description);
+  const canonicalPath = isMissingVehicle ? routes.cars : getCanonicalPath(route);
+
+  useDocumentTitle(meta.docTitle, meta.description, {
+    canonicalPath,
+    noindex: meta.noindex || isMissingVehicle,
+  });
+
+  // Move focus to #main-content and announce page title on pathname changes (not hash-only or query-only changes)
+  useEffect(() => {
+    if (prevPathnameRef.current === null) {
+      prevPathnameRef.current = pathname;
+      return;
+    }
+    if (prevPathnameRef.current === pathname) return;
+    prevPathnameRef.current = pathname;
+
+    const titleText =
+      meta.docTitle === 'الرئيسية' ? 'الصفحة الرئيسية - شاكر لتأجير السيارات' : meta.docTitle;
+    const rafId = window.requestAnimationFrame(() => {
+      setLiveAnnouncement(`تم الانتقال إلى ${titleText}`);
+      mainContentRef.current?.focus({ preventScroll: true });
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
+  }, [pathname, meta.docTitle]);
 
   const isHome = route.name === 'home';
   const isBookPage = route.name === 'book';
-  const showMobileBookBar = route.name === 'home' || route.name === 'cars' || route.name === 'about';
-  const openAuth = (mode?: 'login' | 'register') => navigate(mode === 'register' ? routes.register : routes.login);
+  const showMobileBookBar = route.name === 'home' || route.name === 'cars';
+
+  const getAuthTarget = (mode: 'login' | 'register' = 'login'): string => {
+    const base = mode === 'register' ? routes.register : routes.login;
+    if (typeof window === 'undefined') return base;
+    if (route.name === 'login' || route.name === 'register') {
+      return window.location.search ? `${base}${window.location.search}` : base;
+    }
+    if (route.name !== 'home' && route.name !== 'notFound') {
+      const returnTo = window.location.pathname + window.location.search;
+      return `${base}?redirect=${encodeURIComponent(returnTo)}`;
+    }
+    return base;
+  };
+
+  const openAuth = (mode: 'login' | 'register' = 'login') => {
+    navigate(getAuthTarget(mode));
+  };
   const openProfile = () => navigate(routes.profile);
 
   // Sync --bottom-bar-h when the mobile bottom CTA bar is active so the WhatsApp FAB never overlaps it
@@ -79,6 +134,11 @@ export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
 
   return (
     <div className="min-h-dvh bg-slate-950 text-slate-100 flex flex-col font-cairo overflow-x-clip">
+      {/* Polite live region for screen reader route announcements */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {liveAnnouncement}
+      </div>
+
       {/* Skip link for accessibility */}
       <a
         href="#main-content"
@@ -91,8 +151,7 @@ export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
         {/* Global Slide-out Navigation Drawer (Controlled via MenuContext) */}
         <GlobalMenu
           currentView={getMenuSection(route.name)}
-          onNavigate={navigateToView}
-          onOpenBooking={bookFirstVehicle}
+          onOpenBooking={browseFleet}
           onOpenAuth={openAuth}
           onOpenProfile={openProfile}
         />
@@ -101,9 +160,9 @@ export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
         <AppHeader
           route={route}
           vehicle={routeVehicle}
-          onNavigate={navigateToView}
-          onOpenBooking={bookFirstVehicle}
-          onOpenAuth={openAuth}
+          loginHref={getAuthTarget('login')}
+          registerHref={getAuthTarget('register')}
+          onOpenBooking={browseFleet}
           onOpenProfile={openProfile}
         />
 
@@ -125,7 +184,18 @@ export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
         )}
 
         {/* Bottom padding avoids overlap with fixed mobile bars & floating WhatsApp button */}
-        <main id="main-content" className="flex-1 pb-32 sm:pb-36">{children}</main>
+        <main
+          ref={mainContentRef}
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 pb-32 sm:pb-36 outline-none"
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            <React.Fragment key={`${route.name}:${route.params.id ?? ''}`}>
+              {children}
+            </React.Fragment>
+          </AnimatePresence>
+        </main>
 
         {/* Mobile Fixed Quick-Book Bottom Bar on public discovery pages */}
         {showMobileBookBar && (
@@ -135,11 +205,11 @@ export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
           >
             <div className="min-w-0">
               <span className="text-xs text-slate-400 block">تأجير فوري في دمشق</span>
-              <span className="text-sm font-bold text-amber-300 tabular-nums">من 30$ / اليوم</span>
+              <span className="text-sm font-bold text-amber-300 tabular-nums">من {STARTING_DAILY_PRICE}$ / اليوم</span>
             </div>
             <button
               type="button"
-              onClick={bookFirstVehicle}
+              onClick={browseFleet}
               className="min-h-11 px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 shrink-0 cursor-pointer"
             >
               <Calendar className="w-4 h-4" />
@@ -167,11 +237,7 @@ export const SiteLayout: React.FC<SiteLayoutProps> = ({ route, children }) => {
         )}
 
         {/* Footer: Full footer on Home, Mini footer on other public pages */}
-        {isHome ? (
-          <Footer onNavigate={navigateToView} variant="full" />
-        ) : (
-          <Footer onNavigate={navigateToView} variant="mini" />
-        )}
+        {isHome ? <Footer variant="full" /> : <Footer variant="mini" />}
       </BackContext.Provider>
     </div>
   );

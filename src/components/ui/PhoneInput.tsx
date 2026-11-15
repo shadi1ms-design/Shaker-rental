@@ -148,11 +148,12 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
   return (
     <div className={`space-y-1 ${className}`} ref={containerRef}>
       <div
+        dir="ltr"
         className={`flex items-center rounded-xl bg-slate-950 border transition-all ${
           displayError
             ? 'border-rose-500 focus-within:border-rose-400 focus-within:ring-2 focus-within:ring-rose-500/20'
             : 'border-slate-700/80 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-400/20'
-        } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+        } ${disabled ? 'opacity-75 cursor-not-allowed bg-slate-900/70' : ''}`}
       >
         {/* Country Code Selector Button */}
         <div className="relative shrink-0">
@@ -161,10 +162,10 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
             disabled={disabled}
             onClick={() => setIsDropdownOpen((prev) => !prev)}
             aria-label="اختر رمز الدولة"
-            className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-s-xl border-e border-slate-800 text-xs sm:text-sm font-medium transition-colors cursor-pointer select-none"
+            className="min-h-11 flex items-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-l-xl border-r border-slate-800 text-sm font-medium transition-colors cursor-pointer disabled:cursor-not-allowed disabled:hover:bg-slate-900 select-none"
           >
             <span className="text-base leading-none">{selectedCountry.flag}</span>
-            <span className="font-mono text-amber-400 text-xs sm:text-sm font-bold" dir="ltr">
+            <span className="font-mono text-amber-400 text-sm font-bold" dir="ltr">
               {selectedCountry.dialCode}
             </span>
             <ChevronDown
@@ -176,7 +177,10 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
 
           {/* Searchable Country Dropdown */}
           {isDropdownOpen && (
-            <div className="absolute top-full start-0 mt-1.5 w-72 max-h-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden text-right font-cairo">
+            <div
+              dir="rtl"
+              className="absolute top-full left-0 mt-1.5 w-72 max-w-[calc(100vw-2rem)] max-h-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden text-right font-cairo"
+            >
               {/* Search Box */}
               <div className="p-2 border-b border-slate-800 bg-slate-950/60 sticky top-0 z-10">
                 <div className="relative">
@@ -186,16 +190,16 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="ابحث بالاسم أو الرمز..."
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 pe-8 text-xs text-white focus:outline-none focus:border-amber-500 placeholder-slate-500"
+                    className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 pe-9 text-base sm:text-sm text-white focus:outline-none focus:border-amber-500 placeholder:text-slate-400"
                   />
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute end-2.5 top-2.5" />
+                  <Search className="w-4 h-4 text-slate-400 absolute end-2.5 top-3" />
                 </div>
               </div>
 
               {/* Countries List */}
               <div className="overflow-y-auto flex-1 divide-y divide-slate-800/40">
                 {filteredCountries.length === 0 ? (
-                  <div className="p-4 text-center text-xs text-slate-500">
+                  <div className="p-4 text-center text-sm text-slate-400">
                     لا توجد دولة مطابقة للبحث
                   </div>
                 ) : (
@@ -206,7 +210,7 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
                         key={`${c.code}-${c.dialCode}`}
                         type="button"
                         onClick={() => handleCountrySelect(c)}
-                        className={`w-full px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-800 transition-colors text-right cursor-pointer ${
+                        className={`w-full min-h-11 px-3 py-2 text-sm flex items-center justify-between hover:bg-slate-800 transition-colors text-right cursor-pointer ${
                           isSelected ? 'bg-amber-500/15 text-amber-300 font-bold' : 'text-slate-300'
                         }`}
                       >
@@ -231,7 +235,8 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
           id={id}
           name={name}
           type="text"
-          inputMode="numeric"
+          inputMode="tel"
+          autoComplete="tel-national"
           dir="ltr"
           value={nationalNumber}
           onChange={handleNationalChange}
@@ -244,14 +249,14 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
           autoFocus={autoFocus}
           aria-invalid={Boolean(displayError)}
           aria-describedby={ariaDescribedBy}
-          className="w-full bg-transparent px-3 py-2.5 text-white placeholder-slate-500 text-sm font-mono text-left focus:outline-none disabled:opacity-50"
+          className="w-full min-w-0 min-h-11 bg-transparent px-3 py-2 text-white placeholder:text-slate-400 text-base sm:text-sm font-mono text-left focus:outline-none disabled:cursor-not-allowed disabled:text-slate-300"
         />
       </div>
 
       {/* Validation Message */}
       {displayError && (
-        <p className="text-xs text-rose-400 flex items-center gap-1 mt-1 font-semibold">
-          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+        <p className="text-sm text-rose-400 flex items-center gap-1 mt-1 font-semibold">
+          <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{displayError}</span>
         </p>
       )}

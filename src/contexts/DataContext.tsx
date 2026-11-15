@@ -3,7 +3,7 @@ import { useAuth } from './AuthContext';
 import { dataService } from '../services/dataService';
 import { setOfficialWhatsAppNumber } from '../services/whatsapp';
 import { applyDerivedVehicleStatus } from '../utils/vehicleStatus';
-import type { AppSettings, Booking, SearchFilters, Vehicle } from '../types';
+import type { AppSettings, Booking, Vehicle } from '../types';
 
 interface DataContextType {
   vehicles: Vehicle[];
@@ -11,11 +11,9 @@ interface DataContextType {
   settings: AppSettings;
   /** True once the first fetch finished (or the cache already had vehicles). */
   vehiclesReady: boolean;
+  /** True once authoritative settings have been resolved from Firestore or offline fallback. */
+  settingsReady: boolean;
   refreshData: () => Promise<void>;
-
-  /** Search filters carried from the hero search to the catalog / booking pages. */
-  activeBookingFilters: SearchFilters | undefined;
-  setActiveBookingFilters: (filters: SearchFilters | undefined) => void;
 
   /** The booking the customer just created (shown as a banner until staff process it). */
   lastCreatedBooking: Booking | null;
@@ -23,7 +21,7 @@ interface DataContextType {
   dismissLastBooking: () => void;
 }
 
-const DataContext = createContext<DataContextType | undefined>(undefined);
+export const DataContext = createContext<DataContextType | undefined>(undefined);
 
 const recentBookingKey = (uid: string) => `shaker_recent_booking_${uid}`;
 
@@ -37,6 +35,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [bookings, setBookings] = useState<Booking[]>(() => dataService.getCachedBookings());
   const [settings, setSettings] = useState<AppSettings>(() => dataService.getCachedSettings());
   const [vehiclesReady, setVehiclesReady] = useState<boolean>(() => dataService.getCachedVehicles().length > 0);
+  const [settingsReady, setSettingsReady] = useState<boolean>(false);
 
   const lastAppliedVehiclesVersionRef = useRef<number>(0);
   const lastAppliedVehiclesTimestampRef = useRef<number>(0);
@@ -44,7 +43,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Derived dynamic status recalculates whenever rawVehicles OR bookings change
   const vehicles = useMemo(() => applyDerivedVehicleStatus(rawVehicles, bookings), [rawVehicles, bookings]);
 
-  const [activeBookingFilters, setActiveBookingFilters] = useState<SearchFilters | undefined>(undefined);
   const [lastCreatedBooking, setLastCreatedBooking] = useState<Booking | null>(null);
 
   // Keep every customer-facing WhatsApp link in sync with the number saved in admin settings.
@@ -86,6 +84,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setRawVehicles(vList);
       }
       setSettings(sSettings);
+      setSettingsReady(true);
 
       if (isStaffAuthorized) {
         setBookings(await dataService.getBookings(true));
@@ -96,6 +95,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (err) {
       console.error('Failed to load data:', err);
+      setSettingsReady(true);
     } finally {
       if (vehiclesReady !== true) setVehiclesReady(true);
     }
@@ -106,6 +106,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setTimeout(() => refreshData(), 0);
 
     const unsubscribeVehicles = dataService.subscribeToVehicles(handleVehiclesUpdate);
+    const unsubscribeSettings = dataService.subscribeToSettings((nextSettings) => {
+      setSettings(nextSettings);
+      setSettingsReady(true);
+    });
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      dataService
+        .getSettings(true)
+        .then((fresh) => {
+          setSettings(fresh);
+          setSettingsReady(true);
+        })
+        .catch(() => {});
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleVisibilityOrFocus);
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    }
 
     let unsubscribeBookings = () => {};
     if (isStaffAuthorized) {
@@ -116,7 +138,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       unsubscribeVehicles();
+      unsubscribeSettings();
       unsubscribeBookings();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleVisibilityOrFocus);
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      }
     };
   }, [userId, isStaffAuthorized, refreshData, handleVehiclesUpdate]);
 
@@ -204,9 +233,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       bookings,
       settings,
       vehiclesReady,
+      settingsReady,
       refreshData,
-      activeBookingFilters,
-      setActiveBookingFilters,
       lastCreatedBooking,
       handleBookingCreated,
       dismissLastBooking,
@@ -216,8 +244,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       bookings,
       settings,
       vehiclesReady,
+      settingsReady,
       refreshData,
-      activeBookingFilters,
       lastCreatedBooking,
       handleBookingCreated,
       dismissLastBooking,

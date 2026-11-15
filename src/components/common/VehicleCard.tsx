@@ -6,13 +6,16 @@ import { VehicleStatusPill, VehicleDailyPriceTag } from './VehicleCardShared';
 import { getVehicleCategoryLabel } from '../../constants/vehicleCategories';
 import { getFuelLabel, getTransmissionLabel } from '../../constants/vehicleLabels';
 import { isPrefersReducedMotion } from '../../constants/motion';
+import { Link } from '../routing/Link';
+import { routes } from '../../router';
 import { Users, Settings, Fuel, Calendar, Info, Clock } from 'lucide-react';
 
 interface VehicleCardProps {
   vehicle: Vehicle;
   variant?: 'featured' | 'catalog';
-  onViewDetails: (vehicle: Vehicle) => void;
-  onBook: (vehicle: Vehicle) => void;
+  onViewDetails?: (vehicle: Vehicle) => void;
+  onBook?: (vehicle: Vehicle) => void;
+  bookTo?: string;
   nextAvailableDate?: string | null;
 }
 
@@ -21,17 +24,22 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
   variant = 'catalog',
   onViewDetails,
   onBook,
+  bookTo,
   nextAvailableDate,
 }) => {
   const isAvailable = vehicle.status === 'available';
   const isReservedOrRented = vehicle.status === 'reserved' || vehicle.status === 'rented';
+  const detailsUrl = routes.car(vehicle.id);
+  const bookUrl = bookTo || routes.book(vehicle.id);
 
   return (
     <motion.div
       whileHover={isPrefersReducedMotion() ? undefined : { scale: 1.01 }}
       transition={{ duration: 0.2 }}
-      className={`bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-card overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-black/50 flex flex-col h-full group ${
-        variant === 'featured' ? 'w-[85vw] max-w-[340px] sm:w-[320px] md:w-full shrink-0 snap-start' : ''
+      className={`rounded-card overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-black/50 flex flex-col h-full group border ${
+        variant === 'featured'
+          ? 'bg-slate-900 border-amber-500/25 hover:border-amber-500/45 shadow-lg shadow-black/40 w-[85vw] max-w-[340px] sm:w-[320px] md:w-full shrink-0 snap-start'
+          : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
       }`}
     >
       {/* Car Image gallery */}
@@ -89,43 +97,37 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
 
         {/* Action buttons pinned at bottom */}
         <div className="flex items-center gap-2 pt-2 mt-auto">
-          <a
-            href={`/cars/${encodeURIComponent(vehicle.id)}`}
-            onClick={(e) => {
-              e.preventDefault();
-              onViewDetails(vehicle);
-            }}
+          <Link
+            to={detailsUrl}
+            prefetch
+            onClick={onViewDetails ? () => onViewDetails(vehicle) : undefined}
             className="flex-1 min-h-[44px] py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
           >
             <Info className="w-4 h-4 text-slate-400" />
             <span>التفاصيل</span>
-          </a>
+          </Link>
 
           {isAvailable ? (
-            <a
-              href={`/cars/${encodeURIComponent(vehicle.id)}/book`}
-              onClick={(e) => {
-                e.preventDefault();
-                onBook(vehicle);
-              }}
+            <Link
+              to={bookUrl}
+              prefetch
+              onClick={onBook ? () => onBook(vehicle) : undefined}
               className="flex-1 min-h-[44px] py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-sm font-extrabold transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
             >
               <Calendar className="w-4 h-4" />
               <span>احجز الآن</span>
-            </a>
+            </Link>
           ) : isReservedOrRented ? (
-            <a
-              href={`/cars/${encodeURIComponent(vehicle.id)}/book`}
-              onClick={(e) => {
-                e.preventDefault();
-                onBook(vehicle);
-              }}
+            <Link
+              to={bookUrl}
+              prefetch
+              onClick={onBook ? () => onBook(vehicle) : undefined}
               className="flex-1 min-h-[44px] py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-sm font-bold transition-all flex items-center justify-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               title={nextAvailableDate ? `متاحة بدءاً من ${nextAvailableDate} - انقر لإجراء حجز مسبق` : 'محجوزة حالياً - انقر لإجراء حجز مسبق'}
             >
               <Calendar className="w-4 h-4 text-amber-400" />
               <span>حجز مسبق</span>
-            </a>
+            </Link>
           ) : (
             <button
               type="button"

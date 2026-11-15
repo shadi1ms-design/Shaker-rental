@@ -10,8 +10,10 @@ import {
 import { SearchFilters } from '../types';
 import { addDaysISO, todayLocalISO } from '../utils/dateUtils';
 import { DateField } from './ui/DateField';
-import { COMPANY_INFO } from '../constants/company';
+import { COMPANY_INFO, STARTING_DAILY_PRICE } from '../constants/company';
 import { navigate, routes } from '../router';
+import { buildCatalogUrl } from '../utils/catalogQuery';
+import { Link } from './routing/Link';
 
 interface HeroSectionProps {
   onSearch?: (filters: SearchFilters) => void;
@@ -39,14 +41,8 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch, onBrowseFlee
         pickupDate: pickupDate || undefined,
         returnDate: returnDate || undefined,
       });
-    }
-  };
-
-  const handleBrowseClick = () => {
-    if (onBrowseFleet) {
-      onBrowseFleet();
     } else {
-      navigate(routes.cars);
+      navigate(buildCatalogUrl({ from: pickupDate || undefined, to: returnDate || undefined }));
     }
   };
 
@@ -76,7 +72,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch, onBrowseFlee
 
           {/* Starting price line */}
           <p className="text-base sm:text-lg font-bold text-amber-300 tabular-nums">
-            تبدأ الأسعار من 30 دولاراً في اليوم
+            تبدأ الأسعار من {STARTING_DAILY_PRICE} دولاراً في اليوم
           </p>
 
           <p className="text-sm sm:text-base text-slate-200 max-w-2xl mx-auto">
@@ -84,14 +80,15 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onSearch, onBrowseFlee
           </p>
 
           <div className="pt-1 flex items-center justify-center">
-            <button
-              type="button"
-              onClick={handleBrowseClick}
+            <Link
+              to={routes.cars}
+              prefetch
+              onClick={onBrowseFleet ? () => onBrowseFleet() : undefined}
               className="min-h-11 px-5 py-2.5 rounded-xl bg-slate-900/85 hover:bg-slate-800 text-amber-300 hover:text-amber-200 border border-amber-500/40 font-bold text-sm inline-flex items-center gap-2 transition-colors cursor-pointer"
             >
               <span>تصفح الأسطول</span>
               <ArrowLeft className="w-4 h-4" />
-            </button>
+            </Link>
           </div>
         </div>
 

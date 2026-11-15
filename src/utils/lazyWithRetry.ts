@@ -1,4 +1,5 @@
 import React, { ComponentType, LazyExoticComponent } from 'react';
+import { resolveRoute, type RouteName } from '../router';
 
 const RELOAD_STORAGE_KEY = 'shaker_chunk_reload_ts';
 const RELOAD_COOLDOWN_MS = 10_000;
@@ -54,4 +55,49 @@ export function lazyWithRetry<T extends ComponentType<any>>(
 
     throw lastError;
   });
+}
+
+/**
+ * Centralized route -> dynamic import() map used by both React.lazy (lazyWithRetry)
+ * and Link route prefetching.
+ */
+export const ROUTE_IMPORTERS = {
+  cars: () => import('../pages/CatalogPage').then((m) => ({ default: m.CatalogPage })),
+  car: () =>
+    Promise.all([
+      import('../pages/CarDetailsPage').then((m) => ({ default: m.CarDetailsPage })),
+      import('../components/CarDetailsView').catch(() => null),
+    ]).then(([page]) => page),
+  book: () => import('../pages/BookingPage').then((m) => ({ default: m.BookingPage })),
+  contact: () => import('../pages/ContactPage').then((m) => ({ default: m.ContactRoutePage })),
+  login: () => import('../pages/AuthPage').then((m) => ({ default: m.AuthPage })),
+  register: () => import('../pages/AuthPage').then((m) => ({ default: m.AuthPage })),
+  profile: () => import('../pages/ProfilePage').then((m) => ({ default: m.ProfilePage })),
+  verifyContract: () =>
+    import('../pages/VerifyContractPage').then((m) => ({ default: m.VerifyContractPage })),
+  admin: () => import('../pages/AdminPage').then((m) => ({ default: m.AdminPage })),
+  notFound: () => import('../pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })),
+} as const;
+
+const prefetchedRoutes = new Set<RouteName>();
+
+/**
+ * Prefetches the lazy page bundle corresponding to the given internal URL path.
+ * Errors are silently ignored.
+ */
+export function prefetchRoute(to: string): void {
+  if (!to) return;
+  try {
+    const pathname = to.split(/[?#]/)[0] || '/';
+    const resolved = resolveRoute(pathname);
+    if (prefetchedRoutes.has(resolved.name)) return;
+    const importer = ROUTE_IMPORTERS[resolved.name as keyof typeof ROUTE_IMPORTERS];
+    if (!importer) return;
+    prefetchedRoutes.add(resolved.name);
+    void importer().catch(() => {
+      prefetchedRoutes.delete(resolved.name);
+    });
+  } catch {
+    // Ignore prefetch errors
+  }
 }

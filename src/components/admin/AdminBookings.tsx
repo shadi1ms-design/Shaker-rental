@@ -595,7 +595,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
             role="dialog"
             aria-modal="true"
             aria-labelledby="reject-booking-modal-title"
-            className="bg-brand-surface border border-brand-border rounded-modal max-w-md w-full p-section space-y-4 shadow-card"
+            className="bg-brand-surface border border-brand-border rounded-modal max-w-md w-full max-h-[90dvh] overflow-y-auto overscroll-contain p-section space-y-4 shadow-card"
           >
             <h3 id="reject-booking-modal-title" className="text-lg font-extrabold text-brand-text">
               سبب رفض الحجز
@@ -604,7 +604,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
               <div>
                 <label
                   htmlFor="reject-booking-reason"
-                  className="block text-xs font-semibold text-brand-muted mb-1 cursor-pointer"
+                  className="block text-sm font-semibold text-brand-muted mb-1.5 cursor-pointer"
                 >
                   يرجى توضيح سبب الرفض (يُحفظ في السجل)
                 </label>
@@ -615,20 +615,20 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                   value={rejectionReason}
                   onChange={(e) => setRejectionReason(e.target.value)}
                   placeholder="مثال: الوثائق غير واضحة، أو السيارة محجوزة..."
-                  className="w-full bg-brand-obsidian border border-brand-border rounded-card px-3 py-2 text-base sm:text-sm text-brand-text focus:outline-none focus:border-status-danger-solid"
+                  className="w-full bg-brand-obsidian border border-brand-border rounded-card px-3 py-2 text-base sm:text-sm text-brand-text placeholder:text-slate-400 focus:outline-none focus:border-status-danger-solid"
                 />
               </div>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => setRejectModalBookingId(null)}
-                  className="flex-1 py-2.5 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text font-bold text-xs cursor-pointer border border-brand-border"
+                  className="flex-1 min-h-11 py-2.5 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text font-bold text-sm cursor-pointer border border-brand-border"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-card bg-status-danger-solid hover:opacity-90 text-brand-text font-extrabold text-xs cursor-pointer"
+                  className="flex-1 min-h-11 py-2.5 rounded-card bg-status-danger-solid hover:opacity-90 text-brand-text font-extrabold text-sm cursor-pointer"
                 >
                   تأكيد الرفض
                 </button>
@@ -675,7 +675,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
             role="dialog"
             aria-modal="true"
             aria-labelledby="delete-booking-modal-title"
-            className="bg-brand-surface border border-status-danger-border rounded-modal max-w-md w-full p-section space-y-4 shadow-card"
+            className="bg-brand-surface border border-status-danger-border rounded-modal max-w-md w-full max-h-[90dvh] overflow-y-auto overscroll-contain p-section space-y-4 shadow-card"
           >
             <div className="flex items-center gap-3 text-status-danger">
               <div className="w-10 h-10 rounded-card bg-status-danger-bg border border-status-danger-border flex items-center justify-center shrink-0">
@@ -685,10 +685,10 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 <h3 id="delete-booking-modal-title" className="text-base font-extrabold text-brand-text">
                   تأكيد حذف الحجز نهائياً
                 </h3>
-                <p className="text-xs text-brand-muted">هذا الإجراء خاص بالمدير ولا يمكن التراجع عنه</p>
+                <p className="text-sm text-brand-muted">هذا الإجراء خاص بالمدير ولا يمكن التراجع عنه</p>
               </div>
             </div>
-            <div className="bg-brand-obsidian border border-brand-border rounded-card p-3.5 text-xs space-y-1.5 text-brand-muted">
+            <div className="bg-brand-obsidian border border-brand-border rounded-card p-3.5 text-sm space-y-1.5 text-brand-muted">
               <div>
                 <span>العميل: </span>
                 <span className="font-bold text-brand-text">{deleteConfirmBooking.customerName}</span>
@@ -709,7 +709,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 type="button"
                 disabled={isDeletingBooking}
                 onClick={() => setDeleteConfirmBooking(null)}
-                className="flex-1 py-2.5 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text font-bold text-xs cursor-pointer border border-brand-border"
+                className="flex-1 min-h-11 py-2.5 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text font-bold text-sm cursor-pointer border border-brand-border"
               >
                 إلغاء
               </button>
@@ -717,7 +717,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 type="button"
                 disabled={isDeletingBooking}
                 onClick={handleDeleteSingleBooking}
-                className="flex-1 py-2.5 rounded-card bg-status-danger-solid hover:opacity-90 disabled:opacity-50 text-brand-text font-extrabold text-xs cursor-pointer"
+                className="flex-1 min-h-11 py-2.5 rounded-card bg-status-danger-solid hover:opacity-90 disabled:opacity-50 text-brand-text font-extrabold text-sm cursor-pointer"
               >
                 {isDeletingBooking ? 'جاري الحذف...' : 'حذف الحجز نهائياً'}
               </button>
@@ -734,7 +734,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
             role="dialog"
             aria-modal="true"
             aria-labelledby="batch-delete-booking-modal-title"
-            className="bg-brand-surface border border-status-danger-border rounded-modal max-w-md w-full p-section space-y-4 shadow-card"
+            className="bg-brand-surface border border-status-danger-border rounded-modal max-w-md w-full max-h-[90dvh] overflow-y-auto overscroll-contain p-section space-y-4 shadow-card"
           >
             <div className="flex items-center gap-3 text-status-danger">
               <div className="w-10 h-10 rounded-card bg-status-danger-bg border border-status-danger-border flex items-center justify-center shrink-0">
@@ -744,10 +744,10 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 <h3 id="batch-delete-booking-modal-title" className="text-base font-extrabold text-brand-text">
                   حذف {selectedBookingIds.length} حجز نهائياً
                 </h3>
-                <p className="text-xs text-brand-muted">سيتم مسح جميع الحجوزات المحددة وعقودها المرتبطة</p>
+                <p className="text-sm text-brand-muted">سيتم مسح جميع الحجوزات المحددة وعقودها المرتبطة</p>
               </div>
             </div>
-            <p className="text-xs text-brand-text leading-relaxed">
+            <p className="text-sm text-brand-text leading-relaxed">
               هل أنت متأكد من رغبتك في حذف <strong>{selectedBookingIds.length}</strong> حجز بشكل نهائي من قاعدة البيانات؟
             </p>
             <div className="flex gap-2 pt-2">
@@ -755,7 +755,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 type="button"
                 disabled={isBatchProcessing}
                 onClick={() => setShowBatchDeleteConfirm(false)}
-                className="flex-1 py-2.5 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text font-bold text-xs cursor-pointer border border-brand-border"
+                className="flex-1 min-h-11 py-2.5 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text font-bold text-sm cursor-pointer border border-brand-border"
               >
                 إلغاء
               </button>
@@ -763,7 +763,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 type="button"
                 disabled={isBatchProcessing}
                 onClick={handleBatchDeleteBookings}
-                className="flex-1 py-2.5 rounded-card bg-status-danger-solid hover:opacity-90 disabled:opacity-50 text-brand-text font-extrabold text-xs cursor-pointer"
+                className="flex-1 min-h-11 py-2.5 rounded-card bg-status-danger-solid hover:opacity-90 disabled:opacity-50 text-brand-text font-extrabold text-sm cursor-pointer"
               >
                 {isBatchProcessing ? 'جاري الحذف...' : `تأكيد حذف (${selectedBookingIds.length})`}
               </button>

@@ -355,6 +355,58 @@ export const dataService = {
     return local;
   },
 
+  /**
+   * Real-time subscription to settings/global document.
+   * Keeps memoryCache and localStorage synchronized with Firestore, with safe offline fallback.
+   */
+  subscribeToSettings(callback: (settings: AppSettings) => void): () => void {
+    if (!isFirebaseConfigured || !db) {
+      this.getSettings()
+        .then(callback)
+        .catch(() => callback(this.getCachedSettings()));
+      return () => {};
+    }
+
+    try {
+      const globalRef = doc(getDb(), 'settings', 'global');
+      const unsubscribe = onSnapshot(
+        globalRef,
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data() as AppSettings;
+            setLocalItem(STORAGE_KEYS.SETTINGS, data);
+            memoryCache.settings = { data, timestamp: Date.now() };
+            callback(data);
+          } else {
+            this.getSettings()
+              .then(callback)
+              .catch(() => callback(this.getCachedSettings()));
+          }
+        },
+        (err) => {
+          console.warn('onSnapshot settings note, falling back to getSettings:', err);
+          this.getSettings()
+            .then(callback)
+            .catch(() => callback(this.getCachedSettings()));
+        }
+      );
+
+      return () => {
+        try {
+          unsubscribe();
+        } catch (unsubErr) {
+          console.warn('Error unsubscribing from settings:', unsubErr);
+        }
+      };
+    } catch (err) {
+      console.warn('Error establishing onSnapshot for settings:', err);
+      this.getSettings()
+        .then(callback)
+        .catch(() => callback(this.getCachedSettings()));
+      return () => {};
+    }
+  },
+
   async updateSettings(settingsUpdates: Partial<AppSettings>): Promise<AppSettings> {
     const res = await functionsService.updateSettingsSecure(settingsUpdates);
     if (!res.success) {
@@ -599,6 +651,8 @@ export const dataService = {
             const data = d.data();
             return {
               ...data,
+              docId: d.id,
+              dataId: typeof data.id === 'string' && data.id.trim() ? data.id.trim() : d.id,
               id: d.id,
             } as Vehicle;
           })
@@ -663,6 +717,8 @@ export const dataService = {
                 const data = d.data();
                 return {
                   ...data,
+                  docId: d.id,
+                  dataId: typeof data.id === 'string' && data.id.trim() ? data.id.trim() : d.id,
                   id: d.id,
                 } as Vehicle;
               })
@@ -724,7 +780,13 @@ export const dataService = {
         const docRef = doc(getDb(), 'vehicles', cleanId);
         const snap = await safeFirestore(getDoc(docRef), 2000);
         if (snap.exists()) {
-          const v = { ...snap.data(), id: snap.id } as Vehicle;
+          const rawData = snap.data();
+          const v = {
+            ...rawData,
+            docId: snap.id,
+            dataId: typeof rawData.id === 'string' && rawData.id.trim() ? rawData.id.trim() : snap.id,
+            id: snap.id,
+          } as Vehicle;
           let freshVehicle: Vehicle;
           if (isStaffOrAdmin()) {
             const internal = await this.fetchVehicleInternalDetails(v.id || cleanId);
@@ -1358,6 +1420,9 @@ export const dataService = {
       {
         isUserLoggedIn: Boolean(bookingData.customerId),
         vehicleId: vehicle.id,
+        vehicleDocId: vehicle.docId ?? vehicle.id,
+        vehicleDataId: vehicle.dataId ?? vehicle.id,
+        withDriver: Boolean(bookingData.withDriver),
       }
     );
 
@@ -1375,7 +1440,10 @@ export const dataService = {
       dailyPrice: vehicle.dailyPrice,
       basePrice: verifiedPricing.basePrice,
       discountAmount: verifiedPricing.discountAmount,
+      discountPercentage: verifiedPricing.memberDiscountApplied ? verifiedPricing.memberDiscountPercentage : 0,
+      discountBase: verifiedPricing.basePrice,
       insuranceAmount: verifiedPricing.insuranceAmount,
+      driverFee: verifiedPricing.driverFee ?? 0,
       totalPrice: verifiedPricing.totalPrice,
       status: 'new',
       isDeleted: false,

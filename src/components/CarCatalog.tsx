@@ -1,15 +1,21 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { VehicleCard } from './common/VehicleCard';
 import { SearchInput } from './common/SearchInput';
 import { EmptyState } from './common/EmptyState';
 import { SkeletonLoader } from './common/SkeletonLoader';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useSearchParams } from '../router';
+import {
+  CatalogQueryState,
+  buildBookingUrl,
+  buildCatalogSearchParams,
+  parseCatalogParams,
+} from '../utils/catalogQuery';
 import {
   Vehicle,
   VehicleCategory,
   FuelType,
   TransmissionType,
-  SearchFilters,
   SortField
 } from '../types';
 import { VEHICLE_CATEGORY_LABELS } from '../constants/vehicleCategories';
@@ -29,14 +35,9 @@ import {
 
 interface CarCatalogProps {
   vehicles?: Vehicle[];
-  onSelectCar?: (vehicle: Vehicle) => void;
-  onBookCar?: (vehicle: Vehicle) => void;
-  onSelectVehicle?: (vehicle: Vehicle) => void;
+  onBook?: (vehicle: Vehicle) => void;
   onViewDetails?: (vehicle: Vehicle) => void;
   selectedCategory?: VehicleCategory | 'all';
-  initialFilters?: SearchFilters | null;
-  onClearDates?: () => void;
-  onFilterChange?: (filters: SearchFilters) => void;
 }
 
 const AVAILABILITY_CHIP_LABEL: Record<'available' | 'rented', string> = {
@@ -46,46 +47,48 @@ const AVAILABILITY_CHIP_LABEL: Record<'available' | 'rented', string> = {
 
 export const CarCatalog: React.FC<CarCatalogProps> = ({
   vehicles = [],
-  onSelectCar,
-  onBookCar,
-  onSelectVehicle,
+  onBook,
   onViewDetails,
   selectedCategory = 'all',
-  initialFilters,
-  onClearDates,
-  onFilterChange,
 }) => {
-  const handleBooking = (v: Vehicle) => {
-    if (typeof onBookCar === 'function') {
-      onBookCar(v);
-    } else if (typeof onSelectVehicle === 'function') {
-      onSelectVehicle(v);
-    }
-  };
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlState = useMemo(() => parseCatalogParams(searchParams), [searchParams]);
 
-  const handleDetails = (v: Vehicle) => {
-    if (typeof onSelectCar === 'function') {
-      onSelectCar(v);
-    } else if (typeof onViewDetails === 'function') {
-      onViewDetails(v);
-    }
-  };
+  const category: VehicleCategory | 'all' =
+    urlState.category !== 'all' ? urlState.category : selectedCategory;
+  const searchQuery = urlState.q;
+  const selectedBrand = urlState.brand;
+  const selectedYear = urlState.year;
+  const transmission = urlState.transmission;
+  const fuelType = urlState.fuel;
+  const seats = urlState.seats;
+  const availability = urlState.availability;
+  const maxPriceCap = urlState.max;
+  const sortBy = urlState.sort;
+  const activePickupDate = urlState.from || undefined;
+  const activeReturnDate = urlState.to || undefined;
 
-  // Filter states
-  const [category, setCategory] = useState<VehicleCategory | 'all'>(
-    initialFilters?.category || selectedCategory
-  );
-  const [searchQuery, setSearchQuery] = useState(initialFilters?.searchQuery || '');
-  const [selectedBrand, setSelectedBrand] = useState<string>('all');
-  const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
-  const [transmission, setTransmission] = useState<TransmissionType | 'all'>(
-    initialFilters?.transmission || 'all'
-  );
-  const [fuelType, setFuelType] = useState<FuelType | 'all'>('all');
-  const [seats, setSeats] = useState<number | 'all'>('all');
-  const [availability, setAvailability] = useState<'all' | 'available' | 'rented'>('all');
-  const [maxPriceCap, setMaxPriceCap] = useState<number | null>(null);
-  const [sortBy, setSortBy] = useState<SortField>('recommended');
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncedQRef = useRef(searchQuery);
+
+  useEffect(() => {
+    if (searchQuery !== lastSyncedQRef.current) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      lastSyncedQRef.current = searchQuery;
+      setSearchInput(searchQuery);
+    }
+  }, [searchQuery]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, []);
+
   const [showFiltersMobile, setShowFiltersMobile] = useState(false);
   const mobileFilterRef = useRef<HTMLDivElement>(null);
 
@@ -95,38 +98,8 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
     lockScroll: true,
   });
 
-  // Active dates from hero/initialFilters
-  const [activePickupDate, setActivePickupDate] = useState<string | undefined>(initialFilters?.pickupDate);
-  const [activeReturnDate, setActiveReturnDate] = useState<string | undefined>(initialFilters?.returnDate);
-
-  // Sync props at render time (avoids useEffect + setTimeout cascading updates)
-  const [prevInitialFilters, setPrevInitialFilters] = useState(initialFilters);
-  const [prevSelectedCategory, setPrevSelectedCategory] = useState(selectedCategory);
-
-  if (initialFilters !== prevInitialFilters || selectedCategory !== prevSelectedCategory) {
-    setPrevInitialFilters(initialFilters);
-    setPrevSelectedCategory(selectedCategory);
-    if (initialFilters?.category) {
-      setCategory(initialFilters.category);
-    } else if (selectedCategory !== prevSelectedCategory && selectedCategory) {
-      setCategory(selectedCategory);
-    }
-    if (initialFilters?.searchQuery !== undefined) {
-      setSearchQuery(initialFilters.searchQuery || '');
-    }
-    if (initialFilters?.transmission !== undefined) {
-      setTransmission(initialFilters.transmission || 'all');
-    }
-    if (initialFilters?.pickupDate !== prevInitialFilters?.pickupDate) {
-      setActivePickupDate(initialFilters?.pickupDate);
-    }
-    if (initialFilters?.returnDate !== prevInitialFilters?.returnDate) {
-      setActiveReturnDate(initialFilters?.returnDate);
-    }
-  }
-
   const [loadTimedOut, setLoadTimedOut] = useState(false);
-  React.useEffect(() => {
+  useEffect(() => {
     const t = setTimeout(() => setLoadTimedOut(true), 4000);
     return () => clearTimeout(t);
   }, []);
@@ -168,10 +141,40 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
 
   const hasPriceFilter = maxPriceCap !== null && maxPriceCap < priceBounds.max;
 
+  const updateQuery = (patch: Partial<CatalogQueryState>) => {
+    const nextState: CatalogQueryState = {
+      ...urlState,
+      ...patch,
+    };
+    const nextParams = buildCatalogSearchParams(nextState, priceBounds.max);
+    setSearchParams(nextParams, { replace: true, scroll: false });
+  };
+
+  const handleSearchInputChange = (val: string) => {
+    setSearchInput(val);
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = null;
+      const trimmed = val.trim();
+      lastSyncedQRef.current = trimmed;
+      updateQuery({ q: trimmed });
+    }, 300);
+  };
+
+  const clearSearchQuery = () => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    lastSyncedQRef.current = '';
+    setSearchInput('');
+    updateQuery({ q: '' });
+  };
+
   const activeFiltersCount = useMemo(() => {
     let count = 0;
     if (category !== 'all') count++;
-    if (searchQuery.trim()) count++;
+    if (searchInput.trim()) count++;
     if (selectedBrand !== 'all') count++;
     if (selectedYear !== 'all') count++;
     if (transmission !== 'all') count++;
@@ -180,15 +183,15 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
     if (availability !== 'all') count++;
     if (hasPriceFilter) count++;
     return count;
-  }, [category, searchQuery, selectedBrand, selectedYear, transmission, fuelType, seats, availability, hasPriceFilter]);
+  }, [category, searchInput, selectedBrand, selectedYear, transmission, fuelType, seats, availability, hasPriceFilter]);
 
   const filteredVehicles = useMemo(() => {
     return safeVehicles
       .filter((vehicle) => {
         if (category !== 'all' && vehicle.category !== category) return false;
 
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase();
+        if (searchInput.trim()) {
+          const q = searchInput.trim().toLowerCase();
           const match =
             vehicle.brand.toLowerCase().includes(q) ||
             vehicle.model.toLowerCase().includes(q) ||
@@ -229,7 +232,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
   }, [
     safeVehicles,
     category,
-    searchQuery,
+    searchInput,
     selectedBrand,
     selectedYear,
     transmission,
@@ -245,33 +248,20 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
   ]);
 
   const resetFilters = () => {
-    setCategory('all');
-    setSearchQuery('');
-    setSelectedBrand('all');
-    setSelectedYear('all');
-    setTransmission('all');
-    setFuelType('all');
-    setSeats('all');
-    setAvailability('all');
-    setMaxPriceCap(null);
-    setSortBy('recommended');
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    lastSyncedQRef.current = '';
+    setSearchInput('');
+    setSearchParams(
+      buildCatalogSearchParams({ from: urlState.from, to: urlState.to }, priceBounds.max),
+      { replace: true, scroll: false }
+    );
   };
 
   const handleClearActiveDates = () => {
-    setActivePickupDate(undefined);
-    setActiveReturnDate(undefined);
-    if (onClearDates) {
-      onClearDates();
-    }
-    if (onFilterChange) {
-      onFilterChange({
-        category,
-        searchQuery,
-        transmission,
-        pickupDate: undefined,
-        returnDate: undefined,
-      });
-    }
+    updateQuery({ from: '', to: '' });
   };
 
   return (
@@ -328,7 +318,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               <ArrowUpDown className="w-4 h-4 text-slate-400 shrink-0" />
               <select
                 value={sortBy || 'recommended'}
-                onChange={(e) => setSortBy(e.target.value as SortField)}
+                onChange={(e) => updateQuery({ sort: e.target.value as SortField })}
                 aria-label="ترتيب السيارات"
                 className="bg-transparent min-h-11 text-sm text-slate-200 font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
               >
@@ -350,7 +340,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <span>الفئة: {VEHICLE_CATEGORY_LABELS[category as VehicleCategory]}</span>
                 <button
                   type="button"
-                  onClick={() => setCategory('all')}
+                  onClick={() => updateQuery({ category: 'all' })}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر الفئة"
                 >
@@ -358,12 +348,12 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 </button>
               </span>
             )}
-            {searchQuery.trim() && (
+            {searchInput.trim() && (
               <span className="inline-flex items-center gap-1 ps-3 pe-1 py-0.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold">
-                <span>بحث: "{searchQuery}"</span>
+                <span>بحث: "{searchInput.trim()}"</span>
                 <button
                   type="button"
-                  onClick={() => setSearchQuery('')}
+                  onClick={clearSearchQuery}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر البحث"
                 >
@@ -376,7 +366,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <span>الشركة: {selectedBrand}</span>
                 <button
                   type="button"
-                  onClick={() => setSelectedBrand('all')}
+                  onClick={() => updateQuery({ brand: 'all' })}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر الشركة"
                 >
@@ -389,7 +379,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <span>السنة: {selectedYear}</span>
                 <button
                   type="button"
-                  onClick={() => setSelectedYear('all')}
+                  onClick={() => updateQuery({ year: 'all' })}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر سنة الصنع"
                 >
@@ -402,7 +392,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <span>الناقل: {TRANSMISSION_LABEL[transmission]}</span>
                 <button
                   type="button"
-                  onClick={() => setTransmission('all')}
+                  onClick={() => updateQuery({ transmission: 'all' })}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر ناقل الحركة"
                 >
@@ -415,7 +405,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <span>الوقود: {FUEL_LABEL[fuelType]}</span>
                 <button
                   type="button"
-                  onClick={() => setFuelType('all')}
+                  onClick={() => updateQuery({ fuel: 'all' })}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر نوع الوقود"
                 >
@@ -428,7 +418,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <span>المقاعد: {seats}</span>
                 <button
                   type="button"
-                  onClick={() => setSeats('all')}
+                  onClick={() => updateQuery({ seats: 'all' })}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر عدد المقاعد"
                 >
@@ -441,7 +431,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <span>التوفر: {AVAILABILITY_CHIP_LABEL[availability]}</span>
                 <button
                   type="button"
-                  onClick={() => setAvailability('all')}
+                  onClick={() => updateQuery({ availability: 'all' })}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر التوفر"
                 >
@@ -454,7 +444,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <span>السعر الأقصى: {formatMoney(maxPrice)}</span>
                 <button
                   type="button"
-                  onClick={() => setMaxPriceCap(null)}
+                  onClick={() => updateQuery({ max: null })}
                   className="min-w-11 min-h-11 -my-2 -me-1 inline-flex items-center justify-center rounded-lg hover:text-white cursor-pointer"
                   aria-label="إزالة فلتر السعر الأقصى"
                 >
@@ -495,8 +485,8 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               </label>
               <SearchInput
                 id="desktop-search-input"
-                value={searchQuery}
-                onChange={setSearchQuery}
+                value={searchInput}
+                onChange={handleSearchInputChange}
                 placeholder="مثال: أوبتيما، إلنترا، BYD..."
               />
             </div>
@@ -515,7 +505,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setCategory(item.id as VehicleCategory | 'all')}
+                    onClick={() => updateQuery({ category: item.id as VehicleCategory | 'all' })}
                     className={`w-full min-h-11 text-start px-3 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
                       category === item.id
                         ? 'bg-amber-500 text-slate-950 font-bold'
@@ -542,7 +532,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 max={priceBounds.max}
                 step="5"
                 value={maxPrice}
-                onChange={(e) => setMaxPriceCap(Number(e.target.value))}
+                onChange={(e) => updateQuery({ max: Number(e.target.value) })}
                 className="w-full accent-amber-500 bg-slate-800 h-2 rounded-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               />
               <div className="flex justify-between text-sm text-slate-400 mt-1 tabular-nums">
@@ -558,7 +548,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               <select
                 id="desktop-brand-select"
                 value={selectedBrand || 'all'}
-                onChange={(e) => setSelectedBrand(e.target.value)}
+                onChange={(e) => updateQuery({ brand: e.target.value })}
                 className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
               >
                 <option value="all">جميع الشركات</option>
@@ -576,7 +566,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <select
                   id="desktop-year-select"
                   value={selectedYear === 'all' ? 'all' : String(selectedYear)}
-                  onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  onChange={(e) => updateQuery({ year: e.target.value === 'all' ? 'all' : Number(e.target.value) })}
                   className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer tabular-nums"
                 >
                   <option value="all">الكل</option>
@@ -593,7 +583,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <select
                   id="desktop-seats-select"
                   value={seats === 'all' ? 'all' : String(seats)}
-                  onChange={(e) => setSeats(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  onChange={(e) => updateQuery({ seats: e.target.value === 'all' ? 'all' : Number(e.target.value) })}
                   className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer tabular-nums"
                 >
                   <option value="all">الكل</option>
@@ -612,7 +602,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <select
                   id="desktop-transmission-select"
                   value={transmission || 'all'}
-                  onChange={(e) => setTransmission(e.target.value as TransmissionType | 'all')}
+                  onChange={(e) => updateQuery({ transmission: e.target.value as TransmissionType | 'all' })}
                   className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
                 >
                   <option value="all">الكل</option>
@@ -628,7 +618,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <select
                   id="desktop-fuel-select"
                   value={fuelType || 'all'}
-                  onChange={(e) => setFuelType(e.target.value as FuelType | 'all')}
+                  onChange={(e) => updateQuery({ fuel: e.target.value as FuelType | 'all' })}
                   className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
                 >
                   <option value="all">الكل</option>
@@ -653,7 +643,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                   <button
                     key={a.id}
                     type="button"
-                    onClick={() => setAvailability(a.id as 'all' | 'available' | 'rented')}
+                    onClick={() => updateQuery({ availability: a.id as 'all' | 'available' | 'rented' })}
                     className={`flex-1 min-h-11 py-2 px-1 text-sm rounded-xl border font-semibold cursor-pointer ${
                       availability === a.id
                         ? 'bg-amber-500/20 border-amber-500 text-amber-400'
@@ -697,8 +687,12 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                     key={vehicle.id}
                     vehicle={vehicle}
                     variant="catalog"
-                    onViewDetails={handleDetails}
-                    onBook={handleBooking}
+                    onViewDetails={onViewDetails}
+                    onBook={onBook}
+                    bookTo={buildBookingUrl(
+                      vehicle.id,
+                      isDateFilterApplied ? { from: activePickupDate, to: activeReturnDate } : undefined
+                    )}
                   />
                 ))}
               </div>
@@ -742,8 +736,8 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
               </label>
               <SearchInput
                 id="mobile-search-input"
-                value={searchQuery}
-                onChange={setSearchQuery}
+                value={searchInput}
+                onChange={handleSearchInputChange}
                 placeholder="مثال: أوبتيما، إلنترا، BYD..."
               />
             </div>
@@ -762,7 +756,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setCategory(item.id as VehicleCategory | 'all')}
+                    onClick={() => updateQuery({ category: item.id as VehicleCategory | 'all' })}
                     className={`min-h-11 py-2 px-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
                       category === item.id
                         ? 'bg-amber-500 text-slate-950 font-bold'
@@ -789,7 +783,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 max={priceBounds.max}
                 step="5"
                 value={maxPrice}
-                onChange={(e) => setMaxPriceCap(Number(e.target.value))}
+                onChange={(e) => updateQuery({ max: Number(e.target.value) })}
                 className="w-full accent-amber-500 bg-slate-800 h-2 rounded-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               />
             </div>
@@ -802,7 +796,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <select
                   id="mobile-year-select"
                   value={selectedYear === 'all' ? 'all' : String(selectedYear)}
-                  onChange={(e) => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  onChange={(e) => updateQuery({ year: e.target.value === 'all' ? 'all' : Number(e.target.value) })}
                   className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer tabular-nums"
                 >
                   <option value="all">الكل</option>
@@ -819,7 +813,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <select
                   id="mobile-seats-select"
                   value={seats === 'all' ? 'all' : String(seats)}
-                  onChange={(e) => setSeats(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  onChange={(e) => updateQuery({ seats: e.target.value === 'all' ? 'all' : Number(e.target.value) })}
                   className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer tabular-nums"
                 >
                   <option value="all">الكل</option>
@@ -838,7 +832,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <select
                   id="mobile-transmission-select"
                   value={transmission || 'all'}
-                  onChange={(e) => setTransmission(e.target.value as TransmissionType | 'all')}
+                  onChange={(e) => updateQuery({ transmission: e.target.value as TransmissionType | 'all' })}
                   className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
                 >
                   <option value="all">الكل</option>
@@ -854,7 +848,7 @@ export const CarCatalog: React.FC<CarCatalogProps> = ({
                 <select
                   id="mobile-fuel-select"
                   value={fuelType || 'all'}
-                  onChange={(e) => setFuelType(e.target.value as FuelType | 'all')}
+                  onChange={(e) => updateQuery({ fuel: e.target.value as FuelType | 'all' })}
                   className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer"
                 >
                   <option value="all">الكل</option>

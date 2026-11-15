@@ -75,11 +75,18 @@ export const generateRentalContractPdf = secureCall(
         );
       }
 
-      // Sync latest mileageAtPickup / mileageAtReturn from booking if recorded after contract issuance
+      // Sync latest mileageAtPickup / mileageAtReturn and saved discount snapshot if present
+      const resolvedPickup = existingData.mileageAtPickup ?? bookingData.mileageAtPickup;
+      const resolvedReturn = existingData.mileageAtReturn ?? bookingData.mileageAtReturn;
+      const resolvedDiscountPct = existingData.discountPercentage ?? bookingData.discountPercentage;
+      const resolvedDiscountBase = existingData.discountBase ?? bookingData.discountBase;
+
       const mergedContract: FrozenContractDocument = {
         ...existingData,
-        mileageAtPickup: existingData.mileageAtPickup ?? bookingData.mileageAtPickup,
-        mileageAtReturn: existingData.mileageAtReturn ?? bookingData.mileageAtReturn,
+        ...(resolvedPickup !== undefined ? { mileageAtPickup: resolvedPickup } : {}),
+        ...(resolvedReturn !== undefined ? { mileageAtReturn: resolvedReturn } : {}),
+        ...(typeof resolvedDiscountPct === 'number' ? { discountPercentage: resolvedDiscountPct } : {}),
+        ...(typeof resolvedDiscountBase === 'number' ? { discountBase: resolvedDiscountBase } : {}),
       };
 
       const safeSnapshot = JSON.parse(JSON.stringify(mergedContract));

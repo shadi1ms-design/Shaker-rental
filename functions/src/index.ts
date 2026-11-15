@@ -92,8 +92,13 @@ export {
 } from './telegramWebhook';
 
 // ==========================================
-// 8. Scheduled Automated Tasks
+// 8. Scheduled Automated Tasks & SEO Meta
 // ==========================================
 export {
   checkOverdueRentals,
 } from './overdueRentals';
+
+export {
+  vehicleMeta,
+} from './vehicleMeta';
+

@@ -112,7 +112,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
               type="button"
               onClick={handleMarkAllAsRead}
               disabled={isProcessing}
-              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer disabled:opacity-50"
+              className="min-h-11 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer disabled:opacity-50"
             >
               <CheckCheck className="w-4 h-4 text-emerald-400" />
               <span>تعليم الكل كمقروء</span>
@@ -120,7 +120,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
           )}
 
           {/* Filter Pills */}
-          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+          <div className="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-sm">
             {(
               [
                 { id: 'all', label: 'الكل' },
@@ -131,8 +131,9 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
             ).map((f) => (
               <button
                 key={f.id}
+                type="button"
                 onClick={() => setFilter(f.id)}
-                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                className={`min-h-11 px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer ${
                   filter === f.id
                     ? 'bg-amber-500 text-slate-950 shadow-sm'
                     : 'text-slate-400 hover:text-white'
@@ -174,9 +175,9 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
                   </div>
 
                   <div className="space-y-1.5 flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <h4 className={`text-xs font-bold ${isUnread ? 'text-amber-300 font-extrabold' : 'text-white'}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className={`text-sm font-bold ${isUnread ? 'text-amber-300 font-extrabold' : 'text-white'}`}>
                           {n.title}
                         </h4>
                         {isUnread && (
@@ -191,7 +192,7 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
                       </span>
                     </div>
 
-                    <p className="text-xs text-slate-300 leading-relaxed">{n.message}</p>
+                    <p className="text-sm text-slate-300 leading-relaxed">{n.message}</p>
 
                     {/* Actions Row */}
                     <div className="flex items-center gap-3 pt-1">
@@ -199,9 +200,9 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
                         <button
                           type="button"
                           onClick={() => handleMarkAsRead(n.id)}
-                          className="text-xs text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                          className="min-h-11 px-3 text-sm text-amber-400 hover:text-amber-300 font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
                         >
-                          <Check className="w-3.5 h-3.5" />
+                          <Check className="w-4 h-4" />
                           <span>تعليم كمقروء</span>
                         </button>
                       )}
@@ -209,10 +210,10 @@ export const AdminNotifications: React.FC<AdminNotificationsProps> = ({
                       <button
                         type="button"
                         onClick={() => handleDelete(n.id)}
-                        className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors cursor-pointer mr-auto"
+                        className="min-h-11 px-3 text-sm text-slate-400 hover:text-rose-400 inline-flex items-center gap-1.5 transition-colors cursor-pointer ms-auto"
                         title="حذف التنبيه"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                         <span>حذف</span>
                       </button>
                     </div>

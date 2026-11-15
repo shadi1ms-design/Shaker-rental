@@ -6,6 +6,7 @@ import { isTodayLocal, isWithinLastDaysLocal, isThisMonthLocal, todayLocalISO } 
 import { VEHICLE_CATEGORY_LABELS } from '../constants/vehicleCategories';
 import { ADMIN_TAB_LABEL } from '../constants/adminNav';
 import { formatMoney, formatDateDisplay } from '../utils/format';
+import { StatusBadge } from './common/StatusBadge';
 import {
   BarChart3,
   Download,
@@ -199,13 +200,13 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
             <BarChart3 className="w-5 h-5 text-amber-400" />
             <span>{ADMIN_TAB_LABEL.reports}</span>
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-sm text-slate-400 mt-1">
             متابعة الإيرادات، التأمينات المستردة، مخططات بيانية تفاعلية، ونسبة إشغال الأسطول
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+          <div className="flex flex-wrap bg-slate-950 p-1 rounded-xl border border-slate-800 text-sm">
             {(
               [
                 { id: 'today', label: 'اليوم' },
@@ -218,7 +219,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                 key={p.id}
                 type="button"
                 onClick={() => setPeriod(p.id)}
-                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                className={`min-h-11 px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer text-sm ${
                   period === p.id ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -230,7 +231,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
           <button
             type="button"
             onClick={handleExportCSV}
-            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer"
+            className="min-h-11 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer"
             title="تصدير تقرير CSV"
           >
             <Download className="w-4 h-4 text-emerald-400" />
@@ -240,7 +241,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
           <button
             type="button"
             onClick={() => window.print()}
-            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer"
+            className="min-h-11 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer"
             title="طباعة التقرير"
           >
             <Printer className="w-4 h-4 text-amber-400" />
@@ -252,7 +253,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
       {/* Top 4 KPI metric cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
+          <div className="flex items-center justify-between text-slate-400 text-sm">
             <span>إجمالي الإيراد التشغيلي</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
@@ -261,7 +262,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
+          <div className="flex items-center justify-between text-slate-400 text-sm">
             <span>التأمينات المستردة</span>
             <Clock className="w-4 h-4 text-amber-400" />
           </div>
@@ -270,7 +271,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
+          <div className="flex items-center justify-between text-slate-400 text-sm">
             <span>نسبة إشغال أسطول السيارات</span>
             <Car className="w-4 h-4 text-amber-400" />
           </div>
@@ -279,7 +280,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
+          <div className="flex items-center justify-between text-slate-400 text-sm">
             <span>العمليات المعتمدة / قيد المراجعة</span>
             <Layers className="w-4 h-4 text-blue-400" />
           </div>
@@ -453,12 +454,48 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
 
       {/* Detailed Bookings Table */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-        <div className="p-4 bg-slate-950 border-b border-slate-800 font-bold text-sm text-white flex items-center justify-between">
+        <div className="p-4 bg-slate-950 border-b border-slate-800 font-bold text-sm text-white flex flex-wrap items-center justify-between gap-2">
           <span>سجل الحجوزات للفترة المحددة ({filteredBookings.length} عملية)</span>
           <span className="text-xs text-slate-400 font-normal">مرتبة حسب تاريخ الإنشاء</span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-right border-collapse">
+
+        {/* Mobile Cards View (< 768px) */}
+        <div className="md:hidden divide-y divide-slate-800/70">
+          {filteredBookings.length === 0 ? (
+            <div className="p-8 text-center text-sm text-slate-400">
+              لا توجد حجوزات في الفترة المحددة
+            </div>
+          ) : (
+            filteredBookings.map((b) => (
+              <div key={b.id} className="p-4 space-y-2.5 text-sm">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="tabular-nums font-bold text-amber-400 text-xs block">{b.bookingNumber}</span>
+                    <span className="font-bold text-white text-base block truncate">{b.customerName}</span>
+                  </div>
+                  <div className="shrink-0">
+                    <StatusBadge status={b.status} type="booking" />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 text-slate-300">
+                  <span>{b.vehicleName}</span>
+                  <span className="font-extrabold text-white tabular-nums shrink-0">{formatMoney(b.totalPrice)}</span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                  <span className="tabular-nums">
+                    <span dir="ltr" className="inline-block font-mono">{formatDateDisplay(b.pickupDate)}</span> إلى{' '}
+                    <span dir="ltr" className="inline-block font-mono">{formatDateDisplay(b.returnDate)}</span>
+                  </span>
+                  <span>{b.rentalDays} أيام</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Desktop Table View (>= 768px) */}
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full min-w-[780px] text-sm text-right border-collapse">
             <thead>
               <tr className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
                 <th className="p-3">رقم الحجز</th>
@@ -480,9 +517,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({
                   <td className="p-3 text-slate-300">{b.rentalDays} أيام</td>
                   <td className="p-3 font-bold text-white tabular-nums">{formatMoney(b.totalPrice)}</td>
                   <td className="p-3">
-                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-300">
-                      {b.status}
-                    </span>
+                    <StatusBadge status={b.status} type="booking" />
                   </td>
                 </tr>
               ))}

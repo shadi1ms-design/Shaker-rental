@@ -64,7 +64,7 @@ interface AuthContextType {
   cancelMfaSignIn: () => void;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const DEMO_USERS_STORAGE_KEY = 'shaker_demo_users_v1';
 const DEMO_INITIAL_USERS: UserAccount[] = [];

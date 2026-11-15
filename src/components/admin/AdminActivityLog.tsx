@@ -276,13 +276,13 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
               <ShieldAlert className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl sm:text-2xl font-extrabold text-white">{ADMIN_TAB_LABEL.activity_log}</h1>
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase tracking-wider">
                   للمدير العام فقط
                 </span>
               </div>
-              <p className="text-xs sm:text-sm text-slate-400 mt-1">
+              <p className="text-sm text-slate-400 mt-1">
                 سجل إلكتروني غير قابل للتعديل يوثق جميع العمليات الإدارية الحساسة وتغييرات الصلاحيات وحالات الحجوزات
               </p>
             </div>
@@ -290,11 +290,12 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => fetchLogs(true)}
               disabled={isRefreshing || isLoading}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+              className="min-h-11 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-sm font-bold flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-amber-400' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-amber-400' : ''}`} />
               <span>{isRefreshing ? 'جاري التحديث...' : 'تحديث السجل'}</span>
             </button>
           </div>
@@ -311,13 +312,14 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+          <div className="flex items-center gap-2 min-w-0">
             <Filter className="w-4 h-4 text-slate-400 shrink-0" />
             <select
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 text-xs focus:border-amber-500 outline-none transition-all cursor-pointer"
+              className="min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-base sm:text-sm focus:border-amber-500 outline-none transition-all cursor-pointer max-w-full"
+              aria-label="تصفية حسب نوع الإجراء"
             >
               <option value="all">جميع أنواع الإجراءات ({logs.length})</option>
               {uniqueActions.map((act) => (
@@ -328,7 +330,7 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
             </select>
           </div>
 
-          <span className="text-xs text-slate-400 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 font-mono">
+          <span className="text-xs text-slate-400 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono">
             المعروض: <strong className="text-white">{filteredLogs.length}</strong> / {logs.length}
           </span>
         </div>
@@ -336,15 +338,16 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
 
       {/* Error state */}
       {error && (
-        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-3">
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex flex-wrap items-center gap-3">
           <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <span className="font-bold block mb-0.5">تعذر استعراض سجل النشاطات</span>
             <span>{error}</span>
           </div>
           <button
+            type="button"
             onClick={() => fetchLogs(true)}
-            className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-bold text-xs cursor-pointer"
+            className="min-h-11 px-4 py-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-bold text-sm cursor-pointer"
           >
             إعادة المحاولة
           </button>
@@ -473,7 +476,7 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
                 </div>
 
                 {/* Details snippet / toggle */}
-                <div className="flex items-start justify-between gap-3 pt-1">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-start justify-between gap-3 pt-1">
                   <div className="flex-1 min-w-0">
                     <span className="text-xs text-slate-400 block mb-0.5 font-bold">التفاصيل والبيانات:</span>
                     <p className={`text-slate-300 text-xs font-mono bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60 break-words whitespace-pre-wrap ${!isExpanded ? 'line-clamp-2' : ''}`}>
@@ -485,7 +488,7 @@ export const AdminActivityLog: React.FC<AdminActivityLogProps> = () => {
                     <button
                       type="button"
                       onClick={() => setExpandedLogId(isExpanded ? null : item.id)}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold shrink-0 transition-colors mt-4 cursor-pointer"
+                      className="min-h-11 px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-sm font-bold shrink-0 transition-colors sm:mt-4 cursor-pointer self-start"
                     >
                       {isExpanded ? 'طي التفاصيل' : 'عرض الكل'}
                     </button>

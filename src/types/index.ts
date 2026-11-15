@@ -5,6 +5,8 @@ export type VehicleStatus = 'available' | 'reserved' | 'rented' | 'maintenance' 
 
 export interface Vehicle {
   id: string;
+  docId?: string;
+  dataId?: string;
   brand: string;
   model: string;
   year: number;
@@ -77,6 +79,8 @@ export interface Booking {
   dailyPrice: number;
   basePrice: number;
   discountAmount: number;
+  discountPercentage?: number;
+  discountBase?: number;
   insuranceAmount: number;
   driverFee?: number;
   totalPrice: number;
@@ -131,13 +135,12 @@ export interface Customer {
   deletedAt?: string;
 }
 
-export type DiscountScope = 'all' | 'specific' | 'categories' | 'vehicles';
+export type DiscountScope = 'all' | 'specific';
 
 export interface DiscountConfig {
   enabled: boolean;
   percentage: number;
   scope: DiscountScope;
-  categories?: VehicleCategory[];
   vehicleIds: string[];
   title?: string;
 }
@@ -558,6 +561,8 @@ export interface ContractResponsePayload {
   dailyPrice: number;
   basePrice: number;
   discountAmount: number;
+  discountPercentage?: number;
+  discountBase?: number;
   insuranceAmount: number;
   driverFee: number;
   totalPrice: number;

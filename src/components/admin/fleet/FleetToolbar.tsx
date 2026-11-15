@@ -50,7 +50,7 @@ export const FleetToolbar: React.FC<FleetToolbarProps> = ({
           <select
             value={statusFilter}
             onChange={(e) => onStatusChange(e.target.value)}
-            className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-base sm:text-xs font-bold text-slate-200 focus:outline-none focus:border-amber-500 min-h-[40px] cursor-pointer"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-base sm:text-sm font-bold text-slate-200 focus:outline-none focus:border-amber-500 min-h-11 cursor-pointer"
             aria-label="تصفية حسب الحالة"
           >
             <option value="all">كافة الحالات</option>
@@ -66,7 +66,7 @@ export const FleetToolbar: React.FC<FleetToolbarProps> = ({
           <select
             value={categoryFilter}
             onChange={(e) => onCategoryChange(e.target.value)}
-            className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-base sm:text-xs font-bold text-slate-200 focus:outline-none focus:border-amber-500 min-h-[40px] cursor-pointer"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-base sm:text-sm font-bold text-slate-200 focus:outline-none focus:border-amber-500 min-h-11 cursor-pointer"
             aria-label="تصفية حسب الفئة"
           >
             <option value="all">كافة الفئات</option>
@@ -76,12 +76,12 @@ export const FleetToolbar: React.FC<FleetToolbarProps> = ({
           </select>
 
           {/* Sort Select */}
-          <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 min-h-[40px]">
+          <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 min-h-11">
             <ArrowUpDown className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             <select
               value={sortBy}
               onChange={(e) => onSortChange(e.target.value as FleetSortOption)}
-              className="bg-transparent text-base sm:text-xs font-bold text-slate-200 focus:outline-none cursor-pointer"
+              className="bg-transparent text-base sm:text-sm font-bold text-slate-200 focus:outline-none cursor-pointer"
               aria-label="الترتيب حسب"
             >
               <option value="year-desc" className="bg-slate-900">الأحدث (سنة الصنع)</option>
@@ -93,11 +93,11 @@ export const FleetToolbar: React.FC<FleetToolbarProps> = ({
           </div>
 
           {/* View Mode Toggle Button Group */}
-          <div className="hidden sm:flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-xl p-1 min-h-[40px]">
+          <div className="hidden sm:flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-xl p-1 min-h-11">
             <button
               type="button"
               onClick={() => onViewModeChange('grid')}
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center ${
+              className={`p-2 rounded-lg transition-colors cursor-pointer min-h-11 min-w-11 flex items-center justify-center ${
                 viewMode === 'grid'
                   ? 'bg-amber-500 text-slate-950 font-bold'
                   : 'text-slate-400 hover:text-white'
@@ -110,7 +110,7 @@ export const FleetToolbar: React.FC<FleetToolbarProps> = ({
             <button
               type="button"
               onClick={() => onViewModeChange('table')}
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center ${
+              className={`p-2 rounded-lg transition-colors cursor-pointer min-h-11 min-w-11 flex items-center justify-center ${
                 viewMode === 'table'
                   ? 'bg-amber-500 text-slate-950 font-bold'
                   : 'text-slate-400 hover:text-white'

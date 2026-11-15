@@ -54,16 +54,16 @@ export const PricingPreviewSection: React.FC<PricingPreviewSectionProps> = ({
         </span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs items-end">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm items-end">
         <div>
-          <label className="block text-slate-300 font-semibold mb-1 flex items-center gap-1.5">
+          <label className="text-slate-300 font-semibold mb-1.5 flex items-center gap-1.5">
             <CarIcon className="w-3.5 h-3.5 text-amber-400" />
             <span>اختر سيارة المعاينة:</span>
           </label>
           <select
             value={selectedPreviewVehicleId}
             onChange={(e) => setSelectedPreviewVehicleId(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-medium focus:outline-none focus:border-amber-500"
+            className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-sm text-white font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
           >
             {availablePreviewCars.map((v) => (
               <option key={v.id} value={v.id}>
@@ -74,7 +74,7 @@ export const PricingPreviewSection: React.FC<PricingPreviewSectionProps> = ({
         </div>
 
         <div>
-          <label className="block text-slate-300 font-semibold mb-1 flex items-center gap-1.5">
+          <label className="text-slate-300 font-semibold mb-1.5 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
             <span>عدد الأيام (1 أو 3 أو 7):</span>
           </label>
@@ -84,7 +84,7 @@ export const PricingPreviewSection: React.FC<PricingPreviewSectionProps> = ({
                 key={d}
                 type="button"
                 onClick={() => setPreviewDays(d)}
-                className={`flex-1 py-1.5 rounded-lg font-bold transition-all ${
+                className={`flex-1 min-h-11 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${
                   previewDays === d
                     ? 'bg-amber-500 text-slate-950 shadow-sm'
                     : 'text-slate-400 hover:text-white'
@@ -96,31 +96,27 @@ export const PricingPreviewSection: React.FC<PricingPreviewSectionProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-          <label className="flex items-center gap-2 cursor-pointer text-slate-200">
-            <input
-              type="checkbox"
-              checked={previewIsLoggedIn}
-              onChange={(e) => setPreviewIsLoggedIn(e.target.checked)}
-              className="rounded text-amber-500 focus:ring-amber-500"
-            />
-            <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="font-medium text-xs">عميل مسجل (يستحق الخصم)</span>
-          </label>
-        </div>
+        <label className="min-h-11 flex items-center gap-2 bg-slate-950 px-3 py-2.5 rounded-xl border border-slate-800 cursor-pointer text-slate-200">
+          <input
+            type="checkbox"
+            checked={previewIsLoggedIn}
+            onChange={(e) => setPreviewIsLoggedIn(e.target.checked)}
+            className="rounded text-amber-500 focus:ring-amber-500"
+          />
+          <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="font-medium text-sm">عميل مسجل (يستحق الخصم)</span>
+        </label>
 
-        <div className="flex items-center gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-          <label className="flex items-center gap-2 cursor-pointer text-slate-200">
-            <input
-              type="checkbox"
-              checked={previewWithDriver}
-              onChange={(e) => setPreviewWithDriver(e.target.checked)}
-              className="rounded text-amber-500 focus:ring-amber-500"
-            />
-            <Shield className="w-4 h-4 text-blue-400 shrink-0" />
-            <span className="font-medium text-xs">مع سائق خاص</span>
-          </label>
-        </div>
+        <label className="min-h-11 flex items-center gap-2 bg-slate-950 px-3 py-2.5 rounded-xl border border-slate-800 cursor-pointer text-slate-200">
+          <input
+            type="checkbox"
+            checked={previewWithDriver}
+            onChange={(e) => setPreviewWithDriver(e.target.checked)}
+            className="rounded text-amber-500 focus:ring-amber-500"
+          />
+          <Shield className="w-4 h-4 text-blue-400 shrink-0" />
+          <span className="font-medium text-sm">مع سائق خاص</span>
+        </label>
       </div>
 
       {/* Result Card */}
@@ -174,7 +170,7 @@ export const PricingPreviewSection: React.FC<PricingPreviewSectionProps> = ({
           </div>
         </div>
 
-        <div className="text-xs text-slate-300 font-medium flex items-center gap-2">
+        <div className="text-sm text-slate-300 font-medium flex flex-wrap items-center gap-2">
           <span className="text-slate-400 font-bold">الشرح العربي الموحد الناتج:</span>
           <span className="text-white bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800 font-tajawal">
             {previewCalculation.explanation}

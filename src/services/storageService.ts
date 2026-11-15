@@ -1,4 +1,3 @@
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { getStorageInstance, isFirebaseConfigured } from '../firebase/config';
 import { getArabicErrorMessage } from '../utils/firebaseErrorHandler';
 import { validateUploadedFile } from '../utils/security';
@@ -135,6 +134,7 @@ export const storageService = {
 
     // 2. Connected Firebase Storage Mode - Strictly enforce Cloud storage and fail fast on errors
     try {
+      const { ref, uploadBytesResumable, getDownloadURL } = await import('firebase/storage');
       const storageRef = ref(storageInst, storagePath);
       const metadata = {
         contentType: (file as File).type || 'application/octet-stream',
@@ -340,6 +340,7 @@ export const storageService = {
     const storageInst = await getStorageInstance();
     if (!storageInst) return '';
     try {
+      const { ref, getDownloadURL } = await import('firebase/storage');
       const fileRef = ref(storageInst, storagePath);
       return await getDownloadURL(fileRef);
     } catch (err) {
@@ -356,6 +357,7 @@ export const storageService = {
     if (!storageInst) return;
 
     try {
+      const { ref, deleteObject } = await import('firebase/storage');
       const fileRef = ref(storageInst, storagePath);
       await deleteObject(fileRef);
     } catch (err) {

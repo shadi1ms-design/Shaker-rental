@@ -20,10 +20,11 @@ import { openWhatsAppChat } from '../services/whatsapp';
 import { COMPANY_INFO } from '../constants/company';
 import { RoleBadge } from './common/RoleBadge';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { Link } from './routing/Link';
+import { navigate, routes } from '../router';
 
 interface GlobalMenuProps {
   currentView: string;
-  onNavigate: (view: string) => void;
   onOpenBooking: () => void;
   onOpenAuth: (mode?: 'login' | 'register') => void;
   onOpenProfile: () => void;
@@ -34,7 +35,6 @@ interface GlobalMenuProps {
  */
 export const GlobalMenu: React.FC<GlobalMenuProps> = ({
   currentView,
-  onNavigate,
   onOpenBooking,
   onOpenAuth,
   onOpenProfile,
@@ -66,11 +66,6 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
       }
     }
   }, [isOpen]);
-
-  const handleNav = (view: string) => {
-    onNavigate(view);
-    closeMenu();
-  };
 
   return (
     <>
@@ -171,23 +166,21 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
                 </button>
                 <div className="flex items-center gap-2">
                   {isEmployee && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        closeMenu();
-                        handleNav('admin');
-                      }}
+                    <Link
+                      to={routes.adminDashboard}
+                      onClick={() => closeMenu()}
                       className="flex-1 min-h-11 py-2 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-sm flex items-center justify-center gap-1.5 transition-colors border border-amber-500/20 cursor-pointer"
                     >
                       <LayoutDashboard className="w-4 h-4" />
                       <span>لوحة التحكم</span>
-                    </button>
+                    </Link>
                   )}
                   <button
                     type="button"
                     onClick={() => {
-                      logout();
                       closeMenu();
+                      navigate(routes.home, { replace: true });
+                      logout();
                     }}
                     className={`${isEmployee ? 'min-h-11 py-2 px-3' : 'w-full min-h-11 py-2 px-3'} rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-bold text-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer`}
                     title="تسجيل الخروج"
@@ -227,12 +220,10 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
 
           {/* Navigation Links */}
           <nav className="space-y-1.5 pt-2" aria-label="روابط القائمة">
-            <a
-              href="/"
-              onClick={(e) => {
-                e.preventDefault();
-                handleNav('home');
-              }}
+            <Link
+              to={routes.home}
+              onClick={() => closeMenu()}
+              aria-current={currentView === 'home' ? 'page' : undefined}
               className={`w-full min-h-11 text-start px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-3 transition-colors ${
                 currentView === 'home'
                   ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
@@ -241,60 +232,52 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
             >
               <Home className="w-4 h-4 text-amber-400" />
               <span>الرئيسية</span>
-            </a>
+            </Link>
 
-            <a
-              href="/cars"
-              onClick={(e) => {
-                e.preventDefault();
-                handleNav('cars');
-              }}
+            <Link
+              to={routes.cars}
+              prefetch
+              onClick={() => closeMenu()}
+              aria-current={currentView === 'cars' ? 'page' : undefined}
               className={`w-full min-h-11 text-start px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-3 transition-colors ${
-                currentView === 'cars' || currentView === 'catalog'
+                currentView === 'cars'
                   ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
                   : 'bg-slate-900/60 text-slate-200 hover:bg-slate-900 hover:text-white'
               }`}
             >
               <Car className="w-4 h-4 text-amber-400" />
               <span>أسطول السيارات المتاح</span>
-            </a>
+            </Link>
 
-            <a
-              href="/#about-us"
-              onClick={(e) => {
-                e.preventDefault();
-                handleNav('aboutus');
-              }}
+            <Link
+              to={`${routes.home}#about-us`}
+              scroll={false}
+              onClick={() => closeMenu()}
               className="w-full min-h-11 text-start px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-3 transition-colors bg-slate-900/60 text-slate-200 hover:bg-slate-900 hover:text-white"
             >
               <Info className="w-4 h-4 text-amber-400" />
               <span>من نحن</span>
-            </a>
+            </Link>
 
-            <a
-              href="/contact"
-              onClick={(e) => {
-                e.preventDefault();
-                handleNav('contact');
-              }}
+            <Link
+              to={routes.contact}
+              onClick={() => closeMenu()}
+              aria-current={currentView === 'contact' ? 'page' : undefined}
               className={`w-full min-h-11 text-start px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-3 transition-colors ${
-                currentView === 'contact' || currentView === 'about'
+                currentView === 'contact'
                   ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
                   : 'bg-slate-900/60 text-slate-200 hover:bg-slate-900 hover:text-white'
               }`}
             >
               <Phone className="w-4 h-4 text-amber-400" />
               <span>تواصل معنا وموقعنا</span>
-            </a>
+            </Link>
 
             {isAuthenticated && (
-              <a
-                href="/profile"
-                onClick={(e) => {
-                  e.preventDefault();
-                  closeMenu();
-                  onOpenProfile();
-                }}
+              <Link
+                to={routes.profile}
+                onClick={() => closeMenu()}
+                aria-current={currentView === 'profile' ? 'page' : undefined}
                 className={`w-full min-h-11 text-start px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-3 transition-colors ${
                   currentView === 'profile'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
@@ -303,16 +286,14 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
               >
                 <Calendar className="w-4 h-4 text-amber-400" />
                 <span>حسابي وحجوزاتي</span>
-              </a>
+              </Link>
             )}
 
             {!isLoadingAuth && isAuthenticated && isEmployee && (
-              <a
-                href="/admin"
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleNav('admin');
-                }}
+              <Link
+                to={routes.adminDashboard}
+                onClick={() => closeMenu()}
+                aria-current={currentView === 'admin' ? 'page' : undefined}
                 className={`w-full min-h-11 text-start px-4 py-3 rounded-xl font-extrabold text-sm flex items-center justify-between transition-colors ${
                   currentView === 'admin'
                     ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25'
@@ -324,7 +305,7 @@ export const GlobalMenu: React.FC<GlobalMenuProps> = ({
                   <span>لوحة الإدارة والتحكم</span>
                 </span>
                 <Shield className="w-4 h-4" />
-              </a>
+              </Link>
             )}
           </nav>
         </div>

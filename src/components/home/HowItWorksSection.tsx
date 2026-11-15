@@ -13,13 +13,13 @@ export const HowItWorksSection: React.FC = () => {
       description: 'تصفح أسطولنا الحديث، حدد تواريخ الاستلام والإرجاع، واختر السيارة التي تلبي تطلعاتك.',
     },
     {
-      icon: <UserCheck className="w-5 h-5 text-emerald-400" />,
+      icon: <UserCheck className="w-5 h-5 text-amber-400" />,
       step: '2',
       title: 'أكمل بيانات الحساب والهوية',
       description: 'سجل دخولك أو أنشئ حساباً بسرعة، وأكمل بيانات ملفك الشخصي للحصول على خصم الأعضاء فوراً.',
     },
     {
-      icon: <KeyRound className="w-5 h-5 text-blue-400" />,
+      icon: <KeyRound className="w-5 h-5 text-amber-400" />,
       step: '3',
       title: 'استلم سيارتك بدمشق أو جرمانا',
       description: 'تأكيد فوري لطلبك وتواصل معنا لاستلام السيارة في مقرنا بـجرمانا أو عبر خدمة التوصيل للمطار والموقع.',
@@ -60,7 +60,7 @@ export const HowItWorksSection: React.FC = () => {
           {/* Trust points inside */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-6 border-t border-slate-800/60">
             <div className="flex items-center gap-2.5 p-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
               <div className="text-sm text-slate-300 font-bold">تأمين نقدي مسترد</div>
             </div>
             <div className="flex items-center gap-2.5 p-2">
@@ -68,7 +68,7 @@ export const HowItWorksSection: React.FC = () => {
               <div className="text-sm text-slate-300 font-bold">عقد رسمي معتمد</div>
             </div>
             <div className="flex items-center gap-2.5 p-2">
-              <Truck className="w-4 h-4 text-blue-400 shrink-0" />
+              <Truck className="w-4 h-4 text-amber-400 shrink-0" />
               <div className="text-sm text-slate-300 font-bold">تسليم فوري ومباشر</div>
             </div>
           </div>

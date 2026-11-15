@@ -3,8 +3,8 @@ import { ContactPage } from '../components/ContactPage';
 import { PageIntro } from '../components/common/PageHeaderBanner';
 import { PageTransition } from '../components/routing/PageTransition';
 
-/** /about and /contact */
-export const AboutPage: React.FC = () => (
+/** /contact */
+export const ContactRoutePage: React.FC = () => (
   <PageTransition>
     <PageIntro themeKey="contact" />
     <ContactPage />

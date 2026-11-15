@@ -1,5 +1,5 @@
 import { VehicleCategory, AppSettings, PricingCalculation } from '../types';
-
+import { resolveMemberDiscount } from '../shared/discount';
 import { COMPANY_INFO } from '../constants/company';
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -16,8 +16,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   insuranceLongTerm: 300,
   driverDailyRate: 40,
   discountConfig: {
-    enabled: true,
-    percentage: 10,
+    enabled: false,
+    percentage: 0,
     scope: 'all',
     vehicleIds: [],
     title: 'خصم خاص للأعضاء المسجلين',
@@ -83,46 +83,22 @@ export function calculateRentalPrice(
   const durationDiscountType: 'none' | 'weekly' | 'monthly' | 'proportional' = 'none';
   const durationDiscountDescription = '';
 
-  // Dynamic Member Discount (0-25%)
-  const discountCfg = settings.discountConfig;
-  let memberDiscountEligible = false;
-  let memberDiscountApplied = false;
-  let memberDiscountPercentage = 0;
-  let potentialMemberSavings = 0;
-  let memberDiscountAmount = 0;
+  // Dynamic Member Discount (0-25%) via unified shared resolver
+  const resolvedDiscount = resolveMemberDiscount(settings.discountConfig, {
+    vehicleId: options?.vehicleId,
+    vehicleDocId: options?.vehicleDocId,
+    vehicleDataId: options?.vehicleDataId,
+    isUserLoggedIn: Boolean(options?.isUserLoggedIn),
+  });
 
-  if (discountCfg && discountCfg.enabled) {
-    const rawPct = Number(discountCfg.percentage) || 0;
-    // Treats 0 as no discount, matching server logic
-    const safePercentage = Math.min(25, Math.max(0, Math.round(rawPct)));
-
-    const candidateIds = new Set<string>();
-    if (options?.vehicleId) candidateIds.add(String(options.vehicleId).trim());
-    if (options?.vehicleDocId) candidateIds.add(String(options.vehicleDocId).trim());
-    if (options?.vehicleDataId) candidateIds.add(String(options.vehicleDataId).trim());
-
-    // Matches vehicleId with both doc id and data.id
-    const isVehicleMatched =
-      discountCfg.scope === 'specific'
-        ? Boolean(
-            discountCfg.vehicleIds &&
-            discountCfg.vehicleIds.length > 0 &&
-            candidateIds.size > 0 &&
-            discountCfg.vehicleIds.some((id) => candidateIds.has(String(id).trim()))
-          )
-        : true;
-
-    if (isVehicleMatched && safePercentage > 0) {
-      memberDiscountEligible = true;
-      memberDiscountPercentage = safePercentage;
-      potentialMemberSavings = Math.round(rawBase * (safePercentage / 100));
-
-      if (options?.isUserLoggedIn) {
-        memberDiscountApplied = true;
-        memberDiscountAmount = potentialMemberSavings;
-      }
-    }
-  }
+  const memberDiscountEligible = resolvedDiscount.eligible;
+  const memberDiscountApplied = resolvedDiscount.applied;
+  const memberDiscountPercentage = resolvedDiscount.percentage;
+  const potentialMemberSavings =
+    memberDiscountEligible && memberDiscountPercentage > 0
+      ? Math.round(rawBase * (memberDiscountPercentage / 100))
+      : 0;
+  const memberDiscountAmount = memberDiscountApplied ? potentialMemberSavings : 0;
 
   const finalSubtotal = Math.max(0, rawBase - memberDiscountAmount);
 
@@ -165,6 +141,7 @@ export function calculateRentalPrice(
     memberDiscountApplied,
     potentialMemberSavings,
     insuranceAmount,
+    driverFee,
     subtotal: finalSubtotal,
     totalPrice,
     pricingType: 'daily',

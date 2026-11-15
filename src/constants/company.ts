@@ -24,3 +24,8 @@ export const COMPANY_INFO = {
   aboutTitle: 'من نحن وشروط التأجير',
   aboutDescription: 'الخيار الأول في دمشق لتأجير السيارات الحديثة. نلتزم بأعلى معايير الأمان، الصيانة الدورية المنتظمة، الشفافية الكاملة في التسعير، والتأمين المسترد فور تسليم السيارة.',
 } as const;
+
+export const STARTING_DAILY_PRICE = 30;
+
+// Mandatory email verification for customer accounts created on/after 2026-09-19
+export const EMAIL_VERIFICATION_CUTOFF_DATE = new Date('2026-09-19T00:00:00.000Z').getTime();

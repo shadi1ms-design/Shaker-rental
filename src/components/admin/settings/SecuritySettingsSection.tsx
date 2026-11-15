@@ -23,19 +23,19 @@ export const SecuritySettingsSection: React.FC<SecuritySettingsSectionProps> = (
         الأمان
       </h4>
 
-      <div className="p-4 rounded-2xl bg-slate-950 border border-amber-500/30 space-y-3 text-xs">
+      <div className="p-4 rounded-2xl bg-slate-950 border border-amber-500/30 space-y-3 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">
             <span className="font-extrabold text-white text-sm block">
               فرض المصادقة الثنائية على المدراء
             </span>
-            <p className="text-slate-400 text-xs">
+            <p className="text-slate-300 text-sm">
               عند التفعيل، يُشترط تسجيل الدخول بالعامل الثاني (Google Authenticator) لتنفيذ عمليات إدارة الصلاحيات وتعطيل أو حذف الحسابات.
             </p>
           </div>
 
           <div dir="ltr" className="inline-flex items-center">
-            <label className="relative inline-flex items-center cursor-pointer">
+            <label className="relative inline-flex items-center cursor-pointer min-h-11">
               <input
                 type="checkbox"
                 checked={requireAdminMfa === true}
@@ -44,11 +44,11 @@ export const SecuritySettingsSection: React.FC<SecuritySettingsSectionProps> = (
                 className="sr-only peer"
               />
               <div
-                className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 relative dir-ltr peer-disabled:opacity-50"
+                className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 relative peer-disabled:opacity-50 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400"
                 dir="ltr"
               />
             </label>
-            <span className="ms-3 text-xs font-bold text-slate-300" dir="rtl">
+            <span className="ms-3 text-sm font-bold text-slate-300" dir="rtl">
               {mfaLoadError
                 ? 'تعذّر تحميل الحالة'
                 : requireAdminMfa === null
@@ -64,7 +64,7 @@ export const SecuritySettingsSection: React.FC<SecuritySettingsSectionProps> = (
 
         {mfaReqFeedback && (
           <div
-            className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+            className={`p-3 rounded-xl text-sm font-bold flex items-center gap-2 ${
               mfaReqFeedback.type === 'success'
                 ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
                 : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'

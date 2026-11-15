@@ -10,7 +10,50 @@
       "*.map",
       "**/*.map"
     ],
+    "redirects": [
+      {
+        "source": "/about",
+        "destination": "/contact",
+        "type": 301
+      },
+      {
+        "source": "/about/",
+        "destination": "/contact",
+        "type": 301
+      },
+      {
+        "source": "/catalog",
+        "destination": "/cars",
+        "type": 301
+      },
+      {
+        "source": "/catalog/",
+        "destination": "/cars",
+        "type": 301
+      },
+      {
+        "source": "/admin/login",
+        "destination": "/login",
+        "type": 301
+      },
+      {
+        "source": "/admin/login/",
+        "destination": "/login",
+        "type": 301
+      }
+    ],
     "rewrites": [
+      {
+        "source": "/cars/*/book",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/cars/*",
+        "function": {
+          "functionId": "vehicleMeta",
+          "region": "asia-south1"
+        }
+      },
       {
         "source": "**",
         "destination": "/index.html"

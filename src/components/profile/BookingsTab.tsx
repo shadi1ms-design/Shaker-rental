@@ -1,7 +1,9 @@
 import React from 'react';
-import { AlertCircle, Car, MessageCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, Car, MessageCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { Booking } from '../../types';
 import { formatDateDisplay } from '../../utils/dateUtils';
+import { formatMoney } from '../../utils/format';
+import { formatSavedBookingDiscountLabel } from '../../shared/discount';
 import { openWhatsAppChat } from '../../services/whatsapp';
 import { StatusBadge } from '../common/StatusBadge';
 import { SkeletonLoader } from '../common/SkeletonLoader';
@@ -113,8 +115,49 @@ export const BookingsTab: React.FC<BookingsTabProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/60">
-                  <div className="font-bold text-amber-400 tabular-nums">
-                    الإجمالي: ${Number(booking.totalPrice || 0).toLocaleString('en-US')}
+                  <div className="space-y-1">
+                    <div className="font-bold text-amber-400 tabular-nums">
+                      الإجمالي: {formatMoney(booking.finalTotal ?? booking.totalPrice ?? 0)}
+                    </div>
+                    {(() => {
+                      const discountLabel = formatSavedBookingDiscountLabel({
+                        discountAmount: booking.discountAmount,
+                        discountPercentage: booking.discountPercentage,
+                        discountBase: booking.discountBase,
+                        basePrice: booking.basePrice,
+                      });
+                      const hasBreakdown =
+                        discountLabel ||
+                        Number(booking.basePrice || 0) > 0 ||
+                        Number(booking.insuranceAmount || 0) > 0 ||
+                        Number(booking.driverFee || 0) > 0 ||
+                        Number(booking.extraCharges || 0) > 0;
+                      if (!hasBreakdown) return null;
+                      return (
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 tabular-nums">
+                          {Number(booking.basePrice || 0) > 0 && (
+                            <span>الإيجار: {formatMoney(booking.basePrice)}</span>
+                          )}
+                          {discountLabel && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-bold">
+                              <Sparkles className="w-3 h-3" />
+                              <span>{discountLabel}</span>
+                            </span>
+                          )}
+                          {Number(booking.insuranceAmount || 0) > 0 && (
+                            <span>التأمين: {formatMoney(booking.insuranceAmount)}</span>
+                          )}
+                          {Number(booking.driverFee || 0) > 0 && (
+                            <span>السائق: {formatMoney(booking.driverFee)}</span>
+                          )}
+                          {Number(booking.extraCharges || 0) > 0 && (
+                            <span className="text-rose-300 font-bold">
+                              إضافي: +{formatMoney(booking.extraCharges)}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="flex items-center gap-2">
                     {CANCELLABLE.includes(String(booking.status)) && (

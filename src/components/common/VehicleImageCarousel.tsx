@@ -117,7 +117,7 @@ export const VehicleImageCarousel: React.FC<VehicleImageCarouselProps> = ({
                 loading="lazy"
                 decoding="async"
                 draggable={false}
-                className="relative z-10 w-full h-full object-contain p-2 select-none"
+                className="relative z-10 w-full h-full object-cover select-none"
                 onError={() => setFailed((prev) => ({ ...prev, [src]: true }))}
               />
             </div>

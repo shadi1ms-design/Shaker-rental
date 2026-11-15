@@ -403,6 +403,8 @@ export const createBookingSecure = secureCall(
           dailyPrice: officialDailyPrice,
           basePrice: calculatedPricing.basePrice,
           discountAmount: calculatedPricing.discountAmount,
+          discountPercentage: calculatedPricing.discountPercentage,
+          discountBase: calculatedPricing.basePrice,
           insuranceAmount: calculatedPricing.insuranceAmount,
           driverFee: calculatedPricing.driverFee,
           withDriver,

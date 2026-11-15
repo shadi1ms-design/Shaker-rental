@@ -13,11 +13,29 @@ async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     // Dynamic import: 'vite' is a devDependency and must not be required in production.
     const { createServer: createViteServer } = await import('vite');
+    const enableHmr = process.env.ENABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true',
+        hmr: enableHmr,
+        ws: enableHmr,
       },
+      plugins: enableHmr
+        ? []
+        : [
+            {
+              name: 'disable-hmr-client-ws',
+              enforce: 'post',
+              transform(code, id) {
+                if (id.endsWith('vite/dist/client/client.mjs')) {
+                  return code.replace(
+                    'transport.connect(createHMRHandler(handleMessage));',
+                    '/* HMR WebSocket disabled */',
+                  );
+                }
+              },
+            },
+          ],
       appType: 'spa',
     });
 

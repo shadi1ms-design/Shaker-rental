@@ -265,7 +265,7 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
             ) : (
               <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-right border-collapse">
+                  <table className="w-full min-w-[820px] text-right border-collapse">
                     <thead>
                       <tr className="bg-slate-950/90 text-slate-400 text-xs font-bold border-b border-slate-800">
                         <th className="p-3.5 sticky right-0 bg-slate-950/90 z-20">السيارة</th>
@@ -302,7 +302,7 @@ export const AdminVehicles: React.FC<AdminVehiclesProps> = ({
               <button
                 type="button"
                 onClick={() => setVisibleCount((prev) => prev + 24)}
-                className="px-6 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                className="min-h-11 px-6 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 font-bold text-sm shadow-md transition-all cursor-pointer"
               >
                 عرض المزيد ({filteredVehicles.length - visibleCount} متبقية)
               </button>

@@ -91,7 +91,7 @@ export const BookingStatusProgress: React.FC<BookingStatusProgressProps> = ({ st
                 />
               </div>
               <span
-                className={`text-[11px] sm:text-xs font-bold leading-tight ${
+                className={`text-xs sm:text-sm font-bold leading-tight ${
                   isCurrent
                     ? 'text-brand-gold-light'
                     : isCompleted

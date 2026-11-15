@@ -1,12 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Vehicle, Booking, AppSettings } from '../types';
-import { calculateRentalDays, calculateRentalPrice, DEFAULT_SETTINGS } from '../services/pricing';
-import { dataService } from '../services/dataService';
+import { Vehicle, Booking } from '../types';
+import { calculateRentalDays, calculateRentalPrice } from '../services/pricing';
 import { functionsService } from '../services/functionsService';
 import { bookingFormSchema } from '../services/validation';
 import { openWhatsAppChat } from '../services/whatsapp';
 import { useAuth } from '../contexts/AuthContext';
-import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useAppData } from '../contexts/DataContext';
 import { addDaysISO, todayLocalISO } from '../utils/dateUtils';
 import { normalizeDigits, isValidPhone } from '../utils/phone';
 import { formatMoney } from '../utils/format';
@@ -15,8 +14,9 @@ import { DateField } from './ui/DateField';
 import { useVehicleAvailability } from '../utils/vehicleAvailability';
 import { getVehicleCategoryLabel } from '../constants/vehicleCategories';
 import { COMPANY_INFO } from '../constants/company';
+import { useSearchParams } from '../router';
+import { isValidIsoDateParam } from '../utils/catalogQuery';
 import {
-  X,
   Check,
   Calendar,
   Clock,
@@ -34,49 +34,60 @@ import {
 
 export interface BookingViewProps {
   vehicles?: Vehicle[];
-  selectedVehicle?: Vehicle | null;
   vehicle?: Vehicle | null;
-  onClose: () => void;
   onOpenAuth?: () => void;
   onBookingCreated?: (booking: Booking) => void;
-  onBookingComplete?: (booking: Booking) => void;
   initialDates?: { pickupDate: string; returnDate: string };
-  initialStartDate?: string;
-  initialEndDate?: string;
 }
-
-export type BookingModalProps = BookingViewProps;
 
 export const BookingView: React.FC<BookingViewProps> = ({
   vehicles = [],
-  selectedVehicle,
   vehicle,
-  onClose,
   onOpenAuth,
   onBookingCreated,
-  onBookingComplete,
   initialDates,
-  initialStartDate,
-  initialEndDate,
 }) => {
-  const modalContainerRef = useFocusTrap({ isOpen: true, onClose, trapTab: false });
+  const [searchParams, setSearchParams] = useSearchParams();
   const todayDamascus = todayLocalISO();
   const defaultPickupDate = addDaysISO(todayDamascus, 1);
   const defaultReturnDate = addDaysISO(todayDamascus, 4);
 
-  const activeInitialVehicle = selectedVehicle || vehicle || vehicles?.[0] || null;
+  const urlFrom = searchParams.get('from');
+  const urlTo = searchParams.get('to');
+  const hasValidUrlDates = Boolean(
+    isValidIsoDateParam(urlFrom) && isValidIsoDateParam(urlTo) && urlTo >= urlFrom
+  );
+
+  const activeInitialVehicle = vehicle || vehicles?.[0] || null;
 
   const [vehicleId, setVehicleId] = useState<string>(
     activeInitialVehicle?.id || (vehicles?.[0]?.id || '')
   );
   const [pickupDate, setPickupDate] = useState<string>(
-    initialStartDate || initialDates?.pickupDate || defaultPickupDate
+    initialDates?.pickupDate || (hasValidUrlDates ? urlFrom! : defaultPickupDate)
   );
   const [pickupTime, setPickupTime] = useState<string>('10:00');
   const [returnDate, setReturnDate] = useState<string>(
-    initialEndDate || initialDates?.returnDate || defaultReturnDate
+    initialDates?.returnDate || (hasValidUrlDates ? urlTo! : defaultReturnDate)
   );
   const [returnTime, setReturnTime] = useState<string>('10:00');
+
+  const syncDatesToUrl = (nextPickup: string, nextReturn: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (isValidIsoDateParam(nextPickup) && isValidIsoDateParam(nextReturn) && nextReturn >= nextPickup) {
+          next.set('from', nextPickup);
+          next.set('to', nextReturn);
+        } else {
+          next.delete('from');
+          next.delete('to');
+        }
+        return next;
+      },
+      { replace: true, scroll: false }
+    );
+  };
 
   const { user } = useAuth();
   const [customerName, setCustomerName] = useState(user?.displayName || '');
@@ -106,11 +117,7 @@ export const BookingView: React.FC<BookingViewProps> = ({
     }
   }, [user?.phone, user?.displayName, user?.address, user, samePhoneWhatsApp, customerName, customerPhone, customerAddress]);
 
-  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-
-  useEffect(() => {
-    dataService.getSettings().then((s) => setAppSettings(s)).catch(() => {});
-  }, []);
+  const { settings, settingsReady } = useAppData();
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -121,14 +128,14 @@ export const BookingView: React.FC<BookingViewProps> = ({
   const [createdBooking, setCreatedBooking] = useState<Booking | null>(null);
 
   const currentVehicle = useMemo(() => {
-    return vehicles.find((v) => v.id === vehicleId) || selectedVehicle || vehicle || vehicles?.[0] || null;
-  }, [vehicles, vehicleId, selectedVehicle, vehicle]);
+    return vehicles.find((v) => v.id === vehicleId) || vehicle || vehicles?.[0] || null;
+  }, [vehicles, vehicleId, vehicle]);
 
   const { nextAvailableDate } = useVehicleAvailability(currentVehicle);
 
   // Auto-adjust default pickup date if vehicle is reserved and starts after default date
   useEffect(() => {
-    if (nextAvailableDate && !initialStartDate && !initialDates?.pickupDate) {
+    if (nextAvailableDate && !initialDates?.pickupDate && !hasValidUrlDates) {
       if (pickupDate < nextAvailableDate) {
         setTimeout(() => {
           setPickupDate(nextAvailableDate);
@@ -136,7 +143,7 @@ export const BookingView: React.FC<BookingViewProps> = ({
         }, 0);
       }
     }
-  }, [nextAvailableDate, initialStartDate, initialDates?.pickupDate, pickupDate]);
+  }, [nextAvailableDate, initialDates?.pickupDate, hasValidUrlDates, pickupDate]);
 
   const rentalDays = useMemo(() => {
     return calculateRentalDays(pickupDate, returnDate, pickupTime, returnTime);
@@ -144,14 +151,22 @@ export const BookingView: React.FC<BookingViewProps> = ({
 
   const pricing = useMemo(() => {
     if (!currentVehicle) return null;
+    const effectiveSettings = settingsReady
+      ? settings
+      : { ...settings, discountConfig: { enabled: false, percentage: 0, scope: 'all' as const, vehicleIds: [] } };
     return calculateRentalPrice(
       currentVehicle.category,
       currentVehicle.dailyPrice,
       rentalDays,
-      appSettings,
-      { isUserLoggedIn: Boolean(user), vehicleId: currentVehicle.id }
+      effectiveSettings,
+      {
+        isUserLoggedIn: Boolean(user),
+        vehicleId: currentVehicle.id,
+        vehicleDocId: currentVehicle.docId ?? currentVehicle.id,
+        vehicleDataId: currentVehicle.dataId ?? currentVehicle.id,
+      }
     );
-  }, [currentVehicle, rentalDays, appSettings, user]);
+  }, [currentVehicle, rentalDays, settings, settingsReady, user]);
 
   React.useEffect(() => {
     let isMounted = true;
@@ -367,7 +382,10 @@ export const BookingView: React.FC<BookingViewProps> = ({
         dailyPrice: pricing.dailyPrice,
         basePrice: pricing.basePrice,
         discountAmount: pricing.discountAmount,
+        discountPercentage: pricing.memberDiscountApplied ? pricing.memberDiscountPercentage : 0,
+        discountBase: pricing.basePrice,
         insuranceAmount: pricing.insuranceAmount,
+        driverFee: pricing.driverFee ?? 0,
         totalPrice: pricing.totalPrice,
         notes,
         status: 'new',
@@ -376,7 +394,6 @@ export const BookingView: React.FC<BookingViewProps> = ({
 
       setCreatedBooking(newBooking);
       if (onBookingCreated) onBookingCreated(newBooking);
-      if (onBookingComplete) onBookingComplete(newBooking);
       setStep(3);
     } catch (err: unknown) {
       setErrorMessage(
@@ -394,11 +411,8 @@ export const BookingView: React.FC<BookingViewProps> = ({
   };
 
   return (
-    <div className="flex items-start justify-center p-3 sm:p-6 bg-slate-950">
-      <div
-        ref={modalContainerRef}
-        className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-card sm:rounded-modal shadow-2xl animate-in fade-in duration-200 text-slate-100 overflow-hidden"
-      >
+    <section className="flex items-start justify-center p-3 sm:p-6 bg-slate-950" aria-labelledby="booking-modal-title">
+      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-card sm:rounded-modal shadow-2xl animate-in fade-in duration-200 text-slate-100 overflow-hidden">
         {/* Header - Simplified */}
         <div className="flex items-center justify-between px-5 sm:px-6 py-4 bg-slate-950 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -409,15 +423,6 @@ export const BookingView: React.FC<BookingViewProps> = ({
               {step === 3 ? 'تم تأكيد طلب الحجز' : 'حجز سيارة عبر الإنترنت'}
             </h2>
           </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="min-w-11 min-h-11 p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white inline-flex items-center justify-center transition-colors cursor-pointer"
-            aria-label="إغلاق"
-          >
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
         {/* Progress indicator (Step 1 & 2) */}
@@ -559,8 +564,10 @@ export const BookingView: React.FC<BookingViewProps> = ({
                     id="booking-pickup-date"
                     value={pickupDate || ''}
                     onChange={(next) => {
+                      const nextReturn = next && returnDate && returnDate < next ? next : returnDate;
                       setPickupDate(next);
-                      if (next && returnDate && returnDate < next) setReturnDate(next);
+                      if (nextReturn !== returnDate) setReturnDate(nextReturn);
+                      syncDatesToUrl(next, nextReturn);
                     }}
                     min={todayDamascus}
                     required
@@ -594,7 +601,10 @@ export const BookingView: React.FC<BookingViewProps> = ({
                   <DateField
                     id="booking-return-date"
                     value={returnDate || ''}
-                    onChange={(next) => setReturnDate(next)}
+                    onChange={(next) => {
+                      setReturnDate(next);
+                      syncDatesToUrl(pickupDate, next);
+                    }}
                     min={pickupDate || todayDamascus}
                     required
                     ariaLabel="تاريخ الإرجاع"
@@ -637,12 +647,32 @@ export const BookingView: React.FC<BookingViewProps> = ({
                     </span>
                     <span className="tabular-nums font-extrabold">-{formatMoney(pricing.memberDiscountAmount)}</span>
                   </div>
-                ) : !user && (appSettings.discountConfig?.enabled ?? true) ? (
-                  <div className="flex items-center gap-1.5 text-sm text-amber-300 bg-amber-500/15 px-3 py-2 rounded-xl border border-amber-500/25">
-                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>نصيحة: سجّل دخولك بحسابك لتفعيل خصم العضوية بنسبة {pricing.memberDiscountPercentage || appSettings.discountConfig?.percentage || 10}% فوراً!</span>
-                  </div>
                 ) : null}
+              </div>
+            )}
+
+            {!user && (
+              <div className="p-4 rounded-card bg-slate-950 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-sm">
+                <div className="flex items-start gap-2.5 text-amber-200">
+                  <Lock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-white block">سجّل الدخول لتأكيد الحجز لاحقاً</span>
+                    <span className="text-slate-300">
+                      {settingsReady && pricing?.memberDiscountEligible && pricing.memberDiscountPercentage > 0
+                        ? `يمكنك استعراض السعر الآن، وعند تسجيل الدخول سيتفعّل خصم الأعضاء (${pricing.memberDiscountPercentage}%) ويتاح تأكيد الطلب.`
+                        : 'يمكنك حساب التكلفة الآن، ويتطلب إرسال وتأكيد الحجز تسجيل الدخول بحسابك.'}
+                    </span>
+                  </div>
+                </div>
+                {onOpenAuth && (
+                  <button
+                    type="button"
+                    onClick={onOpenAuth}
+                    className="min-h-11 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-extrabold shrink-0 cursor-pointer"
+                  >
+                    تسجيل الدخول
+                  </button>
+                )}
               </div>
             )}
 
@@ -985,7 +1015,7 @@ export const BookingView: React.FC<BookingViewProps> = ({
         )}
         </div>
       </div>
-    </div>
+    </section>
   );
 };
 

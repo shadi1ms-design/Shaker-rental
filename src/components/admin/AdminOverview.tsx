@@ -99,7 +99,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
           </div>
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+            <div className="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-sm">
               {(
                 [
                   { id: 'today', label: 'اليوم' },
@@ -112,7 +112,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
                   key={p.id}
                   type="button"
                   onClick={() => setPeriod(p.id)}
-                  className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  className={`min-h-11 px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer ${
                     period === p.id
                       ? 'bg-amber-500 text-slate-950 shadow-sm'
                       : 'text-slate-400 hover:text-white'
@@ -204,7 +204,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
 
       {/* 5-Status Fleet Occupancy Strip */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-3 shadow-xl">
-        <div className="flex items-center justify-between text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <span className="font-bold text-white flex items-center gap-2">
             <Car className="w-4 h-4 text-amber-400" />
             نسبة إشغال وجاهزية الأسطول ({totalVehicles} مركبة)
@@ -212,7 +212,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateTab('vehicles')}
-            className="text-xs text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+            className="min-h-11 px-2 text-sm text-amber-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
           >
             <span>إدارة الأسطول</span>
             <span>←</span>
@@ -280,7 +280,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Widget 1: Recent Bookings */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
             <h3 className="font-bold text-sm text-white flex items-center gap-2">
               <Calendar className="w-4 h-4 text-amber-400" />
               أحدث طلبات الحجز المستلمة
@@ -288,7 +288,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
             <button
               type="button"
               onClick={() => onNavigateTab('bookings')}
-              className="text-xs text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+              className="min-h-11 px-2 text-sm text-amber-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
             >
               <span>عرض كافة الحجوزات ({bookings.length})</span>
               <span>←</span>
@@ -308,19 +308,19 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
               {bookings.slice(0, 5).map((b) => (
                 <div
                   key={b.id}
-                  className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 hover:border-slate-700 flex items-center justify-between gap-3 text-xs transition-colors"
+                  className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 hover:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm transition-colors"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono font-bold text-amber-400">{b.bookingNumber}</span>
                       <span className="font-bold text-white">{b.customerName}</span>
                     </div>
-                    <p className="text-slate-400 text-xs">
+                    <p className="text-slate-400 text-xs leading-relaxed">
                       {b.vehicleName} • من <span dir="ltr" className="inline-block font-mono text-slate-300">{formatDateDisplay(b.pickupDate)}</span> إلى <span dir="ltr" className="inline-block font-mono text-slate-300">{formatDateDisplay(b.returnDate)}</span> ({b.rentalDays} أيام)
                     </p>
                   </div>
 
-                  <div className="text-left flex flex-col items-end gap-1.5 shrink-0">
+                  <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800/60">
                     <span className="font-mono font-bold text-white">{formatMoney(b.totalPrice)}</span>
                     <StatusBadge status={b.status} type="booking" />
                   </div>
@@ -332,7 +332,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
 
         {/* Widget 2: Fleet Status */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
             <h3 className="font-bold text-sm text-white flex items-center gap-2">
               <Car className="w-4 h-4 text-amber-400" />
               جاهزية أسطول السيارات للتأجير
@@ -340,7 +340,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
             <button
               type="button"
               onClick={() => onNavigateTab('vehicles')}
-              className="text-xs text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+              className="min-h-11 px-2 text-sm text-amber-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
             >
               <span>إدارة الأسطول بالكامل</span>
               <span>←</span>
@@ -360,9 +360,9 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
               {vehicles.slice(0, 5).map((v) => (
                 <div
                   key={v.id}
-                  className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 hover:border-slate-700 flex items-center justify-between gap-3 text-xs transition-colors"
+                  className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 hover:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm transition-colors"
                 >
-                  <div className="space-y-0.5">
+                  <div className="space-y-0.5 min-w-0">
                     <span className="font-bold block text-white">
                       {v.brand} {v.model} ({v.year})
                     </span>
@@ -371,7 +371,7 @@ export const AdminOverview: React.FC<AdminOverviewProps> = ({
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <StatusBadge status={v.status} type="vehicle" />
                   </div>
                 </div>

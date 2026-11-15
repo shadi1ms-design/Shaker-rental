@@ -27,6 +27,8 @@ export interface FrozenContractDocument {
   dailyPrice: number;
   basePrice: number;
   discountAmount: number;
+  discountPercentage?: number;
+  discountBase?: number;
   insuranceAmount: number;
   driverFee: number;
   totalPrice: number;
@@ -173,14 +175,6 @@ export function buildContractSnapshot(params: {
     vehicleName: String(
       bookingData.vehicleName || `${vehicleData.brand || ''} ${vehicleData.model || ''}`.trim() || 'المركبة'
     ),
-    vehicleYear: typeof vehicleData.year === 'number' ? vehicleData.year : undefined,
-    vehicleColor: typeof vehicleData.color === 'string' ? vehicleData.color : undefined,
-    plateNumber:
-      typeof internalVehicleData.plateNumber === 'string' && internalVehicleData.plateNumber
-        ? internalVehicleData.plateNumber
-        : typeof vehicleData.plateNumber === 'string' && vehicleData.plateNumber
-        ? vehicleData.plateNumber
-        : undefined,
     pickupDate: String(bookingData.pickupDate || ''),
     returnDate: String(bookingData.returnDate || ''),
     pickupTime: String(bookingData.pickupTime || ''),
@@ -192,7 +186,6 @@ export function buildContractSnapshot(params: {
     insuranceAmount: Number(bookingData.insuranceAmount || 0),
     driverFee: Number(bookingData.driverFee || 0),
     totalPrice,
-    extraCharges: typeof bookingData.extraCharges === 'number' ? bookingData.extraCharges : undefined,
     finalTotal:
       typeof bookingData.finalTotal === 'number'
         ? bookingData.finalTotal
@@ -213,6 +206,31 @@ export function buildContractSnapshot(params: {
     termsAndConditions: parseRentalTerms(settingsData.rentalTerms),
     issuedAt,
   };
+
+  if (typeof vehicleData.year === 'number') {
+    snapshot.vehicleYear = vehicleData.year;
+  }
+  if (typeof vehicleData.color === 'string' && vehicleData.color) {
+    snapshot.vehicleColor = vehicleData.color;
+  }
+  const resolvedPlate =
+    typeof internalVehicleData.plateNumber === 'string' && internalVehicleData.plateNumber
+      ? internalVehicleData.plateNumber
+      : typeof vehicleData.plateNumber === 'string' && vehicleData.plateNumber
+      ? vehicleData.plateNumber
+      : undefined;
+  if (resolvedPlate !== undefined) {
+    snapshot.plateNumber = resolvedPlate;
+  }
+  if (typeof bookingData.discountPercentage === 'number' && Number.isFinite(bookingData.discountPercentage)) {
+    snapshot.discountPercentage = bookingData.discountPercentage;
+  }
+  if (typeof bookingData.discountBase === 'number' && Number.isFinite(bookingData.discountBase)) {
+    snapshot.discountBase = bookingData.discountBase;
+  }
+  if (typeof bookingData.extraCharges === 'number') {
+    snapshot.extraCharges = bookingData.extraCharges;
+  }
 
   if (resolvedPickupMileage !== undefined) {
     snapshot.mileageAtPickup = resolvedPickupMileage;

@@ -55,7 +55,7 @@ export const BookingsFilterBar: React.FC<BookingsFilterBarProps> = ({
               key={tab.key}
               type="button"
               onClick={() => onStatusFilterChange(tab.key)}
-              className={`px-3 py-1.5 rounded-card text-xs font-bold transition-all cursor-pointer ${
+              className={`min-h-11 px-3.5 py-2 rounded-card text-sm font-bold transition-all cursor-pointer ${
                 bookingStatusFilter === tab.key
                   ? 'bg-brand-gold text-brand-obsidian font-extrabold shadow-gold'
                   : 'bg-brand-elevated text-brand-text hover:bg-brand-border'
@@ -75,13 +75,13 @@ export const BookingsFilterBar: React.FC<BookingsFilterBarProps> = ({
               value={bookingSearch}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="بحث بالاسم، الهاتف، السيارة..."
-              className="w-full min-h-[44px] bg-brand-obsidian border border-brand-border rounded-card ps-9 pe-3 py-2 text-base sm:text-sm text-brand-text focus:outline-none focus:border-brand-gold"
+              className="w-full min-h-11 bg-brand-obsidian border border-brand-border rounded-card ps-9 pe-3 py-2 text-base sm:text-sm text-brand-text placeholder:text-slate-400 focus:outline-none focus:border-brand-gold"
             />
           </div>
           <button
             type="button"
             onClick={onExportCSV}
-            className="min-h-[44px] px-3.5 py-2 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors border border-brand-border"
+            className="min-h-11 px-3.5 py-2 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text text-sm font-bold flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors border border-brand-border"
             title="تصدير الحجوزات CSV"
           >
             <Download className="w-4 h-4 text-brand-gold-light" />
@@ -91,10 +91,10 @@ export const BookingsFilterBar: React.FC<BookingsFilterBarProps> = ({
       </div>
 
       {/* Date Range Filters */}
-      <div className="flex flex-wrap items-center gap-3 bg-brand-surface border border-brand-border px-4 py-2.5 rounded-card text-xs">
+      <div className="flex flex-wrap items-center gap-3 bg-brand-surface border border-brand-border px-4 py-2.5 rounded-card text-sm">
         <span className="text-brand-text font-bold">تصفية حسب تاريخ الاستلام:</span>
         <div className="flex items-center gap-2">
-          <label htmlFor="admin-bookings-date-from" className="text-brand-muted">
+          <label htmlFor="admin-bookings-date-from" className="text-brand-muted text-sm">
             من:
           </label>
           <DateField
@@ -110,7 +110,7 @@ export const BookingsFilterBar: React.FC<BookingsFilterBarProps> = ({
           />
         </div>
         <div className="flex items-center gap-2">
-          <label htmlFor="admin-bookings-date-to" className="text-brand-muted">
+          <label htmlFor="admin-bookings-date-to" className="text-brand-muted text-sm">
             إلى:
           </label>
           <DateField
@@ -127,7 +127,7 @@ export const BookingsFilterBar: React.FC<BookingsFilterBarProps> = ({
           <button
             type="button"
             onClick={onClearDates}
-            className="text-status-danger hover:underline font-semibold cursor-pointer"
+            className="min-h-11 px-3 inline-flex items-center text-status-danger hover:underline font-semibold text-sm cursor-pointer"
           >
             مسح التواريخ
           </button>

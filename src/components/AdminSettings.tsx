@@ -57,7 +57,7 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
     const longTerm = base.insuranceLongTerm ?? base.insuranceAbove2Days ?? DEFAULT_SETTINGS.insuranceAbove2Days ?? 300;
 
     const rawPct = base.discountConfig?.percentage;
-    const safePct = Number.isFinite(rawPct) ? Math.min(25, Math.max(0, Number(rawPct))) : 10;
+    const safePct = Number.isFinite(rawPct) ? Math.min(25, Math.max(0, Number(rawPct))) : 0;
 
     return {
       ...DEFAULT_SETTINGS,
@@ -79,9 +79,9 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
       monthlyRateJeep: base.monthlyRateJeep ?? DEFAULT_SETTINGS.monthlyRateJeep ?? 1500,
       rentalTerms: base.rentalTerms ?? DEFAULT_SETTINGS.rentalTerms,
       discountConfig: {
-        enabled: base.discountConfig?.enabled ?? DEFAULT_SETTINGS.discountConfig?.enabled ?? true,
+        enabled: base.discountConfig?.enabled ?? DEFAULT_SETTINGS.discountConfig?.enabled ?? false,
         percentage: safePct,
-        scope: base.discountConfig?.scope ?? DEFAULT_SETTINGS.discountConfig?.scope ?? 'all',
+        scope: base.discountConfig?.scope === 'specific' ? 'specific' : 'all',
         vehicleIds: base.discountConfig?.vehicleIds ?? DEFAULT_SETTINGS.discountConfig?.vehicleIds ?? [],
         title: base.discountConfig?.title ?? DEFAULT_SETTINGS.discountConfig?.title ?? 'خصم خاص للأعضاء المسجلين',
       },
@@ -271,8 +271,8 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
 
   // Ensure discountConfig object exists
   const discountConfig: DiscountConfig = formData.discountConfig || {
-    enabled: true,
-    percentage: 10,
+    enabled: false,
+    percentage: 0,
     scope: 'all',
     vehicleIds: [],
     title: 'خصم خاص للأعضاء المسجلين',
@@ -321,6 +321,8 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
       {
         isUserLoggedIn: previewIsLoggedIn,
         vehicleId: selectedPreviewVehicle.id,
+        vehicleDocId: selectedPreviewVehicle.docId ?? selectedPreviewVehicle.id,
+        vehicleDataId: selectedPreviewVehicle.dataId ?? selectedPreviewVehicle.id,
         withDriver: previewWithDriver,
       }
     );
@@ -401,7 +403,7 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
             <Settings className="w-5 h-5 text-amber-400" />
             <span>{ADMIN_TAB_LABEL.settings}</span>
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-sm text-slate-400 mt-1">
             التحكم في قواعد التأمين، خصومات الأعضاء، والبيانات العامة للشركة
           </p>
         </div>
@@ -411,15 +413,15 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
             <button
               type="button"
               onClick={handleResetDraft}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer"
+              className="min-h-11 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-bold flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
+              <RotateCcw className="w-4 h-4" />
               <span>تراجع عن التعديلات</span>
             </button>
           )}
 
           {success && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-xs font-bold animate-in fade-in">
+            <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-sm font-bold animate-in fade-in">
               <CheckCircle2 className="w-4 h-4" />
               <span>تم حفظ الإعدادات والتحقق منها بنجاح</span>
             </div>
@@ -429,12 +431,12 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
 
       {/* Unsaved Changes Alert Bar */}
       {isDirty && (
-        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in">
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm font-bold flex flex-wrap items-center justify-between gap-2 animate-in fade-in">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>توجد تعديلات غير محفوظة. تأكد من الضغط على زر الحفظ أدناه لتطبيقها في النظام.</span>
           </div>
-          <span className="text-xs font-mono text-amber-400/80 bg-amber-500/20 px-2 py-0.5 rounded-md">
+          <span className="text-xs font-mono text-amber-400/90 bg-amber-500/20 px-2 py-0.5 rounded-md">
             مسودة معدلة
           </span>
         </div>
@@ -442,7 +444,7 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
 
       {/* Global Error Banner */}
       {errorMsg && (
-        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold flex items-center gap-2">
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm font-bold flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
           <span>{errorMsg}</span>
         </div>
@@ -450,7 +452,7 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
 
       {/* Success Verified Values Feedback */}
       {verifiedSavedValues && success && (
-        <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs space-y-2 animate-in fade-in">
+        <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-sm space-y-2 animate-in fade-in">
           <div className="flex items-center gap-2 font-bold text-emerald-200">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>القيم المعتمدة والمحفوظة في قاعدة البيانات حالياً:</span>
@@ -520,27 +522,27 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
           <div>
             {!isDirty ? (
-              <span className="text-xs text-slate-400 font-medium">
+              <span className="text-sm text-slate-400 font-medium">
                 جميع الإعدادات الحالية محفوظة ومتطابقة مع الخادم السحابي.
               </span>
             ) : hasValidationErrors ? (
-              <span className="text-xs text-rose-400 font-bold">
+              <span className="text-sm text-rose-400 font-bold">
                 يرجى معالجة أخطاء الإدخال لتفعيل زر الحفظ.
               </span>
             ) : (
-              <span className="text-xs text-amber-400 font-bold">
+              <span className="text-sm text-amber-400 font-bold">
                 توجد تغييرات غير محفوظة بانتظار الاعتماد.
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {isDirty && (
               <button
                 type="button"
                 onClick={handleResetDraft}
                 disabled={isSaving}
-                className="px-5 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-colors border border-slate-700 cursor-pointer disabled:opacity-50"
+                className="min-h-11 px-5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition-colors border border-slate-700 cursor-pointer disabled:opacity-50"
               >
                 إلغاء التغييرات
               </button>
@@ -549,7 +551,7 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({
             <button
               type="submit"
               disabled={isSaving || !isDirty || hasValidationErrors}
-              className={`px-8 py-3.5 rounded-2xl font-extrabold text-sm flex items-center gap-2 shadow-lg transition-all ${
+              className={`min-h-11 px-8 py-3 rounded-2xl font-extrabold text-sm flex items-center gap-2 shadow-lg transition-all ${
                 !isDirty || hasValidationErrors
                   ? 'bg-slate-800 text-slate-400 cursor-not-allowed opacity-60 shadow-none'
                   : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20 cursor-pointer hover:scale-[1.01] active:scale-[0.99]'

@@ -28,9 +28,50 @@ export interface AuditEntryInput {
   ipAddress?: string;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Recursively removes keys with `undefined` values from plain objects and arrays
+ * before writing to Firestore. Leaves primitives, `null`, `Date`, `Timestamp`,
+ * `FieldValue`, and `DocumentReference` intact as terminal values.
+ */
+export function stripUndefined<T>(value: T): T {
+  if (value === undefined || value === null || typeof value !== 'object') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => stripUndefined(item)) as unknown as T;
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(value)) {
+    if (val === undefined) continue;
+    out[key] = stripUndefined(val);
+  }
+  return out as T;
+}
+
 export function buildAuditDocumentData(id: string, entry: AuditEntryInput): Record<string, unknown> {
   const serverTime = FieldValue.serverTimestamp();
-  return {
+  const cleanDetails = isPlainObject(entry.details)
+    ? stripUndefined(entry.details)
+    : entry.details;
+  const cleanMetadata = stripUndefined(entry.metadata || {});
+
+  return stripUndefined({
     id,
     actorUid: entry.actorUid || 'system',
     actorEmail: entry.actorEmail || 'system@shaker.sy',
@@ -42,14 +83,14 @@ export function buildAuditDocumentData(id: string, entry: AuditEntryInput): Reco
     entityId: entry.entityId || '',
     entityName: entry.entityName || '',
     ...(entry.targetUserId ? { targetUserId: entry.targetUserId } : {}),
-    details: entry.details,
-    metadata: entry.metadata || {},
+    details: cleanDetails,
+    metadata: cleanMetadata,
     ipAddress: entry.ipAddress || '',
     createdAt: serverTime,
     timestamp: serverTime,
     user: entry.actorEmail || entry.actorUid || 'system', // legacy compatibility
     userId: entry.actorUid || 'system', // legacy compatibility
-  };
+  });
 }
 
 /**

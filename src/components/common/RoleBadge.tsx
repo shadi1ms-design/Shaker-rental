@@ -55,12 +55,14 @@ export const RoleBadge: React.FC<RoleBadgeProps> = ({
   const iconClass =
     size === 'xs' ? 'w-3 h-3' : size === 'md' ? 'w-4 h-4' : 'w-3.5 h-3.5';
 
+  const displayClass = /\bhidden\b/.test(className) ? 'items-center' : 'inline-flex items-center';
+
   return (
     <span
-      className={`inline-flex items-center rounded-full font-bold select-none shrink-0 ${badgeClass} ${sizeClass} ${className}`.trim()}
+      className={`${displayClass} rounded-full font-bold select-none min-w-0 max-w-full ${badgeClass} ${sizeClass} ${className}`.trim()}
     >
       <Icon className={`${iconClass} shrink-0`} />
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
     </span>
   );
 };

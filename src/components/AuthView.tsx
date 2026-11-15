@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useAppData } from '../contexts/DataContext';
 import { UserRole } from '../types';
+import { resolveMemberDiscount, normalizeDiscountPercentage } from '../shared/discount';
 import { isValidEmail, isValidPhone } from '../utils/security';
 import { normalizeDigits } from '../utils/phone';
-import { useFocusTrap } from '../hooks/useFocusTrap';
 import { PhoneInput } from './ui/PhoneInput';
+import { navigate, routes } from '../router';
 import {
   Mail,
   Lock,
@@ -21,26 +23,20 @@ import {
 } from 'lucide-react';
 
 export interface AuthViewProps {
-  isOpen: boolean;
   initialMode?: 'login' | 'register';
-  onClose: () => void;
   onSuccess?: (role?: UserRole) => void;
   /** Called when the user switches between the login and register tabs (lets a page keep its URL in sync). */
   onModeChange?: (mode: 'login' | 'register') => void;
   loginWithGoogle?: (preferredEmail?: string) => Promise<UserRole>;
 }
 
-export type AuthModalProps = AuthViewProps;
-
 export const AuthView: React.FC<AuthViewProps> = ({
-  isOpen,
   initialMode = 'login',
-  onClose,
   onSuccess,
   onModeChange,
   loginWithGoogle: propLoginWithGoogle,
 }) => {
-  const modalRef = useFocusTrap({ isOpen, onClose, trapTab: false });
+  const { settings, settingsReady } = useAppData();
   const authContext = useAuth();
   const effectiveLoginWithGoogle = propLoginWithGoogle || authContext?.loginWithGoogle;
   const loginWithEmail = authContext?.loginWithEmail;
@@ -68,16 +64,17 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setTimeout(() => {
-        setMode(initialMode);
-        setErrorMessage(null);
-        setSuccessMessage(null);
-      }, 0);
-    }
-  }, [isOpen, initialMode]);
-
-  if (!isOpen) return null;
+    let active = true;
+    setTimeout(() => {
+      if (!active) return;
+      setMode(initialMode);
+      setErrorMessage(null);
+      setSuccessMessage(null);
+    }, 0);
+    return () => {
+      active = false;
+    };
+  }, [initialMode]);
 
   const switchMode = (next: 'login' | 'register' | 'forgot') => {
     setMode(next);
@@ -100,7 +97,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
       }
       setSuccessMessage('تم تسجيل الدخول بواسطة Google بنجاح! مرحباً بك.');
       if (onSuccess) onSuccess(role);
-      else onClose();
+      else navigate(routes.home, { replace: true });
     } catch (err: unknown) {
       if ((err as { code?: string })?.code === 'auth/multi-factor-auth-required') {
         setMfaCode('');
@@ -123,7 +120,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
       const role = await verifyMfaSignIn(mfaCode);
       setSuccessMessage('تم التحقق وتسجيل الدخول بنجاح!');
       if (onSuccess) onSuccess(role);
-      else onClose();
+      else navigate(routes.home, { replace: true });
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : 'فشل التحقق من الرمز الثنائي.');
     } finally {
@@ -151,7 +148,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
         const role = await loginWithEmail!(cleanEmail, password);
         setSuccessMessage('تم تسجيل الدخول بنجاح! مرحباً بك.');
         if (onSuccess) onSuccess(role);
-        else onClose();
+        else navigate(routes.home, { replace: true });
       } else if (mode === 'register') {
         const cleanName = displayName.trim();
         const cleanPhone = normalizeDigits(phone).trim();
@@ -187,7 +184,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
 
         setSuccessMessage('تم إنشاء حسابك بنجاح! تم تطبيق خصومات العضوية تلقائياً.');
         if (onSuccess) onSuccess('customer');
-        else onClose();
+        else navigate(routes.home, { replace: true });
       } else if (mode === 'forgot') {
         if (!cleanEmail) {
           throw new Error('يرجى إدخال البريد الإلكتروني المسجل لدينا');
@@ -210,13 +207,22 @@ export const AuthView: React.FC<AuthViewProps> = ({
     }
   };
 
+  const discountCfg = settingsReady ? settings?.discountConfig : undefined;
+  const resolvedAllDiscount = resolveMemberDiscount(discountCfg, { isUserLoggedIn: false });
+  const rawSpecificPct = normalizeDiscountPercentage(discountCfg?.percentage);
+  const isSpecificDiscountActive = Boolean(
+    settingsReady &&
+      discountCfg?.enabled === true &&
+      rawSpecificPct > 0 &&
+      discountCfg?.scope === 'specific'
+  );
+  const memberDiscountPct = resolvedAllDiscount.eligible ? resolvedAllDiscount.percentage : 0;
+  const showDiscountNotice = memberDiscountPct > 0 || isSpecificDiscountActive;
+
   return (
-    <div className="flex justify-center p-3 sm:p-6 bg-slate-950 items-start sm:items-center">
+    <section className="flex justify-center p-3 sm:p-6 bg-slate-950 items-start sm:items-center">
       <div
-        ref={modalRef}
         className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-modal p-5 sm:p-8 shadow-2xl relative text-slate-100 my-auto overscroll-contain"
-        style={{ WebkitOverflowScrolling: 'touch' }}
-        onClick={(e) => e.stopPropagation()}
         id="auth-modal"
       >
         {/* Glow ambient background */}
@@ -479,7 +485,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
             ) : mode === 'login' ? (
               <span>دخول</span>
             ) : mode === 'register' ? (
-              <span>إنشاء الحساب وتفعيل الخصم</span>
+              <span>{showDiscountNotice ? 'إنشاء الحساب وتفعيل الخصم' : 'إنشاء الحساب'}</span>
             ) : (
               <span>إرسال رابط استعادة كلمة المرور</span>
             )}
@@ -527,16 +533,24 @@ export const AuthView: React.FC<AuthViewProps> = ({
             </div>
           )}
 
-          {/* Discount Tip Box */}
-          <div className="bg-amber-500/10 border border-amber-500/25 rounded-card p-3 flex items-start gap-2.5 text-sm text-amber-200/90 mt-3">
-            <Tag className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <strong className="block text-amber-300 mb-0.5">خصومات حصرية للأعضاء المسجلين:</strong>
-              <span>
-                عند إنشاء حساب أو تسجيل الدخول، يتم تطبيق خصومات خاصة تصل حتى 25% على تكلفة إيجار سيارتك المختارة فوراً!
-              </span>
+          {/* Discount Tip Box (shown only once authoritative settings are ready and discount is active) */}
+          {showDiscountNotice && (
+            <div className="bg-amber-500/10 border border-amber-500/25 rounded-card p-3 flex items-start gap-2.5 text-sm text-amber-200/90 mt-3">
+              <Tag className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <strong className="block text-amber-300 mb-0.5">خصم حصري للأعضاء المسجلين:</strong>
+                <span>
+                  {memberDiscountPct > 0 ? (
+                    <>
+                      عند تسجيل الدخول بحسابك تحصل على خصم <strong className="tabular-nums">{memberDiscountPct}%</strong> على أجرة السيارة المحسوبة!
+                    </>
+                  ) : (
+                    'خصم خاص على سيارات مختارة عند تسجيل الدخول بحسابك!'
+                  )}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
         </form>
         )}
 
@@ -595,7 +609,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
           <span>بياناتك محمية ومحفوظة وفق معايير الخصوصية والأمان</span>
         </div>
       </div>
-    </div>
+    </section>
   );
 };
 

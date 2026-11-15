@@ -25,6 +25,7 @@ export type AdminTabType =
 export interface AdminNavItem {
   id: AdminTabType;
   label: string;
+  shortLabel: string;
   icon: LucideIcon;
   path: string;
   section: 0 | 1 | 2;
@@ -45,6 +46,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'overview',
     label: 'لوحة المؤشرات العامة',
+    shortLabel: 'مؤشرات',
     icon: LayoutDashboard,
     path: '/admin/dashboard',
     section: 0,
@@ -52,6 +54,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'bookings',
     label: 'الحجوزات والتأجير',
+    shortLabel: 'حجوزات',
     icon: CalendarCheck,
     path: '/admin/bookings',
     section: 0,
@@ -59,6 +62,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'vehicles',
     label: 'أسطول السيارات',
+    shortLabel: 'أسطول',
     icon: Car,
     path: '/admin/vehicles',
     section: 0,
@@ -66,6 +70,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'reports',
     label: 'التقارير المالية والتشغيلية',
+    shortLabel: 'تقارير',
     icon: BarChart3,
     path: '/admin/reports',
     section: 1,
@@ -73,6 +78,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'notifications',
     label: 'مركز التنبيهات',
+    shortLabel: 'إشعارات',
     icon: Bell,
     path: '/admin/notifications',
     section: 1,
@@ -80,6 +86,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'firestore_users',
     label: 'توثيق الحسابات والعملاء',
+    shortLabel: 'مستخدمين',
     icon: ShieldCheck,
     path: '/admin/users',
     section: 1,
@@ -87,6 +94,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'staff',
     label: 'فريق العمل والصلاحيات',
+    shortLabel: 'صلاحيات',
     icon: Users,
     path: '/admin/staff',
     section: 2,
@@ -94,6 +102,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'activity_log',
     label: 'سجل النشاطات والأحداث',
+    shortLabel: 'سجل',
     icon: History,
     path: '/admin/activity-log',
     section: 2,
@@ -101,6 +110,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   {
     id: 'settings',
     label: 'إعدادات النظام',
+    shortLabel: 'إعدادات',
     icon: Settings,
     path: '/admin/settings',
     section: 2,
@@ -129,6 +139,25 @@ export const ADMIN_TAB_PATH: Record<AdminTabType, string> = {
   staff: '/admin/staff',
   activity_log: '/admin/activity-log',
   settings: '/admin/settings',
+};
+
+export type AdminRequiredRole = 'employee' | 'admin' | 'super_admin';
+
+export interface AdminRouteConfig {
+  tab: AdminTabType;
+  requiredRole: AdminRequiredRole;
+}
+
+export const ADMIN_ROUTES: Record<string, AdminRouteConfig> = {
+  '/admin/dashboard': { tab: 'overview', requiredRole: 'admin' },
+  '/admin/bookings': { tab: 'bookings', requiredRole: 'employee' },
+  '/admin/vehicles': { tab: 'vehicles', requiredRole: 'admin' },
+  '/admin/reports': { tab: 'reports', requiredRole: 'admin' },
+  '/admin/notifications': { tab: 'notifications', requiredRole: 'admin' },
+  '/admin/users': { tab: 'firestore_users', requiredRole: 'admin' },
+  '/admin/staff': { tab: 'staff', requiredRole: 'super_admin' },
+  '/admin/activity-log': { tab: 'activity_log', requiredRole: 'super_admin' },
+  '/admin/settings': { tab: 'settings', requiredRole: 'admin' },
 };
 
 export const ROLE_LABEL: Record<string, string> = {

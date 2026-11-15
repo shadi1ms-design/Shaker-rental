@@ -4,6 +4,8 @@ import { getOfficialWhatsAppUrl, openWhatsAppChat } from '../services/whatsapp';
 import { COMPANY_INFO } from '../constants/company';
 import { PhoneInput } from './ui/PhoneInput';
 
+const GOOGLE_MAPS_URL = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(COMPANY_INFO.fullAddress)}`;
+
 export const ContactPage: React.FC = () => {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -37,17 +39,46 @@ ${message}`;
             عن {COMPANY_INFO.name}
           </span>
           <h2 className="text-3xl sm:text-4xl font-extrabold text-white mb-4">
-            {COMPANY_INFO.name} السياحية
+            {COMPANY_INFO.name}
           </h2>
           <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
             {COMPANY_INFO.aboutDescription} تأسست لتقديم أرقى خدمات تأجير السيارات في دمشق وريفها، ونحرص على توفير تجربة قيادة آمنة ومريحة وبأسعار شفافة.
           </p>
+
+          {/* Direct Quick Actions */}
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <a
+              href={`tel:${COMPANY_INFO.phoneRaw}`}
+              className="min-h-11 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm inline-flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-colors"
+            >
+              <Phone className="w-4 h-4" />
+              <span>اتصال مباشر</span>
+            </a>
+            <button
+              type="button"
+              onClick={() => openWhatsAppChat()}
+              className="min-h-11 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-sm inline-flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition-colors cursor-pointer"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>واتساب مباشر</span>
+            </button>
+            <a
+              href={GOOGLE_MAPS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="min-h-11 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 hover:text-amber-300 font-bold text-sm inline-flex items-center gap-2 transition-colors"
+            >
+              <MapPin className="w-4 h-4 text-amber-400" />
+              <span>افتح الموقع على الخرائط</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
         </div>
 
         {/* 3 Pillars */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
           <div className="bg-slate-900 border border-slate-800 rounded-card p-6 text-center space-y-3">
-            <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center mx-auto">
+            <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
               <ShieldCheck className="w-6 h-6" />
             </div>
             <h3 className="font-bold text-white text-base">أعلى معايير الأمان والفحص</h3>
@@ -57,7 +88,7 @@ ${message}`;
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-card p-6 text-center space-y-3">
-            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
+            <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
               <Award className="w-6 h-6" />
             </div>
             <h3 className="font-bold text-white text-base">أسطول حديث ومتنوع</h3>
@@ -67,7 +98,7 @@ ${message}`;
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-card p-6 text-center space-y-3">
-            <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center mx-auto">
+            <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
               <ThumbsUp className="w-6 h-6" />
             </div>
             <h3 className="font-bold text-white text-base">عقود رسمية وشفافية مطلقة</h3>
@@ -90,10 +121,19 @@ ${message}`;
 
             <div className="space-y-4 text-sm">
               <div className="flex items-start gap-3 p-3.5 bg-slate-950 rounded-card border border-slate-800">
-                <MapPin className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-                <div>
+                <MapPin className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1.5">
                   <span className="font-bold text-white block">موقع الشركة والمكتب الرئيسي:</span>
-                  <span className="text-slate-300">{COMPANY_INFO.fullAddress}</span>
+                  <span className="text-slate-300 block">{COMPANY_INFO.fullAddress}</span>
+                  <a
+                    href={GOOGLE_MAPS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-h-11 inline-flex items-center gap-1.5 text-amber-400 hover:text-amber-300 font-bold text-sm"
+                  >
+                    <span>افتح الموقع على الخرائط</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
                 </div>
               </div>
 
@@ -123,7 +163,7 @@ ${message}`;
               </div>
 
               <div className="flex items-start gap-3 p-3.5 bg-slate-950 rounded-card border border-slate-800">
-                <Clock className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
+                <Clock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-bold text-white block">ساعات العمل:</span>
                   <span className="text-slate-300">{COMPANY_INFO.workingHours} ({COMPANY_INFO.emergencyHours})</span>

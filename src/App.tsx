@@ -1,30 +1,31 @@
 import React, { Suspense } from 'react';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthProvider } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
 import { MenuProvider } from './contexts/MenuContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { EmailVerificationGate } from './components/EmailVerificationGate';
-import { PhoneGate } from './components/PhoneGate';
-import { DashboardRedirect, GuestOnly, RequireAuth } from './components/routing/Guards';
+import {
+  DashboardRedirect,
+  GuestOnly,
+  RequireAuth,
+  RequirePhone,
+  RequireVerifiedEmail,
+} from './components/routing/Guards';
 import { SiteLayout } from './layouts/SiteLayout';
 import { useAdminAutoRedirect } from './hooks/useAdminAutoRedirect';
 import { useRoute, type ResolvedRoute } from './router';
 import { HomePage } from './pages/HomePage';
 import { SuspenseFallback } from './components/routing/Spinners';
-import { lazyWithRetry } from './utils/lazyWithRetry';
+import { lazyWithRetry, ROUTE_IMPORTERS } from './utils/lazyWithRetry';
 
-const AboutPage = lazyWithRetry(() => import('./pages/AboutPage').then((m) => ({ default: m.AboutPage })));
-const AdminPage = lazyWithRetry(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
-const AuthPage = lazyWithRetry(() => import('./pages/AuthPage').then((m) => ({ default: m.AuthPage })));
-const BookingPage = lazyWithRetry(() => import('./pages/BookingPage').then((m) => ({ default: m.BookingPage })));
-const CarDetailsPage = lazyWithRetry(() => import('./pages/CarDetailsPage').then((m) => ({ default: m.CarDetailsPage })));
-const CatalogPage = lazyWithRetry(() => import('./pages/CatalogPage').then((m) => ({ default: m.CatalogPage })));
-const NotFoundPage = lazyWithRetry(() => import('./pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
-const ProfilePage = lazyWithRetry(() => import('./pages/ProfilePage').then((m) => ({ default: m.ProfilePage })));
-const VerifyContractPage = lazyWithRetry(() => import('./pages/VerifyContractPage').then((m) => ({ default: m.VerifyContractPage })));
-
-// Mandatory email verification for customer accounts created on/after 2026-09-19
-const EMAIL_VERIFICATION_CUTOFF_DATE = new Date('2026-09-19T00:00:00.000Z').getTime();
+const ContactRoutePage = lazyWithRetry(ROUTE_IMPORTERS.contact);
+const AdminPage = lazyWithRetry(ROUTE_IMPORTERS.admin);
+const AuthPage = lazyWithRetry(ROUTE_IMPORTERS.login);
+const BookingPage = lazyWithRetry(ROUTE_IMPORTERS.book);
+const CarDetailsPage = lazyWithRetry(ROUTE_IMPORTERS.car);
+const CatalogPage = lazyWithRetry(ROUTE_IMPORTERS.cars);
+const NotFoundPage = lazyWithRetry(ROUTE_IMPORTERS.notFound);
+const ProfilePage = lazyWithRetry(ROUTE_IMPORTERS.profile);
+const VerifyContractPage = lazyWithRetry(ROUTE_IMPORTERS.verifyContract);
 
 /** Route name -> page. Add a new page here (and in the route table in router.tsx). */
 function renderPage(route: ResolvedRoute): React.ReactNode {
@@ -39,9 +40,15 @@ function renderPage(route: ResolvedRoute): React.ReactNode {
           case 'car':
             return <CarDetailsPage id={route.params.id} />;
           case 'book':
-            return <BookingPage id={route.params.id} />;
-          case 'about':
-            return <AboutPage />;
+            return (
+              <RequireVerifiedEmail>
+                <RequirePhone>
+                  <BookingPage id={route.params.id} />
+                </RequirePhone>
+              </RequireVerifiedEmail>
+            );
+          case 'contact':
+            return <ContactRoutePage />;
           case 'login':
           case 'register':
             return (
@@ -52,7 +59,11 @@ function renderPage(route: ResolvedRoute): React.ReactNode {
           case 'profile':
             return (
               <RequireAuth>
-                <ProfilePage />
+                <RequireVerifiedEmail>
+                  <RequirePhone>
+                    <ProfilePage />
+                  </RequirePhone>
+                </RequireVerifiedEmail>
               </RequireAuth>
             );
           case 'dashboard':
@@ -68,7 +79,6 @@ function renderPage(route: ResolvedRoute): React.ReactNode {
 }
 
 function MainAppContent() {
-  const { user, isAdmin, isEmployee, isLoadingAuth, requiresPhone } = useAuth();
   const route = useRoute();
 
   useAdminAutoRedirect();
@@ -81,24 +91,6 @@ function MainAppContent() {
       </Suspense>
     );
   }
-
-  const isAccountNewerThanCutoff = user?.createdAt
-    ? new Date(user.createdAt).getTime() >= EMAIL_VERIFICATION_CUTOFF_DATE
-    : true;
-
-  const requiresEmailVerification = Boolean(
-    user &&
-      !isAdmin &&
-      !isEmployee &&
-      user.isPasswordProvider !== false &&
-      !user.emailVerified &&
-      isAccountNewerThanCutoff,
-  );
-
-  if (!isLoadingAuth && requiresEmailVerification) return <EmailVerificationGate />;
-
-  // Google sign-in customers must give a phone number once to complete registration
-  if (!isLoadingAuth && requiresPhone) return <PhoneGate />;
 
   return <SiteLayout route={route}>{renderPage(route)}</SiteLayout>;
 }

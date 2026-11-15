@@ -56,7 +56,7 @@ export const DateField: React.FC<DateFieldProps> = ({
           : 'bg-slate-950 border-slate-700 hover:border-slate-600 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20'
       } ${
         isSmall
-          ? 'min-h-[38px] px-2.5 py-1 text-xs'
+          ? 'min-h-11 px-3 py-1.5 text-sm'
           : 'min-h-[44px] px-3.5 py-2.5 text-base sm:text-sm'
       } ${className}`}
     >
@@ -73,7 +73,7 @@ export const DateField: React.FC<DateFieldProps> = ({
             {formattedDisplay}
           </span>
         ) : (
-          <span className="text-slate-500 truncate">
+          <span className="text-slate-400 truncate">
             {placeholder}
           </span>
         )}

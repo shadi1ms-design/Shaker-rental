@@ -1,17 +1,22 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { navigate, useLocation, matchPath, goBack } from '../router';
+import { navigate, useLocation, goBack, routes } from '../router';
 import { Vehicle, Booking, AppSettings, AppNotification } from '../types';
 import { dataService } from '../services/dataService';
 import { useAuth } from '../contexts/AuthContext';
 import { useAppData } from '../contexts/DataContext';
-import { AdminTabType, ADMIN_NAV_ITEMS, ADMIN_NAV_SECTIONS, ROLE_LABEL } from '../constants/adminNav';
-import { getAdminTabFromPath } from '../utils/adminTabs';
+import { AdminTabType, ADMIN_NAV_ITEMS, ADMIN_NAV_SECTIONS, ADMIN_TAB_PATH } from '../constants/adminNav';
+import {
+  getDefaultAdminPath,
+  isAdminRoleAuthorized,
+  resolveAdminRoute,
+} from '../utils/adminTabs';
 import { ConfirmModal } from './common/ConfirmModal';
 import { SkeletonLoader } from './common/SkeletonLoader';
+import { RoleBadge } from './common/RoleBadge';
 import { MenuButton } from './MenuButton';
 import { GlobalMenu } from './GlobalMenu';
 import { AdminCommandPalette } from './admin/AdminCommandPalette';
-import { CheckCircle2, X, Shield, Search, ChevronLeft, ChevronRight, ArrowRight, User, LogOut, MoreHorizontal, Lock, ChevronDown } from 'lucide-react';
+import { CheckCircle2, X, Search, ChevronLeft, ChevronRight, ArrowRight, User, LogOut, MoreHorizontal, Lock, ChevronDown, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { lazyWithRetry } from '../utils/lazyWithRetry';
@@ -80,27 +85,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     [isAdmin, isSuperAdmin]
   );
 
-  const activeTab = useMemo(() => {
-    const tabFromPath = getAdminTabFromPath(currentPath, { isAdmin: Boolean(isAdmin), isSuperAdmin: Boolean(isSuperAdmin) });
-    if (isTabAuthorized(tabFromPath)) {
-      return tabFromPath;
+  const defaultAdminPath = getDefaultAdminPath({
+    isAdmin: Boolean(isAdmin),
+    isSuperAdmin: Boolean(isSuperAdmin),
+  });
+
+  const resolvedAdminRoute = useMemo(() => resolveAdminRoute(currentPath), [currentPath]);
+
+  useEffect(() => {
+    if (!isLoadingAuth && resolvedAdminRoute?.type === 'root') {
+      navigate(defaultAdminPath, { replace: true });
     }
-    return isSuperAdmin ? 'firestore_users' : isAdmin ? 'overview' : 'bookings';
-  }, [currentPath, isAdmin, isSuperAdmin, isTabAuthorized]);
+  }, [isLoadingAuth, resolvedAdminRoute, defaultAdminPath]);
+
+  const activeTab = useMemo<AdminTabType | null>(() => {
+    if (!resolvedAdminRoute) return null;
+    if (resolvedAdminRoute.type === 'root') {
+      return isAdmin || isSuperAdmin ? 'overview' : 'bookings';
+    }
+    if (resolvedAdminRoute.type === 'tab') {
+      return resolvedAdminRoute.tab;
+    }
+    if (resolvedAdminRoute.type === 'vehicleNew' || resolvedAdminRoute.type === 'vehicleEdit') {
+      return 'vehicles';
+    }
+    if (resolvedAdminRoute.type === 'contract') {
+      return 'bookings';
+    }
+    return null;
+  }, [resolvedAdminRoute, isAdmin, isSuperAdmin]);
 
   const handleTabChange = (tab: AdminTabType, searchFilter?: string) => {
-    const pathMap: Record<AdminTabType, string> = {
-      overview: '/admin/dashboard',
-      bookings: '/admin/bookings',
-      vehicles: '/admin/vehicles',
-      reports: '/admin/reports',
-      notifications: '/admin/notifications',
-      firestore_users: '/admin/users',
-      staff: '/admin/staff',
-      activity_log: '/admin/activity-log',
-      settings: '/admin/settings',
-    };
-    const targetPath = pathMap[tab];
+    const targetPath = ADMIN_TAB_PATH[tab];
     if (targetPath) {
       if (searchFilter) {
         navigate(`${targetPath}?q=${encodeURIComponent(searchFilter)}`);
@@ -142,14 +158,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showMobileMore]);
 
-  const isNewVehicleRoute = currentPath === '/admin/vehicles/new';
-  const editVehicleMatch = matchPath('/admin/vehicles/:id/edit', currentPath);
-  const contractMatch = matchPath('/admin/contracts/:id', currentPath);
+  const isNewVehicleRoute = resolvedAdminRoute?.type === 'vehicleNew';
+  const editVehicleId = resolvedAdminRoute?.type === 'vehicleEdit' ? resolvedAdminRoute.id : null;
+  const contractId = resolvedAdminRoute?.type === 'contract' ? resolvedAdminRoute.id : null;
 
   const editingVehicle = isNewVehicleRoute
     ? null
-    : editVehicleMatch
-    ? vehicles.find((v) => v.id === editVehicleMatch.id)
+    : editVehicleId
+    ? vehicles.find((v) => v.id === editVehicleId)
     : undefined;
 
   const openVehicleForm = (v: Vehicle | null) =>
@@ -234,11 +250,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const roleText = isSuperAdmin
-    ? ROLE_LABEL.superAdmin
-    : isAdmin
-    ? ROLE_LABEL.admin
-    : ROLE_LABEL.staff;
+  const profileRole = isSuperAdmin ? 'superAdmin' : isAdmin ? 'admin' : 'employee';
 
   if (isLoadingAuth) {
     return (
@@ -251,15 +263,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     );
   }
 
+  if (resolvedAdminRoute?.type === 'root') {
+    return (
+      <div className="min-h-dvh bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-cairo" dir="rtl">
+        <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   const vehicleNotFound = (
     <div className="min-h-[40dvh] flex flex-col items-center justify-center gap-4 text-center">
       <p className="text-slate-300 font-bold">لم يتم العثور على هذه السيارة.</p>
       <button
         type="button"
         onClick={() => handleTabChange('vehicles')}
-        className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold cursor-pointer"
+        className="min-h-11 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-extrabold cursor-pointer"
       >
         العودة لأسطول السيارات
+      </button>
+    </div>
+  );
+
+  const adminNotFoundView = (
+    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center max-w-lg mx-auto space-y-4 shadow-2xl">
+      <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+        <AlertTriangle className="w-8 h-8" />
+      </div>
+      <div className="text-xl font-extrabold text-white">الصفحة الإدارية غير موجودة</div>
+      <p className="text-sm text-slate-400">
+        المسار المطلوب غير معرف ضمن صفحات لوحة الإدارة. تحقق من الرابط أو انتقل إلى الصفحة الرئيسية للوحة.
+      </p>
+      <button
+        type="button"
+        onClick={() => navigate(defaultAdminPath, { replace: true })}
+        className="min-h-11 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-extrabold cursor-pointer"
+      >
+        العودة إلى لوحة الإدارة
       </button>
     </div>
   );
@@ -270,16 +309,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <Lock className="w-8 h-8" />
       </div>
       <div className="text-xl font-extrabold text-white">غير مصرح لك بالوصول</div>
-      <button type="button" onClick={() => handleTabChange('bookings')} className="px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-extrabold cursor-pointer">العودة للحجوزات</button>
+      <button type="button" onClick={() => navigate(defaultAdminPath, { replace: true })} className="min-h-11 px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-sm font-extrabold cursor-pointer">
+        العودة للوحة المصرح بها
+      </button>
     </div>
   );
 
-  const isFleetRestrictedRoute = isNewVehicleRoute || Boolean(editVehicleMatch);
+  const isFleetRestrictedRoute = isNewVehicleRoute || Boolean(editVehicleId);
 
   const vehiclePage =
-    isFleetRestrictedRoute && !(isAdmin || isSuperAdmin) ? (
+    resolvedAdminRoute === null ? (
+      adminNotFoundView
+    ) : isFleetRestrictedRoute && !(isAdmin || isSuperAdmin) ? (
       unauthorizedView
-    ) : isNewVehicleRoute || editVehicleMatch ? (
+    ) : isNewVehicleRoute || editVehicleId ? (
       editingVehicle === undefined ? (
         !vehiclesReady ? (
           <SkeletonLoader type="card" lines={4} />
@@ -298,9 +341,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           }}
         />
       )
-    ) : contractMatch ? (
+    ) : contractId ? (
       (() => {
-        const contractBooking = bookings.find((b) => b.id === contractMatch.id || b.bookingNumber === contractMatch.id);
+        const contractBooking = bookings.find((b) => b.id === contractId || b.bookingNumber === contractId);
         return contractBooking ? (
           <RentalContract
             booking={contractBooking}
@@ -314,7 +357,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <button
               type="button"
               onClick={() => handleTabChange('bookings')}
-              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold cursor-pointer"
+              className="min-h-11 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-extrabold cursor-pointer"
             >
               العودة إلى الحجوزات
             </button>
@@ -322,6 +365,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         );
       })()
     ) : null;
+
+  const isRouteAuthorized =
+    resolvedAdminRoute === null ||
+    resolvedAdminRoute.type !== 'tab' ||
+    isAdminRoleAuthorized(resolvedAdminRoute.requiredRole, {
+      isAdmin: Boolean(isAdmin),
+      isSuperAdmin: Boolean(isSuperAdmin),
+    });
 
   const primaryMobileTabs = ADMIN_NAV_ITEMS.filter((item) =>
     ['overview', 'bookings', 'vehicles', 'reports'].includes(item.id) && isTabAuthorized(item.id)
@@ -331,45 +382,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     <div className="min-h-dvh bg-slate-950 text-slate-100 flex flex-col font-cairo" dir="rtl">
       <GlobalMenu
         currentView="admin"
-        onNavigate={(v) => {
-          if (v === 'home') onBackToSite();
-          else navigate(v === 'cars' ? '/cars' : v === 'contact' ? '/contact' : '/');
-        }}
-        onOpenBooking={() => navigate('/cars')}
-        onOpenAuth={() => navigate('/login')}
-        onOpenProfile={() => navigate('/profile')}
+        onOpenBooking={() => navigate(routes.cars)}
+        onOpenAuth={() => navigate(routes.login)}
+        onOpenProfile={() => navigate(routes.profile)}
       />
 
-      <header className="relative z-30 bg-slate-900 border-b border-slate-800 px-4 sm:px-8 py-3 shadow-md">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-30 h-16 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 px-3 sm:px-6 flex items-center">
+        <div className="max-w-[1600px] w-full mx-auto flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <MenuButton />
             <button
               type="button"
               onClick={onBackToSite}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-bold transition-all cursor-pointer"
+              className="min-h-11 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-800 text-sm font-bold transition-colors cursor-pointer shrink-0"
+              aria-label="العودة للموقع الرئيسي"
             >
-              <ArrowRight className="w-4 h-4 text-amber-400" />
+              <ArrowRight className="w-4 h-4 text-amber-400 shrink-0" />
               <span className="hidden sm:inline">الموقع الرئيسي</span>
             </button>
-            <div>
-              <p className="text-xs font-extrabold text-white">لوحة إدارة شاكر</p>
-              <span className="px-2 py-0.5 rounded-full text-xs font-extrabold bg-amber-500 text-slate-950 flex items-center gap-1 shadow-sm w-fit">
-                <Shield className="w-2.5 h-2.5" />
-                {roleText}
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm sm:text-base font-extrabold text-white truncate">لوحة إدارة شاكر</span>
+              <span className="hidden sm:inline-flex shrink-0">
+                <RoleBadge role={profileRole} size="xs" />
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setShowCommandPalette(true)}
-              className="flex items-center gap-2 px-3 py-1.5 min-h-[38px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all cursor-pointer"
+              aria-label="بحث سريع في لوحة الإدارة"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-800 text-sm font-bold transition-colors cursor-pointer"
             >
-              <Search className="w-3.5 h-3.5 text-amber-400" />
+              <Search className="w-4 h-4 text-amber-400 shrink-0" />
               <span className="hidden md:inline">بحث سريع</span>
-              <kbd className="hidden md:inline-block px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-xs font-mono text-slate-400">
+              <kbd className="hidden md:inline-block px-1.5 py-0.5 rounded bg-slate-950 border border-slate-700 text-xs font-mono text-slate-300">
                 Ctrl K
               </kbd>
             </button>
@@ -381,12 +429,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 aria-haspopup="menu"
                 aria-expanded={showAccountMenu}
                 aria-label="قائمة الحساب"
-                className="flex items-center gap-2 px-3 py-1.5 min-h-[38px] rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 text-xs font-bold transition-all cursor-pointer"
+                className="min-h-11 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white border border-slate-800 text-sm font-bold transition-colors cursor-pointer"
               >
-                <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
-                  {user?.displayName?.charAt(0) || <User className="w-3.5 h-3.5" />}
+                <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm">
+                  {user?.displayName?.charAt(0) || <User className="w-4 h-4" />}
                 </div>
-                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showAccountMenu ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform ${showAccountMenu ? 'rotate-180' : ''}`} />
               </button>
 
               {showAccountMenu && (
@@ -404,10 +452,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <div
                     role="menu"
                     aria-label="خيارات الحساب"
-                    className="absolute end-0 mt-2 w-56 bg-slate-900 border border-slate-800 rounded-2xl p-2 shadow-2xl z-50 space-y-1"
+                    className="absolute end-0 mt-2 w-60 bg-slate-900 border border-slate-800 rounded-2xl p-2 shadow-2xl z-50 space-y-1"
                   >
                     <div className="p-3 border-b border-slate-800 space-y-1">
-                      <p className="font-bold text-white text-xs truncate">{user?.displayName || 'مسؤول النظام'}</p>
+                      <p className="font-bold text-white text-sm truncate">{user?.displayName || 'مسؤول النظام'}</p>
                       <p className="text-xs text-slate-400 font-mono truncate" dir="ltr">{user?.email}</p>
                     </div>
                     <button
@@ -417,7 +465,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         setShowAccountMenu(false);
                         navigate('/profile');
                       }}
-                      className="w-full text-right px-3 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
+                      className="w-full min-h-11 text-right px-3 py-2 rounded-xl text-sm font-bold text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors"
                     >
                       <User className="w-4 h-4 text-amber-400" />
                       <span>الملف الشخصي</span>
@@ -429,7 +477,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         setShowAccountMenu(false);
                         logout();
                       }}
-                      className="w-full text-right px-3 py-2 rounded-xl text-xs font-bold text-rose-400 hover:bg-rose-500/10 flex items-center gap-2 cursor-pointer transition-colors pt-2 border-t border-slate-800"
+                      className="w-full min-h-11 text-right px-3 py-2 rounded-xl text-sm font-bold text-rose-400 hover:bg-rose-500/10 flex items-center gap-2 cursor-pointer transition-colors border-t border-slate-800"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>تسجيل الخروج</span>
@@ -456,11 +504,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       />
 
       <div className="flex-1 max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col md:flex-row gap-6 pb-24 md:pb-8">
-        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-64 lg:w-72'} shrink-0 sticky top-6 max-h-[calc(100dvh-5rem)] overflow-y-auto z-20 transition-all duration-300`}>
+        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-64 lg:w-72'} shrink-0 sticky top-20 max-h-[calc(100dvh-6rem)] overflow-y-auto z-20 transition-all duration-300`}>
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-3 shadow-xl space-y-4">
             <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800">
-              {!isSidebarCollapsed && <span className="text-xs font-extrabold text-slate-400">أقسام لوحة الإدارة</span>}
-              <button type="button" onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer min-h-10 min-w-10 inline-flex items-center justify-center" aria-label={isSidebarCollapsed ? 'توسيع القائمة' : 'طي القائمة'}>
+              {!isSidebarCollapsed && <span className="text-sm font-extrabold text-slate-300">أقسام لوحة الإدارة</span>}
+              <button type="button" onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="p-2 rounded-xl hover:bg-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer min-h-11 min-w-11 inline-flex items-center justify-center" aria-label={isSidebarCollapsed ? 'توسيع القائمة' : 'طي القائمة'}>
                 {isSidebarCollapsed ? <ChevronLeft className="w-4 h-4 text-amber-400" /> : <ChevronRight className="w-4 h-4" />}
               </button>
             </div>
@@ -476,7 +524,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       const isActive = activeTab === nav.id;
                       const unreadCount = nav.id === 'notifications' ? notifications.filter((n) => !n.read).length : 0;
                       return (
-                        <button key={nav.id} type="button" onClick={() => handleTabChange(nav.id)} className={`w-full ${isSidebarCollapsed ? 'px-2 justify-center' : 'px-3.5 justify-between'} py-2.5 rounded-2xl font-bold flex items-center gap-2.5 transition-all text-xs cursor-pointer ${isActive ? 'bg-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800/80'}`}>
+                        <button key={nav.id} type="button" onClick={() => handleTabChange(nav.id)} className={`w-full min-h-11 ${isSidebarCollapsed ? 'px-2 justify-center' : 'px-3.5 justify-between'} py-2.5 rounded-2xl font-bold flex items-center gap-2.5 transition-all text-sm cursor-pointer ${isActive ? 'bg-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/20' : 'text-slate-300 hover:text-white hover:bg-slate-800/80'}`}>
                           <div className="flex items-center gap-2.5 min-w-0">
                             <Icon className="w-4 h-4 shrink-0" />
                             {!isSidebarCollapsed && <span className="truncate">{nav.label}</span>}
@@ -494,20 +542,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         <main className="flex-1 min-w-0 space-y-6">
           {syncStatus && (
-            <div role="status" className={`p-4 rounded-2xl text-xs font-bold flex items-center justify-between gap-3 border ${syncStatus.success ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/10 text-rose-300 border-rose-500/30'}`}>
+            <div role="status" className={`p-4 rounded-2xl text-sm font-bold flex items-center justify-between gap-3 border ${syncStatus.success ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/10 text-rose-300 border-rose-500/30'}`}>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>{syncStatus.message}</span>
               </div>
-              <button type="button" onClick={() => setSyncStatus(null)} className="p-1 rounded-lg hover:bg-white/10 min-h-10 min-w-10 inline-flex items-center justify-center cursor-pointer text-slate-300 hover:text-white" aria-label="إغلاق الإشعار"><X className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setSyncStatus(null)} className="p-2 rounded-lg hover:bg-white/10 min-h-11 min-w-11 inline-flex items-center justify-center cursor-pointer text-slate-300 hover:text-white" aria-label="إغلاق الإشعار"><X className="w-4 h-4" /></button>
             </div>
           )}
 
-          {!isTabAuthorized(activeTab) ? (
+          {!isRouteAuthorized ? (
             unauthorizedView
           ) : vehiclePage ?? (
             <AnimatePresence mode="wait">
-              <motion.div key={activeTab} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.15, ease: 'easeOut' }} className="space-y-6">
+              <motion.div key={activeTab || 'none'} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.15, ease: 'easeOut' }} className="space-y-6">
                 {isAdmin && activeTab === 'overview' && <AdminOverview vehicles={vehicles} bookings={bookings} onNavigateTab={handleTabChange} />}
                 {activeTab === 'bookings' && <AdminBookings bookings={bookings} vehicles={vehicles} onRefreshData={() => { onRefreshData(); loadAuxData(); }} externalSearch={commandPaletteSearch} />}
                 {activeTab === 'vehicles' && <AdminVehicles vehicles={vehicles} bookings={bookings} onRefreshData={() => { onRefreshData(); loadAuxData(); }} onOpenAddVehicle={() => openVehicleForm(null)} onOpenEditVehicle={(v) => openVehicleForm(v)} onDeleteVehicle={(v) => { setDeleteError(null); setVehicleToDelete(v); }} />}
@@ -523,15 +571,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </main>
       </div>
 
-      <div className="md:hidden fixed inset-x-0 bottom-0 z-40 bg-slate-900 border-t border-slate-800 p-2 shadow-2xl backdrop-blur-md" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        <div className="flex items-center justify-around">
+      <div className="md:hidden fixed inset-x-0 bottom-0 z-40 bg-slate-950/95 border-t border-slate-800 px-2 py-1.5 shadow-2xl backdrop-blur-md" style={{ paddingBottom: 'max(0.375rem, env(safe-area-inset-bottom))' }}>
+        <div
+          className="grid gap-1 items-center"
+          style={{ gridTemplateColumns: `repeat(${primaryMobileTabs.length + 1}, minmax(0, 1fr))` }}
+        >
           {primaryMobileTabs.map((nav) => {
             const Icon = nav.icon;
             const isActive = activeTab === nav.id;
             return (
-              <button key={nav.id} type="button" onClick={() => handleTabChange(nav.id)} className={`flex flex-col items-center gap-1 p-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${isActive ? 'text-amber-400 font-extrabold' : 'text-slate-400 hover:text-white'}`}>
-                <Icon className="w-5 h-5" />
-                <span>{nav.label}</span>
+              <button
+                key={nav.id}
+                type="button"
+                onClick={() => handleTabChange(nav.id)}
+                className={`min-h-11 min-w-0 flex flex-col items-center justify-center gap-0.5 px-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${isActive ? 'text-amber-400 bg-amber-500/10 font-extrabold' : 'text-slate-300 hover:text-white'}`}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <span className="truncate max-w-full">{nav.shortLabel}</span>
               </button>
             );
           })}
@@ -542,10 +598,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             aria-haspopup="dialog"
             aria-expanded={showMobileMore}
             aria-label="عرض المزيد من الأقسام"
-            className="flex flex-col items-center gap-1 p-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer"
+            className="min-h-11 min-w-0 flex flex-col items-center justify-center gap-0.5 px-1 py-1.5 rounded-xl text-xs font-bold text-slate-300 hover:text-white cursor-pointer"
           >
-            <MoreHorizontal className="w-5 h-5" />
-            <span>المزيد</span>
+            <MoreHorizontal className="w-4 h-4 shrink-0" />
+            <span className="truncate max-w-full">المزيد</span>
           </button>
         </div>
       </div>
@@ -570,14 +626,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             className="relative z-10 bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[90dvh] overflow-y-auto overscroll-contain pb-safe"
           >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-sm font-extrabold text-white">كافة الأقسام والخدمات</h3>
+              <h3 className="text-base font-extrabold text-white">كافة الأقسام والخدمات</h3>
               <button
                 type="button"
                 onClick={() => {
                   setShowMobileMore(false);
                   mobileMoreBtnRef.current?.focus();
                 }}
-                className="p-1 text-slate-400 hover:text-white cursor-pointer"
+                className="min-w-11 min-h-11 inline-flex items-center justify-center rounded-xl text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer"
                 aria-label="إغلاق القائمة"
               >
                 <X className="w-5 h-5" />
@@ -597,10 +653,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       setShowMobileMore(false);
                       mobileMoreBtnRef.current?.focus();
                     }}
-                    className={`p-3 rounded-2xl border text-right text-xs font-bold flex items-center gap-2.5 transition-all cursor-pointer ${
+                    className={`min-h-11 p-3 rounded-2xl border text-right text-sm font-bold flex items-center gap-2.5 transition-all cursor-pointer ${
                       isActive
                         ? 'bg-amber-500 text-slate-950 border-amber-500 font-extrabold'
-                        : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                        : 'bg-slate-950/60 border-slate-800 text-slate-200 hover:border-slate-700'
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />

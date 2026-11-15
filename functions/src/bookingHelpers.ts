@@ -683,6 +683,26 @@ export async function applyBookingStatusChange(
           ? `استلام السيارة وإتمام الحجز (${bookingData.customerName || ''}) - عداد الاستلام: ${resolvedReturnMileage ?? 0} كم - الإجمالي النهائي: ${calculatedFinalTotal}$`
           : `تحديث حالة الحجز من "${previousStatus}" إلى "${newStatus}"`;
 
+      const auditMetadata: Record<string, unknown> = {
+        previousStatus,
+        newStatus,
+      };
+      if (resolvedPickupMileage !== undefined) {
+        auditMetadata.mileageAtPickup = resolvedPickupMileage;
+      }
+      if (resolvedReturnMileage !== undefined) {
+        auditMetadata.mileageAtReturn = resolvedReturnMileage;
+      }
+      if (extraChargesVal !== undefined && (newStatus === 'completed' || typeof options?.extraCharges === 'number' || typeof bookingData.extraCharges === 'number')) {
+        auditMetadata.extraCharges = extraChargesVal;
+      }
+      if (calculatedFinalTotal !== undefined && (newStatus === 'completed' || typeof options?.extraCharges === 'number' || typeof bookingData.finalTotal === 'number')) {
+        auditMetadata.finalTotal = calculatedFinalTotal;
+      }
+      if (options?.telegramUserId !== undefined) {
+        auditMetadata.telegramUserId = options.telegramUserId;
+      }
+
       writeAudit(db, transaction, {
         actorUid: options?.actorUid || 'staff',
         actorEmail: options?.actorEmail || actorEmail,
@@ -698,15 +718,7 @@ export async function applyBookingStatusChange(
         entityId: bookingId,
         entityName: String(bookingData.bookingNumber || bookingId),
         details: actionLabel,
-        metadata: {
-          previousStatus,
-          newStatus,
-          mileageAtPickup: resolvedPickupMileage,
-          mileageAtReturn: resolvedReturnMileage,
-          extraCharges: extraChargesVal,
-          finalTotal: calculatedFinalTotal,
-          telegramUserId: options?.telegramUserId,
-        },
+        metadata: auditMetadata,
       });
     }
 

@@ -150,10 +150,14 @@ export const updateSettingsSecure = secureCall(
         if (isNaN(pct) || pct < 0 || pct > 25) {
           throw new HttpsError('invalid-argument', 'نسبة خصم الأعضاء يجب أن تكون بين 0% و 25%.');
         }
+        const requestedScope = cfg.scope ?? 'all';
+        if (requestedScope !== 'all' && requestedScope !== 'specific') {
+          throw new HttpsError('invalid-argument', 'نطاق تطبيق الخصم يجب أن يكون إما "all" أو "specific".');
+        }
         updates.discountConfig = {
           enabled: Boolean(cfg.enabled),
           percentage: pct,
-          scope: cfg.scope === 'specific' ? 'specific' : 'all',
+          scope: requestedScope,
           vehicleIds: Array.isArray(cfg.vehicleIds) ? cfg.vehicleIds.slice(0, 200).map((id: any) => String(id).trim()) : [],
           title: String(cfg.title || 'خصم خاص للأعضاء').slice(0, 100),
         };

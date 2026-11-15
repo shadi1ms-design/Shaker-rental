@@ -7,9 +7,15 @@ interface PageTransitionProps {
   className?: string;
 }
 
-/** Shared entrance animation for every page. Give it a `key` at the call site to replay it. */
+/** Shared entrance/exit animation for every page (<=150ms, respects prefers-reduced-motion). */
 export const PageTransition: React.FC<PageTransitionProps> = ({ children, className }) => (
-  <motion.div variants={getPageVariants()} initial="initial" animate="animate" exit="exit" className={className}>
+  <motion.div
+    variants={getPageVariants()}
+    initial="initial"
+    animate="animate"
+    exit="exit"
+    className={className}
+  >
     {children}
   </motion.div>
 );

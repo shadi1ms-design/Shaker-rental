@@ -4,6 +4,7 @@ import { AppSettings, Booking, Vehicle, ContractResponsePayload } from '../types
 import { functionsService } from '../services/functionsService';
 import { getQrSvgPath } from '../utils/qrCode';
 import { formatDateDisplay } from '../utils/format';
+import { formatSavedBookingDiscountLabel } from '../shared/discount';
 
 interface RentalContractProps {
   booking: Booking;
@@ -113,6 +114,8 @@ export const RentalContract: React.FC<RentalContractProps> = ({ booking, setting
       dailyPrice: booking.dailyPrice || 0,
       basePrice: booking.basePrice || 0,
       discountAmount: booking.discountAmount || 0,
+      ...(typeof booking.discountPercentage === 'number' ? { discountPercentage: booking.discountPercentage } : {}),
+      ...(typeof booking.discountBase === 'number' ? { discountBase: booking.discountBase } : {}),
       insuranceAmount: booking.insuranceAmount || 0,
       driverFee: booking.driverFee || 0,
       totalPrice: booking.totalPrice || 0,
@@ -345,7 +348,15 @@ export const RentalContract: React.FC<RentalContractProps> = ({ booking, setting
                 </tr>
                 {contract.discountAmount > 0 && (
                   <tr className="border-b border-contract-border font-bold">
-                    <td className="py-1.5">الخصم المطبق</td>
+                    <td className="py-1.5">
+                      {formatSavedBookingDiscountLabel({
+                        discountAmount: contract.discountAmount,
+                        discountPercentage: contract.discountPercentage,
+                        discountBase: contract.discountBase,
+                        basePrice: contract.basePrice,
+                        currency,
+                      }) || 'الخصم المطبق'}
+                    </td>
                     <td className="py-1.5 text-left font-bold">- {money(contract.discountAmount, currency)}</td>
                   </tr>
                 )}

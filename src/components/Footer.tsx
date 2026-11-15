@@ -2,13 +2,14 @@ import React from 'react';
 import { Phone, MessageCircle, MapPin, Clock } from 'lucide-react';
 import { openWhatsAppChat } from '../services/whatsapp';
 import { COMPANY_INFO } from '../constants/company';
+import { Link } from './routing/Link';
+import { routes } from '../router';
 
 interface FooterProps {
-  onNavigate: (view: 'home' | 'catalog' | 'about' | 'admin') => void;
   variant?: 'full' | 'mini';
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigate, variant = 'full' }) => {
+export const Footer: React.FC<FooterProps> = ({ variant = 'full' }) => {
   if (variant === 'mini') {
     return (
       <footer className="bg-slate-950 border-t border-slate-800/80 text-slate-300 text-sm">
@@ -96,40 +97,29 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, variant = 'full' }) 
             <h3 className="font-bold text-white text-base">روابط سريعة</h3>
             <ul className="space-y-1 text-sm">
               <li>
-                <a
-                  href="/"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onNavigate('home');
-                  }}
+                <Link
+                  to={routes.home}
                   className="min-h-11 inline-flex items-center hover:text-amber-400 transition-colors cursor-pointer"
                 >
                   الرئيسية
-                </a>
+                </Link>
               </li>
               <li>
-                <a
-                  href="/cars"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onNavigate('catalog');
-                  }}
+                <Link
+                  to={routes.cars}
+                  prefetch
                   className="min-h-11 inline-flex items-center hover:text-amber-400 transition-colors cursor-pointer"
                 >
                   أسطول السيارات المتوفر
-                </a>
+                </Link>
               </li>
               <li>
-                <a
-                  href="/contact"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onNavigate('about');
-                  }}
+                <Link
+                  to={routes.contact}
                   className="min-h-11 inline-flex items-center hover:text-amber-400 transition-colors cursor-pointer"
                 >
                   تواصل معنا
-                </a>
+                </Link>
               </li>
             </ul>
           </div>
@@ -139,7 +129,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, variant = 'full' }) 
             <h3 className="font-bold text-white text-base">المقر وساعات العمل</h3>
             <div className="space-y-2.5 text-sm">
               <div className="flex items-start gap-2">
-                <MapPin className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <MapPin className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <span>{COMPANY_INFO.fullAddress}</span>
               </div>
               <div className="flex items-start gap-2">

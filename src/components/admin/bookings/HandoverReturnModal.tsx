@@ -157,7 +157,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
               <h3 id="handover-return-modal-title" className="text-base font-extrabold text-brand-text">
                 {isHandover ? 'تسليم السيارة للعميل' : 'استلام السيارة من العميل'}
               </h3>
-              <p className="text-xs text-brand-muted">
+              <p className="text-sm text-brand-muted">
                 {booking.vehicleName} • #{booking.bookingNumber || booking.id.slice(-6).toUpperCase()}
               </p>
             </div>
@@ -167,7 +167,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="إغلاق النافذة"
-            className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text transition-colors cursor-pointer border border-brand-border"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text transition-colors cursor-pointer border border-brand-border"
           >
             <X className="w-4 h-4" />
           </button>
@@ -176,7 +176,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
         {errorMsg && (
           <div
             role="alert"
-            className="p-3.5 rounded-card bg-status-danger-bg border border-status-danger-border text-status-danger text-xs font-bold flex items-start gap-2"
+            className="p-3.5 rounded-card bg-status-danger-bg border border-status-danger-border text-status-danger text-sm font-bold flex items-start gap-2"
           >
             <AlertCircle className="w-4 h-4 text-status-danger-dot shrink-0 mt-0.5" />
             <span>{errorMsg}</span>
@@ -184,7 +184,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="bg-brand-obsidian border border-brand-border rounded-card p-3.5 flex items-center justify-between text-xs">
+          <div className="bg-brand-obsidian border border-brand-border rounded-card p-3.5 flex items-center justify-between text-sm">
             <span className="text-brand-muted font-bold flex items-center gap-1.5">
               <Gauge className="w-4 h-4 text-brand-gold-light" />
               العداد السابق المسجل:
@@ -197,7 +197,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
           <div>
             <label
               htmlFor="handover-odometer-input"
-              className="block text-xs font-bold text-brand-text mb-1.5"
+              className="block text-sm font-bold text-brand-text mb-1.5"
             >
               {isHandover
                 ? 'قراءة عداد الكيلومترات عند التسليم (كم) *'
@@ -212,9 +212,9 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
               dir="ltr"
               value={odometerInput}
               onChange={(e) => setOdometerInput(e.target.value)}
-              className="w-full min-h-[44px] bg-brand-obsidian border border-brand-border focus:border-brand-gold rounded-card px-3.5 py-2.5 text-base sm:text-sm text-brand-text font-mono focus:outline-none"
+              className="w-full min-h-11 bg-brand-obsidian border border-brand-border focus:border-brand-gold rounded-card px-3.5 py-2.5 text-base sm:text-sm text-brand-text font-mono focus:outline-none"
             />
-            <p className="text-[11px] text-brand-muted mt-1">
+            <p className="text-xs text-brand-muted mt-1">
               يجب ألا تقل القراءة عن {minAllowedMileage.toLocaleString('en-US')} كم. سيتم تحديث عداد المركبة والعقد تلقائياً.
             </p>
           </div>
@@ -222,19 +222,19 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
           {isOilOverdue && (
             <div
               role="alert"
-              className="p-3.5 rounded-card bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2.5"
+              className="p-3.5 rounded-card bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm space-y-2.5"
             >
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-bold text-amber-300 block">تنبيه: استحقاق تغيير الزيت الدوري للمركبة!</span>
-                  <p className="text-[11px] text-amber-200/80 mt-0.5 leading-relaxed">
+                  <p className="text-xs text-amber-200/85 mt-0.5 leading-relaxed">
                     آخر تغيير مسجل كان عند {lastOilMileage.toLocaleString('en-US')} كم (الفارق بعد القراءة الحالية:{' '}
                     {(effectiveMileage - lastOilMileage).toLocaleString('en-US')} كم / الفاصل الدوري: {oilInterval.toLocaleString('en-US')} كم).
                   </p>
                 </div>
               </div>
-              <label className="flex items-center gap-2 cursor-pointer pt-1 border-t border-amber-500/20 text-xs font-bold text-amber-200 select-none">
+              <label className="min-h-11 flex items-center gap-2 cursor-pointer pt-1 border-t border-amber-500/20 text-sm font-bold text-amber-200 select-none">
                 <input
                   type="checkbox"
                   id="confirm-oil-overdue-checkbox"
@@ -252,7 +252,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
               <div>
                 <label
                   htmlFor="return-condition-input"
-                  className="block text-xs font-bold text-brand-text mb-1.5"
+                  className="block text-sm font-bold text-brand-text mb-1.5"
                 >
                   حالة المركبة عند الإرجاع (اختياري)
                 </label>
@@ -262,14 +262,14 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
                   value={returnCondition}
                   onChange={(e) => setReturnCondition(e.target.value)}
                   placeholder="مثال: سليمة ونظيفة، كامل الملحقات موجودة"
-                  className="w-full min-h-[44px] bg-brand-obsidian border border-brand-border focus:border-brand-gold rounded-card px-3.5 py-2.5 text-base sm:text-sm text-brand-text focus:outline-none"
+                  className="w-full min-h-11 bg-brand-obsidian border border-brand-border focus:border-brand-gold rounded-card px-3.5 py-2.5 text-base sm:text-sm text-brand-text placeholder:text-slate-400 focus:outline-none"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="return-extra-charges-input"
-                  className="block text-xs font-bold text-brand-text mb-1.5"
+                  className="block text-sm font-bold text-brand-text mb-1.5"
                 >
                   رسوم إضافية عند الإرجاع (اختياري - $)
                 </label>
@@ -281,7 +281,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
                   dir="ltr"
                   value={extraChargesInput}
                   onChange={(e) => setExtraChargesInput(e.target.value)}
-                  className="w-full min-h-[44px] bg-brand-obsidian border border-brand-border focus:border-brand-gold rounded-card px-3.5 py-2.5 text-base sm:text-sm text-brand-text font-mono focus:outline-none"
+                  className="w-full min-h-11 bg-brand-obsidian border border-brand-border focus:border-brand-gold rounded-card px-3.5 py-2.5 text-base sm:text-sm text-brand-text font-mono focus:outline-none"
                 />
               </div>
             </>
@@ -290,7 +290,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
           <div>
             <label
               htmlFor="handover-reason-note"
-              className="block text-xs font-bold text-brand-text mb-1.5"
+              className="block text-sm font-bold text-brand-text mb-1.5"
             >
               ملاحظة السجل الإداري (اختياري)
             </label>
@@ -304,7 +304,7 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
                   ? 'ملاحظات إضافية عند تسليم المركبة...'
                   : 'ملاحظات إضافية عند استلام المركبة...'
               }
-              className="w-full bg-brand-obsidian border border-brand-border focus:border-brand-gold rounded-card px-3.5 py-2 text-base sm:text-sm text-brand-text focus:outline-none"
+              className="w-full bg-brand-obsidian border border-brand-border focus:border-brand-gold rounded-card px-3.5 py-2.5 text-base sm:text-sm text-brand-text placeholder:text-slate-400 focus:outline-none"
             />
           </div>
 
@@ -313,14 +313,14 @@ export const HandoverReturnModal: React.FC<HandoverReturnModalProps> = ({
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="flex-1 min-h-[44px] py-2.5 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text font-bold text-xs transition-colors cursor-pointer border border-brand-border"
+              className="flex-1 min-h-11 py-2.5 rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text font-bold text-sm transition-colors cursor-pointer border border-brand-border"
             >
               إلغاء
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className={`flex-1 min-h-[44px] py-2.5 rounded-card font-extrabold text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+              className={`flex-1 min-h-11 py-2.5 rounded-card font-extrabold text-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
                 isHandover
                   ? 'bg-status-rented-solid hover:opacity-90 text-brand-obsidian'
                   : 'bg-status-confirmed-solid hover:opacity-90 text-brand-obsidian'

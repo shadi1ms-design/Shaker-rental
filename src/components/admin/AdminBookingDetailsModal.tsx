@@ -4,6 +4,7 @@ import { StatusBadge } from '../common/StatusBadge';
 import { RentalContract } from '../RentalContract';
 import { BookingStatusProgress } from './bookings/BookingStatusProgress';
 import { formatDateDisplay, formatMoney } from '../../utils/format';
+import { formatSavedBookingDiscountLabel } from '../../shared/discount';
 import { getWhatsAppChatUrl } from '../../services/whatsapp';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
@@ -131,7 +132,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                 )}
                 <StatusBadge status={booking.status} type="booking" />
               </div>
-              <p className="text-xs text-brand-muted mt-0.5">
+              <p className="text-sm text-brand-muted mt-0.5">
                 {booking.customerName} • {booking.vehicleName}
               </p>
             </div>
@@ -142,7 +143,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
               <button
                 type="button"
                 onClick={() => onOpenHandover(booking)}
-                className="px-3.5 py-2 rounded-card bg-status-rented-solid hover:opacity-90 text-brand-obsidian text-xs font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="min-h-11 px-3.5 py-2 rounded-card bg-status-rented-solid hover:opacity-90 text-brand-obsidian text-sm font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Key className="w-4 h-4" />
                 <span>تسليم السيارة</span>
@@ -152,7 +153,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
               <button
                 type="button"
                 onClick={() => onOpenReturn(booking)}
-                className="px-3.5 py-2 rounded-card bg-status-confirmed-solid hover:opacity-90 text-brand-obsidian text-xs font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="min-h-11 px-3.5 py-2 rounded-card bg-status-confirmed-solid hover:opacity-90 text-brand-obsidian text-sm font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>استلام السيارة</span>
@@ -162,7 +163,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
               type="button"
               onClick={onClose}
               aria-label="إغلاق تفاصيل الحجز"
-              className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text transition-colors cursor-pointer border border-brand-border"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-card bg-brand-elevated hover:bg-brand-border text-brand-text transition-colors cursor-pointer border border-brand-border"
             >
               <X className="w-5 h-5" />
             </button>
@@ -176,7 +177,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
               key={sec.key}
               type="button"
               onClick={() => setActiveSection(sec.key)}
-              className={`px-3 py-1.5 rounded-card text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              className={`min-h-11 px-3.5 py-2 rounded-card text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
                 activeSection === sec.key
                   ? 'bg-brand-gold text-brand-obsidian font-extrabold shadow-gold'
                   : 'bg-brand-elevated text-brand-text hover:bg-brand-border'
@@ -207,31 +208,31 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
 
               <BookingStatusProgress status={booking.status} />
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                 <div className="bg-brand-surface border border-brand-border rounded-card p-3.5 space-y-1">
-                  <span className="text-brand-muted block">المركبة المحجوزة</span>
+                  <span className="text-brand-muted text-xs block">المركبة المحجوزة</span>
                   <span className="font-extrabold text-brand-text text-sm block">{booking.vehicleName}</span>
                   {vehicle && (
-                    <span className="text-brand-muted block">
+                    <span className="text-brand-muted text-xs block">
                       لوحة: {vehicle.plateNumber ? vehicle.plateNumber : vehicle._internalDetailsLoaded ? '—' : 'جاري التحميل...'} • اللون: {vehicle.color}
                     </span>
                   )}
                 </div>
 
                 <div className="bg-brand-surface border border-brand-border rounded-card p-3.5 space-y-1">
-                  <span className="text-brand-muted block">المستأجر</span>
+                  <span className="text-brand-muted text-xs block">المستأجر</span>
                   <span className="font-extrabold text-brand-text text-sm block">{booking.customerName}</span>
-                  <span className="font-mono text-brand-muted block" dir="ltr">
+                  <span className="font-mono text-brand-muted text-sm block" dir="ltr">
                     {booking.customerPhone}
                   </span>
                 </div>
 
                 <div className="bg-brand-surface border border-brand-border rounded-card p-3.5 space-y-1">
-                  <span className="text-brand-muted block">المبلغ الإجمالي والمدة</span>
+                  <span className="text-brand-muted text-xs block">المبلغ الإجمالي والمدة</span>
                   <span className="font-extrabold text-brand-gold-light text-base block">
                     {formatMoney(booking.totalPrice)}
                   </span>
-                  <span className="text-brand-muted block">{booking.rentalDays} أيام إيجار</span>
+                  <span className="text-brand-muted text-xs block">{booking.rentalDays} أيام إيجار</span>
                 </div>
               </div>
             </section>
@@ -248,20 +249,20 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                 <span>2. العميل والوثائق الرسمية</span>
               </h4>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <div className="space-y-2.5 bg-brand-surface border border-brand-border rounded-card p-3.5">
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-2">
                     <span className="text-brand-muted">الاسم الكامل:</span>
                     <span className="font-bold text-brand-text">{booking.customerName}</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-2">
                     <span className="text-brand-muted">رقم الهاتف:</span>
                     <span className="font-mono font-bold text-brand-text" dir="ltr">
                       {booking.customerPhone}
                     </span>
                   </div>
                   {booking.customerWhatsApp && (
-                    <div className="flex justify-between items-center">
+                    <div className="flex flex-wrap justify-between items-center gap-2">
                       <span className="text-brand-muted">رقم الواتساب:</span>
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-status-confirmed" dir="ltr">
@@ -274,24 +275,24 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                           )}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="px-2 py-0.5 rounded bg-status-confirmed-bg hover:bg-status-confirmed-solid text-status-confirmed hover:text-brand-obsidian border border-status-confirmed-border text-[11px] font-bold flex items-center gap-1 transition-colors"
+                          className="min-h-11 px-3 py-1.5 rounded-lg bg-status-confirmed-bg hover:bg-status-confirmed-solid text-status-confirmed hover:text-brand-obsidian border border-status-confirmed-border text-sm font-bold inline-flex items-center gap-1.5 transition-colors"
                         >
-                          <MessageCircle className="w-3 h-3" />
+                          <MessageCircle className="w-4 h-4" />
                           <span>محادثة</span>
                         </a>
                       </div>
                     </div>
                   )}
                   {booking.customerEmail && (
-                    <div className="flex justify-between">
+                    <div className="flex flex-wrap justify-between gap-2">
                       <span className="text-brand-muted">البريد الإلكتروني:</span>
-                      <span className="font-mono text-brand-text">{booking.customerEmail}</span>
+                      <span className="font-mono text-brand-text break-all">{booking.customerEmail}</span>
                     </div>
                   )}
                   {booking.customerAddress && (
                     <div className="pt-2 border-t border-brand-border">
                       <span className="text-brand-muted block mb-1 flex items-center gap-1">
-                        <MapPin className="w-3 h-3 text-brand-gold-light" />
+                        <MapPin className="w-3.5 h-3.5 text-brand-gold-light" />
                         عنوان الإقامة / التسليم:
                       </span>
                       <p className="text-brand-text font-semibold leading-relaxed bg-brand-obsidian p-2.5 rounded-lg border border-brand-border">
@@ -302,7 +303,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                 </div>
 
                 <div className="bg-brand-surface border border-brand-border rounded-card p-3.5 space-y-3">
-                  <span className="text-xs font-bold text-brand-text flex items-center gap-1.5">
+                  <span className="text-sm font-bold text-brand-text flex items-center gap-1.5">
                     <ShieldCheck className="w-4 h-4 text-brand-gold-light" />
                     الوثائق الثبوتية المرفوعة ({docEntries.length})
                   </span>
@@ -326,14 +327,14 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                           />
                           <div className="absolute inset-0 bg-gradient-to-t from-brand-obsidian/90 via-brand-obsidian/20 to-transparent flex items-end justify-between p-2">
-                            <span className="text-[11px] font-bold text-brand-text">{doc.label}</span>
+                            <span className="text-xs font-bold text-brand-text">{doc.label}</span>
                             <ExternalLink className="w-3.5 h-3.5 text-brand-gold-light" />
                           </div>
                         </a>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-xs text-brand-muted py-4 text-center">
+                    <p className="text-sm text-brand-muted py-4 text-center">
                       لا توجد وثائق مرفوعة في ملف هذا العميل حتى الآن.
                     </p>
                   )}
@@ -353,49 +354,81 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                 <span>3. التفاصيل المالية والأسعار</span>
               </h4>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                <div className="bg-brand-surface border border-brand-border rounded-card p-3">
-                  <span className="text-brand-muted block">الأجرة اليومية</span>
-                  <span className="text-sm font-extrabold text-brand-text mt-1 block">
-                    {formatMoney(booking.dailyPrice)}
-                  </span>
-                </div>
-                <div className="bg-brand-surface border border-brand-border rounded-card p-3">
-                  <span className="text-brand-muted block">أجرة المدة ({booking.rentalDays} يوم)</span>
-                  <span className="text-sm font-extrabold text-brand-text mt-1 block">
-                    {formatMoney(booking.basePrice)}
-                  </span>
-                </div>
-                <div className="bg-brand-surface border border-brand-border rounded-card p-3">
-                  <span className="text-brand-muted block">التأمين المسترد</span>
-                  <span className="text-sm font-extrabold text-brand-gold-light mt-1 block">
-                    {formatMoney(booking.insuranceAmount)}
-                  </span>
-                </div>
-                <div className="bg-brand-gold-bg border border-brand-gold-border rounded-card p-3">
-                  <span className="text-status-new block font-bold">الإجمالي النهائي</span>
-                  <span className="text-base font-extrabold text-brand-gold-light mt-1 block">
-                    {formatMoney(booking.totalPrice)}
-                  </span>
-                </div>
-              </div>
+              {(() => {
+                const currency = settings?.currency || '$';
+                const discountLabel = formatSavedBookingDiscountLabel({
+                  discountAmount: booking.discountAmount,
+                  discountPercentage: booking.discountPercentage,
+                  discountBase: booking.discountBase,
+                  basePrice: booking.basePrice,
+                  currency,
+                });
+                const driverFee = Number(booking.driverFee || 0);
+                const extraCharges = Number(booking.extraCharges || 0);
+                const finalAmount = booking.finalTotal ?? booking.totalPrice;
 
-              {(booking.discountAmount > 0 || (booking.extraCharges && booking.extraCharges > 0)) && (
-                <div className="flex flex-wrap gap-3 text-xs">
-                  {booking.discountAmount > 0 && (
-                    <div className="flex items-center gap-1.5 px-3 py-2 rounded-card bg-status-confirmed-bg border border-status-confirmed-border text-status-confirmed font-bold">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>خصم مطبق: -{formatMoney(booking.discountAmount)}</span>
+                return (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                      <div className="bg-brand-surface border border-brand-border rounded-card p-3">
+                        <span className="text-brand-muted text-xs block">
+                          الإيجار ({booking.rentalDays} يوم × {formatMoney(booking.dailyPrice, currency)})
+                        </span>
+                        <span className="text-sm font-extrabold text-brand-text mt-1 block tabular-nums">
+                          {formatMoney(booking.basePrice, currency)}
+                        </span>
+                      </div>
+                      <div className="bg-brand-surface border border-brand-border rounded-card p-3">
+                        <span className="text-brand-muted text-xs block">الخصم</span>
+                        <span className={`text-sm font-extrabold mt-1 block tabular-nums ${booking.discountAmount > 0 ? 'text-status-confirmed' : 'text-brand-text'}`}>
+                          {discountLabel || formatMoney(0, currency)}
+                        </span>
+                      </div>
+                      <div className="bg-brand-surface border border-brand-border rounded-card p-3">
+                        <span className="text-brand-muted text-xs block">التأمين المسترد</span>
+                        <span className="text-sm font-extrabold text-brand-gold-light mt-1 block tabular-nums">
+                          {formatMoney(booking.insuranceAmount, currency)}
+                        </span>
+                      </div>
+                      <div className="bg-brand-surface border border-brand-border rounded-card p-3">
+                        <span className="text-brand-muted text-xs block">السائق</span>
+                        <span className="text-sm font-extrabold text-brand-text mt-1 block tabular-nums">
+                          {formatMoney(driverFee, currency)}
+                        </span>
+                      </div>
+                      <div className="bg-brand-surface border border-brand-border rounded-card p-3">
+                        <span className="text-brand-muted text-xs block">الإضافي</span>
+                        <span className={`text-sm font-extrabold mt-1 block tabular-nums ${extraCharges > 0 ? 'text-status-danger' : 'text-brand-text'}`}>
+                          {extraCharges > 0 ? `+${formatMoney(extraCharges, currency)}` : formatMoney(0, currency)}
+                        </span>
+                      </div>
+                      <div className="bg-brand-gold-bg border border-brand-gold-border rounded-card p-3">
+                        <span className="text-status-new text-xs block font-bold">الإجمالي</span>
+                        <span className="text-base font-extrabold text-brand-gold-light mt-1 block tabular-nums">
+                          {formatMoney(finalAmount, currency)}
+                        </span>
+                      </div>
                     </div>
-                  )}
-                  {booking.extraCharges && booking.extraCharges > 0 ? (
-                    <div className="flex items-center gap-1.5 px-3 py-2 rounded-card bg-status-danger-bg border border-status-danger-border text-status-danger font-bold">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      <span>رسوم إضافية عند الإرجاع: +{formatMoney(booking.extraCharges)}</span>
-                    </div>
-                  ) : null}
-                </div>
-              )}
+
+                    {(discountLabel || extraCharges > 0) && (
+                      <div className="flex flex-wrap gap-3 text-sm">
+                        {discountLabel && (
+                          <div className="flex items-center gap-1.5 px-3 py-2 rounded-card bg-status-confirmed-bg border border-status-confirmed-border text-status-confirmed font-bold">
+                            <Sparkles className="w-4 h-4" />
+                            <span>{discountLabel}</span>
+                          </div>
+                        )}
+                        {extraCharges > 0 && (
+                          <div className="flex items-center gap-1.5 px-3 py-2 rounded-card bg-status-danger-bg border border-status-danger-border text-status-danger font-bold">
+                            <AlertTriangle className="w-4 h-4" />
+                            <span>رسوم إضافية عند الإرجاع: +{formatMoney(extraCharges, currency)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </section>
           )}
 
@@ -410,7 +443,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                 <span>4. الجدول الزمني وقراءات عداد الكيلومترات</span>
               </h4>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                 <div className="bg-brand-surface border border-brand-border rounded-card p-3.5 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-brand-muted">تاريخ ووقت الاستلام:</span>
@@ -489,7 +522,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                   <button
                     type="button"
                     onClick={() => setActiveSection('contract')}
-                    className="px-3 py-1 rounded-lg bg-brand-gold-bg hover:bg-brand-gold text-status-new hover:text-brand-obsidian border border-brand-gold-border text-xs font-bold transition-colors cursor-pointer"
+                    className="min-h-11 px-3.5 py-2 rounded-lg bg-brand-gold-bg hover:bg-brand-gold text-status-new hover:text-brand-obsidian border border-brand-gold-border text-sm font-bold transition-colors cursor-pointer"
                   >
                     عرض العقد بملء النافذة
                   </button>
@@ -517,23 +550,23 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
               </h4>
 
               {booking.notes ? (
-                <div className="p-3.5 rounded-card bg-brand-gold-bg border border-brand-gold-border text-xs text-status-new">
+                <div className="p-3.5 rounded-card bg-brand-gold-bg border border-brand-gold-border text-sm text-status-new">
                   <span className="font-bold block mb-1">ملاحظات العميل عند الطلب:</span>
                   {booking.notes}
                 </div>
               ) : (
-                <p className="text-xs text-brand-muted">لا توجد ملاحظات مسجلة من العميل.</p>
+                <p className="text-sm text-brand-muted">لا توجد ملاحظات مسجلة من العميل.</p>
               )}
 
               {booking.returnCondition && (
-                <div className="p-3.5 rounded-card bg-status-confirmed-bg border border-status-confirmed-border text-xs text-status-confirmed">
+                <div className="p-3.5 rounded-card bg-status-confirmed-bg border border-status-confirmed-border text-sm text-status-confirmed">
                   <span className="font-bold block mb-1">حالة المركبة عند الإرجاع:</span>
                   {booking.returnCondition}
                 </div>
               )}
 
               {booking.rejectionReason && (
-                <div className="p-3.5 rounded-card bg-status-danger-bg border border-status-danger-border text-xs text-status-danger">
+                <div className="p-3.5 rounded-card bg-status-danger-bg border border-status-danger-border text-sm text-status-danger">
                   <span className="font-bold block mb-1">سبب رفض الطلب:</span>
                   {booking.rejectionReason}
                 </div>
@@ -552,15 +585,15 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                 <span>7. سجل العمليات والتدقيق</span>
               </h4>
 
-              <ol className="space-y-2.5 text-xs text-brand-muted">
-                <li className="flex items-center justify-between bg-brand-surface border border-brand-border rounded-card px-3.5 py-2.5">
+              <ol className="space-y-2.5 text-sm text-brand-muted">
+                <li className="flex flex-wrap items-center justify-between gap-2 bg-brand-surface border border-brand-border rounded-card px-3.5 py-2.5">
                   <span className="font-bold text-brand-text">إنشاء طلب الحجز</span>
                   <span className="font-mono text-brand-muted" dir="ltr">
                     {formatDateDisplay(booking.createdAt)}
                   </span>
                 </li>
                 {booking.mileageAtPickup !== undefined && (
-                  <li className="flex items-center justify-between bg-brand-surface border border-brand-border rounded-card px-3.5 py-2.5">
+                  <li className="flex flex-wrap items-center justify-between gap-2 bg-brand-surface border border-brand-border rounded-card px-3.5 py-2.5">
                     <span className="font-bold text-status-rented">
                       تسليم السيارة للعميل (العداد: {booking.mileageAtPickup.toLocaleString('en-US')} كم)
                     </span>
@@ -568,7 +601,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                   </li>
                 )}
                 {booking.mileageAtReturn !== undefined && (
-                  <li className="flex items-center justify-between bg-brand-surface border border-brand-border rounded-card px-3.5 py-2.5">
+                  <li className="flex flex-wrap items-center justify-between gap-2 bg-brand-surface border border-brand-border rounded-card px-3.5 py-2.5">
                     <span className="font-bold text-status-confirmed">
                       استلام السيارة من العميل (العداد: {booking.mileageAtReturn.toLocaleString('en-US')} كم)
                     </span>
@@ -576,7 +609,7 @@ export const AdminBookingDetailsModal: React.FC<AdminBookingDetailsModalProps> =
                   </li>
                 )}
                 {booking.updatedAt && (
-                  <li className="flex items-center justify-between bg-brand-surface border border-brand-border rounded-card px-3.5 py-2.5">
+                  <li className="flex flex-wrap items-center justify-between gap-2 bg-brand-surface border border-brand-border rounded-card px-3.5 py-2.5">
                     <span className="font-bold text-brand-text">آخر تحديث مسجل على الحجز</span>
                     <span className="font-mono text-brand-muted" dir="ltr">
                       {formatDateDisplay(booking.updatedAt)}

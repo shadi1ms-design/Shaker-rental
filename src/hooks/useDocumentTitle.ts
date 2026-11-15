@@ -20,28 +20,48 @@ function setOrUpdateMetaTag(selector: string, attr: string, value: string, tagNa
   element.setAttribute(attr, value);
 }
 
-export function useDocumentTitle(title?: string, description?: string) {
+export interface DocumentTitleOptions {
+  canonicalPath?: string;
+  noindex?: boolean;
+}
+
+export function useDocumentTitle(
+  title?: string,
+  description?: string,
+  options?: DocumentTitleOptions
+) {
+  const canonicalPath = options?.canonicalPath;
+  const noindex = Boolean(options?.noindex);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
 
     const baseTitle = 'شاكر لتأجير السيارات';
-    const fullTitle = !title || title === 'الرئيسية' ? `${baseTitle} | أسطول دمشق الأحدث` : `${title} | ${baseTitle}`;
+    const fullTitle =
+      !title || title === 'الرئيسية' ? `${baseTitle} | أسطول دمشق الأحدث` : `${title} | ${baseTitle}`;
     document.title = fullTitle;
 
     const defaultDescription =
       description ||
       'شركة شاكر لتأجير السيارات في دمشق - الخيار الأول لتأجير سيارات السيدان، سيدان (اقتصادي)، وSUV بأسعار منافسة وعقود رسمية.';
 
-    // Dynamic Meta Tags
     setOrUpdateMetaTag('meta[name="description"]', 'content', defaultDescription);
     setOrUpdateMetaTag('meta[property="og:title"]', 'content', fullTitle);
     setOrUpdateMetaTag('meta[property="og:description"]', 'content', defaultDescription);
+    setOrUpdateMetaTag(
+      'meta[name="robots"]',
+      'content',
+      noindex ? 'noindex,nofollow' : 'index,follow'
+    );
 
-    const canonicalUrl = typeof window !== 'undefined'
-      ? `${window.location.origin}${window.location.pathname}`
-      : 'https://shakerrent.com/';
+    const origin =
+      typeof window !== 'undefined' ? window.location.origin : 'https://shakerrent.com';
+    const resolvedPath =
+      canonicalPath ??
+      (typeof window !== 'undefined' ? window.location.pathname || '/' : '/');
+    const canonicalUrl = `${origin}${resolvedPath.startsWith('/') ? resolvedPath : `/${resolvedPath}`}`;
 
     setOrUpdateMetaTag('meta[property="og:url"]', 'content', canonicalUrl);
     setOrUpdateMetaTag('link[rel="canonical"]', 'href', canonicalUrl, 'link');
-  }, [title, description]);
+  }, [title, description, canonicalPath, noindex]);
 }

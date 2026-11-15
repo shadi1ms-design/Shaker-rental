@@ -2,7 +2,7 @@ import React from 'react';
 import { PageTransition } from '../components/routing/PageTransition';
 import { SuspenseFallback } from '../components/routing/Spinners';
 import { useAuth } from '../contexts/AuthContext';
-import { goBack, navigate, routes } from '../router';
+import { getSafeRedirectTarget, navigate, routes } from '../router';
 import { isStaffRole } from '../utils/roles';
 
 const AuthView = React.lazy(() => import('../components/AuthView').then((m) => ({ default: m.AuthView })));
@@ -15,12 +15,18 @@ export const AuthPage: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => 
     <PageTransition>
       <React.Suspense fallback={<SuspenseFallback />}>
         <AuthView
-          isOpen
           initialMode={mode}
-          onModeChange={(next) => navigate(next === 'register' ? routes.register : routes.login, { replace: true })}
+          onModeChange={(next) => {
+            const search = typeof window !== 'undefined' ? window.location.search : '';
+            navigate((next === 'register' ? routes.register : routes.login) + search, { replace: true });
+          }}
           loginWithGoogle={loginWithGoogle}
-          onClose={() => goBack(routes.home)}
           onSuccess={(resolvedRole) => {
+            const redirectTo = getSafeRedirectTarget();
+            if (redirectTo) {
+              navigate(redirectTo, { replace: true });
+              return;
+            }
             const isStaff = resolvedRole
               ? isStaffRole(resolvedRole)
               : (isAdmin || isEmployee);

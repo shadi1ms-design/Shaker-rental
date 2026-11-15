@@ -212,7 +212,7 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
               />
               <div
                 role="menu"
-                className="absolute end-0 bottom-full mb-2 w-52 bg-slate-950 border border-slate-800 rounded-card p-1.5 shadow-2xl z-50 space-y-1 text-xs font-semibold"
+                className="absolute end-0 bottom-full mb-2 w-56 bg-slate-950 border border-slate-800 rounded-card p-1.5 shadow-2xl z-50 space-y-1 text-sm font-semibold"
               >
                 <button
                   role="menuitem"
@@ -221,9 +221,9 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
                     setShowMoreMenu(false);
                     onRecordOilChange(vehicle);
                   }}
-                  className="w-full px-3 py-2 rounded-xl text-amber-300 hover:bg-amber-500/10 flex items-center gap-2 text-right transition-colors cursor-pointer"
+                  className="w-full min-h-11 px-3 py-2 rounded-xl text-amber-300 hover:bg-amber-500/10 flex items-center gap-2 text-right transition-colors cursor-pointer"
                 >
-                  <Droplets className="w-4 h-4 text-amber-400" />
+                  <Droplets className="w-4 h-4 text-amber-400 shrink-0" />
                   <span>تسجيل تغيير الزيت ({vehicle.currentMileage || 0} كم)</span>
                 </button>
 
@@ -235,9 +235,9 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
                       setShowMoreMenu(false);
                       onStatusChangeRequest(vehicle, 'maintenance');
                     }}
-                    className="w-full px-3 py-2 rounded-xl text-rose-300 hover:bg-rose-500/10 flex items-center gap-2 text-right transition-colors cursor-pointer"
+                    className="w-full min-h-11 px-3 py-2 rounded-xl text-rose-300 hover:bg-rose-500/10 flex items-center gap-2 text-right transition-colors cursor-pointer"
                   >
-                    <Wrench className="w-4 h-4 text-rose-400" />
+                    <Wrench className="w-4 h-4 text-rose-400 shrink-0" />
                     <span>تحويل إلى الصيانة</span>
                   </button>
                 ) : (
@@ -248,9 +248,9 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
                       setShowMoreMenu(false);
                       onStatusChangeRequest(vehicle, 'available');
                     }}
-                    className="w-full px-3 py-2 rounded-xl text-emerald-300 hover:bg-emerald-500/10 flex items-center gap-2 text-right transition-colors cursor-pointer"
+                    className="w-full min-h-11 px-3 py-2 rounded-xl text-emerald-300 hover:bg-emerald-500/10 flex items-center gap-2 text-right transition-colors cursor-pointer"
                   >
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                     <span>تحويل إلى متاحة</span>
                   </button>
                 )}
@@ -264,9 +264,9 @@ export const VehicleCard: React.FC<VehicleCardProps> = ({
                     setShowMoreMenu(false);
                     onDelete(vehicle);
                   }}
-                  className="w-full px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/20 flex items-center gap-2 text-right font-bold transition-colors cursor-pointer"
+                  className="w-full min-h-11 px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/20 flex items-center gap-2 text-right font-bold transition-colors cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4 text-rose-500" />
+                  <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
                   <span>حذف السيارة</span>
                 </button>
               </div>

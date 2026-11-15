@@ -45,7 +45,7 @@ export const VehicleTableRow: React.FC<VehicleTableRowProps> = ({
       : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25';
 
   return (
-    <tr className="hover:bg-slate-900/60 transition-colors border-b border-slate-800/80 text-xs font-semibold">
+    <tr className="hover:bg-slate-900/60 transition-colors border-b border-slate-800/80 text-sm font-semibold">
       {/* 1st Column: Sticky Vehicle Info */}
       <td className="p-3.5 sticky start-0 bg-slate-950/95 backdrop-blur-md z-10 min-w-[220px]">
         <div className="flex items-center gap-3">
@@ -133,23 +133,23 @@ export const VehicleTableRow: React.FC<VehicleTableRowProps> = ({
             type="button"
             onClick={() => onRecordOilChange(vehicle)}
             disabled={isUpdatingStatus}
-            className={`py-1.5 px-3 rounded-xl font-extrabold text-xs inline-flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50 min-h-[36px] cursor-pointer ${
+            className={`py-2 px-3 rounded-xl font-extrabold text-sm inline-flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50 min-h-11 cursor-pointer ${
               oilInfo.needsAttention
                 ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
                 : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/25'
             }`}
           >
-            <Droplets className="w-3.5 h-3.5" />
+            <Droplets className="w-4 h-4" />
             <span>تم تغيير الزيت</span>
           </button>
 
           <button
             type="button"
             onClick={() => onOpenEdit(vehicle)}
-            className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs inline-flex items-center gap-1 transition-colors min-h-[36px] cursor-pointer"
+            className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-sm inline-flex items-center gap-1.5 transition-colors min-h-11 cursor-pointer"
             title="تعديل"
           >
-            <Edit3 className="w-3.5 h-3.5" />
+            <Edit3 className="w-4 h-4" />
             <span>تعديل</span>
           </button>
 
@@ -158,7 +158,7 @@ export const VehicleTableRow: React.FC<VehicleTableRowProps> = ({
             <button
               type="button"
               onClick={() => setShowMoreMenu((prev) => !prev)}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer"
+              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors min-h-11 min-w-11 flex items-center justify-center cursor-pointer"
               aria-haspopup="menu"
               aria-expanded={showMoreMenu}
               aria-label="المزيد من الخيارات"
@@ -176,7 +176,7 @@ export const VehicleTableRow: React.FC<VehicleTableRowProps> = ({
                 />
                 <div
                   role="menu"
-                  className="absolute end-0 top-full mt-1 w-48 bg-slate-950 border border-slate-800 rounded-2xl p-1.5 shadow-2xl z-50 space-y-1 text-xs font-semibold"
+                  className="absolute end-0 top-full mt-1 w-52 bg-slate-950 border border-slate-800 rounded-2xl p-1.5 shadow-2xl z-50 space-y-1 text-sm font-semibold"
                 >
                   <button
                     role="menuitem"
@@ -185,9 +185,9 @@ export const VehicleTableRow: React.FC<VehicleTableRowProps> = ({
                       setShowMoreMenu(false);
                       onRecordOilChange(vehicle);
                     }}
-                    className="w-full px-3 py-2 rounded-xl text-amber-300 hover:bg-amber-500/10 flex items-center gap-2 text-right cursor-pointer"
+                    className="w-full min-h-11 px-3 py-2 rounded-xl text-amber-300 hover:bg-amber-500/10 flex items-center gap-2 text-right cursor-pointer"
                   >
-                    <Droplets className="w-3.5 h-3.5 text-amber-400" />
+                    <Droplets className="w-4 h-4 text-amber-400" />
                     <span>تم تغيير الزيت</span>
                   </button>
 
@@ -199,9 +199,9 @@ export const VehicleTableRow: React.FC<VehicleTableRowProps> = ({
                         setShowMoreMenu(false);
                         onStatusChangeRequest(vehicle, 'maintenance');
                       }}
-                      className="w-full px-3 py-2 rounded-xl text-rose-300 hover:bg-rose-500/10 flex items-center gap-2 text-right cursor-pointer"
+                      className="w-full min-h-11 px-3 py-2 rounded-xl text-rose-300 hover:bg-rose-500/10 flex items-center gap-2 text-right cursor-pointer"
                     >
-                      <Wrench className="w-3.5 h-3.5 text-rose-400" />
+                      <Wrench className="w-4 h-4 text-rose-400" />
                       <span>تحويل إلى الصيانة</span>
                     </button>
                   ) : (
@@ -212,9 +212,9 @@ export const VehicleTableRow: React.FC<VehicleTableRowProps> = ({
                         setShowMoreMenu(false);
                         onStatusChangeRequest(vehicle, 'available');
                       }}
-                      className="w-full px-3 py-2 rounded-xl text-emerald-300 hover:bg-emerald-500/10 flex items-center gap-2 text-right cursor-pointer"
+                      className="w-full min-h-11 px-3 py-2 rounded-xl text-emerald-300 hover:bg-emerald-500/10 flex items-center gap-2 text-right cursor-pointer"
                     >
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                       <span>تحويل إلى متاحة</span>
                     </button>
                   )}
@@ -228,9 +228,9 @@ export const VehicleTableRow: React.FC<VehicleTableRowProps> = ({
                       setShowMoreMenu(false);
                       onDelete(vehicle);
                     }}
-                    className="w-full px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/20 flex items-center gap-2 text-right font-bold cursor-pointer"
+                    className="w-full min-h-11 px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/20 flex items-center gap-2 text-right font-bold cursor-pointer"
                   >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                    <Trash2 className="w-4 h-4 text-rose-500" />
                     <span>حذف السيارة</span>
                   </button>
                 </div>

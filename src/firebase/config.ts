@@ -253,9 +253,7 @@ if (typeof window !== 'undefined' && isFirebaseConfigured) {
     }
   };
   scheduleIdle(() => {
-    getStorageInstance();
     getAnalyticsInstance();
-    getMessagingInstance();
   });
 }
 

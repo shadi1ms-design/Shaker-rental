@@ -690,7 +690,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
               <span>حالة توثيق الحسابات ({filteredUsers.length})</span>
             </h3>
 
-            <div className="min-w-[260px]">
+            <div className="w-full sm:w-72">
               <SearchInput
                 value={searchQuery}
                 onChange={setSearchQuery}
@@ -712,7 +712,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                 key={chip.key}
                 type="button"
                 onClick={() => setUserStatusFilter(chip.key)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                className={`min-h-11 px-3 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 cursor-pointer ${
                   userStatusFilter === chip.key
                     ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
                     : 'text-slate-400 hover:text-white'
@@ -725,14 +725,79 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
           </div>
 
           {isLoadingUsers ? (
-            <div className="py-16 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-3">
+            <div className="py-16 text-center text-sm text-slate-400 flex flex-col items-center justify-center gap-3">
               <RefreshCw className="w-6 h-6 text-amber-400 animate-spin" />
               <span>جاري تحميل المستخدمين...</span>
             </div>
           ) : (
             <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-              <div className="overflow-x-auto">
-                <table className="w-full text-right text-sm">
+              {/* Mobile Cards View (< 768px) */}
+              <div className="md:hidden divide-y divide-slate-800/70">
+                {filteredUsers.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-400">
+                    لا توجد حسابات مطابقة لمعايير التصفية أو البحث.
+                  </div>
+                ) : (
+                  filteredUsers.map((u) => {
+                    const isStaff = isStaffRole(u.role);
+                    const req = !isStaff
+                      ? (verificationRequestsMap.get(u.uid) ?? (u.id ? verificationRequestsMap.get(u.id) : undefined))
+                      : undefined;
+                    const verificationState = getVerificationState(u, req);
+
+                    return (
+                      <div key={u.id || u.uid} className="p-4 space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-bold text-base text-white">{u.displayName || 'مستخدم'}</div>
+                            <div className="mt-1 empty:hidden">
+                              <RoleBadge role={u.role} size="xs" />
+                            </div>
+                          </div>
+                          <div className="shrink-0">
+                            {isStaff ? (
+                              <RoleBadge role={u.role} />
+                            ) : verificationState === 'verified' ? (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                موثق
+                              </span>
+                            ) : verificationState === 'pending_review' ? (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                قيد المراجعة
+                              </span>
+                            ) : verificationState === 'rejected' ? (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                مرفوض
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                غير موثق
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="text-sm font-mono text-slate-300 break-all" dir="ltr">
+                          {u.email}
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 font-mono">
+                          <span dir="ltr">{u.phone || '—'}</span>
+                          <span>
+                            {u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-SY-u-nu-latn') : '—'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400 font-mono truncate">
+                          {u.uid}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Desktop Table View (>= 768px) */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full min-w-[760px] text-right text-sm">
                   <thead className="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-bold">
                     <tr>
                       <th className="p-3.5">المستخدم</th>
@@ -744,7 +809,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                   <tbody className="divide-y divide-slate-800/60">
                     {filteredUsers.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="p-8 text-center text-xs text-slate-400">
+                        <td colSpan={4} className="p-8 text-center text-sm text-slate-400">
                           لا توجد حسابات مطابقة لمعايير التصفية أو البحث.
                         </td>
                       </tr>
@@ -913,12 +978,12 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
             </div>
 
             {decisionAction.action === 'approve' ? (
-              <p className="text-xs text-slate-300 leading-relaxed">
+              <p className="text-sm text-slate-300 leading-relaxed">
                 سيتم نقل وثائق الهوية والقيادة إلى الخزنة المشفرة واعتماد الحساب رسمياً لتمكين العميل من حجز واستلام السيارات مباشرة.
               </p>
             ) : (
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-300 block">
+                <label className="text-sm font-bold text-slate-300 block">
                   سبب {decisionAction.action === 'reject' ? 'الرفض' : 'إلغاء التوثيق'} (إلزامي للعميل وسجل التدقيق) *
                 </label>
                 <textarea
@@ -926,7 +991,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                   onChange={(e) => setActionReason(e.target.value)}
                   placeholder="مثال: صورة وثيقة القيادة غير واضحة، انتهاء صلاحية الهوية، عدم تطابق الاسم..."
                   rows={3}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-base sm:text-sm text-white placeholder:text-slate-400 outline-none focus:border-amber-500"
                   required
                 />
               </div>
@@ -937,7 +1002,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                 type="button"
                 onClick={() => setDecisionAction(null)}
                 disabled={isSubmittingDecision}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
+                className="min-h-11 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-bold cursor-pointer"
               >
                 إلغاء
               </button>
@@ -945,7 +1010,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
                 type="button"
                 onClick={handleConfirmDecision}
                 disabled={isSubmittingDecision}
-                className={`px-5 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 shadow-md ${
+                className={`min-h-11 px-5 py-2 rounded-xl text-sm font-extrabold transition flex items-center gap-1.5 shadow-md cursor-pointer ${
                   decisionAction.action === 'approve'
                     ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'
                     : 'bg-rose-500 hover:bg-rose-400 text-white shadow-rose-500/20'
@@ -953,7 +1018,7 @@ export const AdminUsersFilesView: React.FC<AdminUsersFilesViewProps> = ({ onBack
               >
                 {isSubmittingDecision ? (
                   <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <RefreshCw className="w-4 h-4 animate-spin" />
                     <span>جاري التنفيذ...</span>
                   </>
                 ) : (

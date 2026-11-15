@@ -6,24 +6,25 @@ import { MenuButton } from './MenuButton';
 import { useBackAction } from '../contexts/BackContext';
 import { getPageMeta } from '../routes/pageMeta';
 import { RoleBadge } from './common/RoleBadge';
-import type { ResolvedRoute } from '../router';
+import { Link } from './routing/Link';
+import { navigate, routes, type ResolvedRoute } from '../router';
 import type { Vehicle } from '../types';
 
 interface AppHeaderProps {
   route: ResolvedRoute;
   vehicle: Vehicle | null;
-  onNavigate: (view: string) => void;
+  loginHref: string;
+  registerHref: string;
   onOpenBooking: () => void;
-  onOpenAuth: (mode?: 'login' | 'register') => void;
   onOpenProfile: () => void;
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({
   route,
   vehicle,
-  onNavigate,
+  loginHref,
+  registerHref,
   onOpenBooking,
-  onOpenAuth,
   onOpenProfile,
 }) => {
   const { user, role, isAuthenticated, isLoadingAuth, logout, isEmployee } = useAuth();
@@ -48,18 +49,14 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   }, []);
 
   return (
-    <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 text-slate-100 h-16 flex items-center">
+    <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 text-slate-100 h-16 flex items-center overflow-x-clip">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 w-full flex items-center justify-between gap-2 sm:gap-3">
         {/* Start side: Logo link (first priority on desktop), Secondary Mobile Menu, Back + Subpage Title */}
-        <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+        <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1 lg:flex-initial">
           <MenuButton className="w-11 h-11 shrink-0 lg:hidden" />
 
-          <a
-            href="/"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate('home');
-            }}
+          <Link
+            to={routes.home}
             aria-label="شاكر لتأجير السيارات — الرئيسية"
             className="min-h-11 inline-flex items-center gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 shrink-0 group"
           >
@@ -69,7 +66,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             <span className={`${isHome ? 'inline' : 'hidden md:inline'} text-sm sm:text-base font-extrabold text-white group-hover:text-amber-300 transition-colors truncate`}>
               شاكر لتأجير السيارات
             </span>
-          </a>
+          </Link>
 
           {onBack && (
             <button
@@ -98,12 +95,9 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 
         {/* Center: Desktop Navigation Links (Visible on lg+) */}
         <nav className="hidden lg:flex items-center gap-1.5" aria-label="التنقل الرئيسي">
-          <a
-            href="/"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate('home');
-            }}
+          <Link
+            to={routes.home}
+            aria-current={isHome ? 'page' : undefined}
             className={`min-h-11 px-3.5 rounded-xl text-sm font-semibold transition-colors inline-flex items-center cursor-pointer ${
               isHome
                 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
@@ -111,13 +105,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             }`}
           >
             الرئيسية
-          </a>
-          <a
-            href="/cars"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate('cars');
-            }}
+          </Link>
+          <Link
+            to={routes.cars}
+            prefetch
+            aria-current={route.name === 'cars' || route.name === 'car' || route.name === 'book' ? 'page' : undefined}
             className={`min-h-11 px-3.5 rounded-xl text-sm font-semibold transition-colors inline-flex items-center cursor-pointer ${
               route.name === 'cars' || route.name === 'car' || route.name === 'book'
                 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
@@ -125,29 +117,23 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             }`}
           >
             أسطول السيارات
-          </a>
-          <a
-            href="/contact"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate('contact');
-            }}
+          </Link>
+          <Link
+            to={routes.contact}
+            aria-current={route.name === 'contact' ? 'page' : undefined}
             className={`min-h-11 px-3.5 rounded-xl text-sm font-semibold transition-colors inline-flex items-center cursor-pointer ${
-              route.name === 'about'
+              route.name === 'contact'
                 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
                 : 'text-slate-300 hover:text-white hover:bg-slate-900'
             }`}
           >
             تواصل معنا
-          </a>
+          </Link>
 
           {isAuthenticated && (
-            <a
-              href="/profile"
-              onClick={(e) => {
-                e.preventDefault();
-                onOpenProfile();
-              }}
+            <Link
+              to={routes.profile}
+              aria-current={route.name === 'profile' ? 'page' : undefined}
               className={`min-h-11 px-3.5 rounded-xl text-sm font-semibold transition-colors inline-flex items-center gap-1.5 cursor-pointer ${
                 route.name === 'profile'
                   ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
@@ -156,7 +142,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             >
               <Calendar className="w-4 h-4 text-amber-400" />
               <span>حجوزاتي</span>
-            </a>
+            </Link>
           )}
         </nav>
 
@@ -191,21 +177,23 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               aria-label="جاري التحميل..."
             />
           ) : isAuthenticated ? (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 min-w-0">
               <button
                 type="button"
                 onClick={onOpenProfile}
                 aria-label="حسابي وحجوزاتي"
                 title="حسابي وحجوزاتي"
-                className="w-11 h-11 sm:w-auto sm:min-h-11 sm:px-3 sm:py-1.5 rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 flex items-center justify-center gap-2 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 shrink-0"
+                className="w-11 h-11 sm:w-auto sm:min-h-11 sm:px-3 sm:py-1.5 min-w-0 max-w-full rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 flex items-center justify-center gap-2 transition-colors cursor-pointer select-none [-webkit-tap-highlight-color:transparent] focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 shrink-0"
               >
-                <div className="w-7 h-7 sm:w-6 sm:h-6 rounded-full bg-amber-500/30 text-amber-300 flex items-center justify-center font-bold text-xs shrink-0">
+                <span className="w-7 h-7 sm:w-6 sm:h-6 rounded-full bg-amber-500/30 text-amber-300 flex items-center justify-center font-bold text-xs shrink-0">
                   {user?.displayName?.trim() ? user.displayName.trim().charAt(0) : <User className="w-3.5 h-3.5" />}
-                </div>
+                </span>
                 <span className="hidden sm:inline-block text-sm font-bold text-slate-100 max-w-[96px] truncate">
                   {user?.displayName?.trim() ? user.displayName.trim().split(' ')[0] : 'حسابي'}
                 </span>
-                <RoleBadge role={displayRole} size="xs" className="hidden md:inline-flex" />
+                <span className="hidden md:inline-flex min-w-0 max-w-[120px] shrink">
+                  <RoleBadge role={displayRole} size="xs" />
+                </span>
               </button>
 
               {/* Desktop-only dropdown toggle arrow for Admin & Logout (44x44px hit target) */}
@@ -217,7 +205,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                   aria-expanded={dropdownOpen}
                   aria-label="خيارات الحساب والإدارة"
                   title="خيارات الحساب والإدارة"
-                  className="w-11 h-11 flex items-center justify-center rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                  className="w-11 h-11 flex items-center justify-center rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition-all cursor-pointer select-none [-webkit-tap-highlight-color:transparent] focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 >
                   <ChevronDown className={`w-4 h-4 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
@@ -227,35 +215,26 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                     <div className="px-4 py-2 border-b border-slate-800/80">
                       <p className="text-sm font-bold text-white truncate">{user?.displayName}</p>
                       <p className="text-xs text-slate-400 truncate font-mono">{user?.email}</p>
-                      <div className="mt-1.5 empty:hidden">
-                        <RoleBadge role={displayRole} />
-                      </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDropdownOpen(false);
-                        onOpenProfile();
-                      }}
+                    <Link
+                      to={routes.profile}
+                      onClick={() => setDropdownOpen(false)}
                       className="w-full min-h-11 text-start px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 flex items-center gap-2 font-medium cursor-pointer"
                     >
                       <User className="w-4 h-4 text-amber-400" />
                       <span>حسابي وحجوزاتي</span>
-                    </button>
+                    </Link>
 
                     {isEmployee && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDropdownOpen(false);
-                          onNavigate('admin');
-                        }}
+                      <Link
+                        to={routes.adminDashboard}
+                        onClick={() => setDropdownOpen(false)}
                         className="w-full min-h-11 text-start px-4 py-2 text-sm text-amber-400 hover:bg-slate-800 flex items-center gap-2 font-bold cursor-pointer"
                       >
                         <LayoutDashboard className="w-4 h-4" />
                         <span>لوحة الإدارة والتحكم</span>
-                      </button>
+                      </Link>
                     )}
 
                     <div className="border-t border-slate-800/80 my-1" />
@@ -264,6 +243,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                       type="button"
                       onClick={() => {
                         setDropdownOpen(false);
+                        navigate(routes.home, { replace: true });
                         logout();
                       }}
                       className="w-full min-h-11 text-start px-4 py-2 text-sm text-rose-400 hover:bg-slate-800 flex items-center gap-2 font-bold cursor-pointer"
@@ -277,26 +257,18 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             </div>
           ) : (
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <a
-                href="/login"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onOpenAuth('login');
-                }}
+              <Link
+                to={loginHref}
                 className="min-h-11 px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 hover:text-white font-bold text-sm transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 flex items-center justify-center"
               >
                 دخول
-              </a>
-              <a
-                href="/register"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onOpenAuth('register');
-                }}
+              </Link>
+              <Link
+                to={registerHref}
                 className="hidden sm:inline-flex min-h-11 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm items-center justify-center transition-colors shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               >
                 إنشاء حساب
-              </a>
+              </Link>
             </div>
           )}
         </div>

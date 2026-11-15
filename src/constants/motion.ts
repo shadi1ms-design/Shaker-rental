@@ -12,26 +12,26 @@ export const isPrefersReducedMotion = (): boolean => {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 };
 
-// 1. Unified Page Entrance & Exit Transition (0.35s easeOut, translateY 16px -> 0, opacity 0 -> 1)
+// 1. Unified Page Transition (<= 150ms enter, 100ms exit, translateY 10px -> 0, opacity 0 -> 1)
 export const pageTransitionVariants = {
   initial: {
     opacity: 0,
-    y: 16,
+    y: 10,
   },
   animate: {
     opacity: 1,
     y: 0,
     transition: {
-      duration: 0.35,
-      ease: [0.16, 1, 0.3, 1] as const, // Smooth easeOut cubic-bezier
+      duration: 0.15,
+      ease: [0.16, 1, 0.3, 1] as const,
     },
   },
   exit: {
     opacity: 0,
-    y: -8,
+    y: -6,
     transition: {
-      duration: 0.2,
-      ease: 'easeIn' as const,
+      duration: 0.1,
+      ease: 'easeOut' as const,
     },
   },
 };

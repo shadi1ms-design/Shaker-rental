@@ -27,7 +27,30 @@ describe('Pricing Engine & Damascus Timezone Tests', () => {
     expect(calculateRentalDaysDamascus('2026-06-05', '2026-06-01', '10:00', '10:00')).toBe(0);
   });
 
+  it('should default DEFAULT_SETTINGS.discountConfig to disabled 0% without fake discount', () => {
+    expect(DEFAULT_SETTINGS.discountConfig?.enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.discountConfig?.percentage).toBe(0);
+
+    const clientDefault = calculateRentalPrice('medium', 100, 2, DEFAULT_SETTINGS, {
+      isUserLoggedIn: true,
+    });
+    expect(clientDefault.discountAmount).toBe(0);
+    expect(clientDefault.memberDiscountPercentage).toBe(0);
+    expect(clientDefault.memberDiscountApplied).toBe(false);
+    expect(clientDefault.memberDiscountEligible).toBe(false);
+  });
+
   it('should compute server rental pricing accurately across tabular test cases', () => {
+    const enabledTenPercentSettings = {
+      ...DEFAULT_SETTINGS,
+      discountConfig: {
+        enabled: true,
+        percentage: 10,
+        scope: 'all' as const,
+        vehicleIds: [],
+      },
+    };
+
     const testCases = [
       {
         dailyPrice: 100,
@@ -43,7 +66,7 @@ describe('Pricing Engine & Damascus Timezone Tests', () => {
       {
         dailyPrice: 100,
         days: 2,
-        isUserLoggedIn: true, // 10% discount from DEFAULT_SETTINGS
+        isUserLoggedIn: true, // 10% discount when enabled
         withDriver: false,
         expectedBase: 200,
         expectedDiscount: 20,
@@ -68,7 +91,7 @@ describe('Pricing Engine & Damascus Timezone Tests', () => {
       const res = calculateRentalPriceServer(
         tc.dailyPrice,
         tc.days,
-        DEFAULT_SETTINGS,
+        enabledTenPercentSettings,
         tc.isUserLoggedIn,
         undefined,
         tc.withDriver
@@ -84,7 +107,16 @@ describe('Pricing Engine & Damascus Timezone Tests', () => {
   });
 
   it('should render explanation string without duplication', () => {
-    const res = calculateRentalPrice('medium', 100, 3, DEFAULT_SETTINGS, {
+    const enabledSettings = {
+      ...DEFAULT_SETTINGS,
+      discountConfig: {
+        enabled: true,
+        percentage: 10,
+        scope: 'all' as const,
+        vehicleIds: [],
+      },
+    };
+    const res = calculateRentalPrice('medium', 100, 3, enabledSettings, {
       isUserLoggedIn: true,
       withDriver: true,
     });

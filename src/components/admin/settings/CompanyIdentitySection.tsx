@@ -22,31 +22,31 @@ export const CompanyIdentitySection: React.FC<CompanyIdentitySectionProps> = ({
         بيانات الشركة والمكتب
       </h4>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
         <div>
-          <label className="block text-slate-400 mb-1 font-semibold">اسم الشركة الرسمي (عربي)</label>
+          <label className="block text-slate-300 mb-1.5 font-semibold">اسم الشركة الرسمي (عربي)</label>
           <input
             type="text"
             value={formData.companyName ?? ''}
             onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+            className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-sm text-white focus:outline-none focus:border-amber-500"
             required
           />
         </div>
 
         <div>
-          <label className="block text-slate-400 mb-1 font-semibold">اسم الشركة بالإنجليزية</label>
+          <label className="block text-slate-300 mb-1.5 font-semibold">اسم الشركة بالإنجليزية</label>
           <input
             type="text"
             value={formData.companyNameEn ?? ''}
             onChange={(e) => setFormData({ ...formData, companyNameEn: e.target.value })}
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+            className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-sm text-white focus:outline-none focus:border-amber-500"
             required
           />
         </div>
 
         <div>
-          <label className="block text-slate-400 mb-1 font-semibold flex items-center gap-1.5">
+          <label className="text-slate-300 mb-1.5 font-semibold flex items-center gap-1.5">
             <Phone className="w-3.5 h-3.5 text-amber-400" />
             <span>هاتف الشركة الرسمي (companyPhone)</span>
           </label>
@@ -60,7 +60,7 @@ export const CompanyIdentitySection: React.FC<CompanyIdentitySectionProps> = ({
         </div>
 
         <div>
-          <label className="block text-slate-400 mb-1 font-semibold">رقم الواتساب المعتمد للحجوزات</label>
+          <label className="block text-slate-300 mb-1.5 font-semibold">رقم الواتساب المعتمد للحجوزات</label>
           <PhoneInput
             id="settings-whatsapp-number"
             value={formData.whatsappNumber ?? ''}
@@ -72,18 +72,18 @@ export const CompanyIdentitySection: React.FC<CompanyIdentitySectionProps> = ({
         </div>
 
         <div className="sm:col-span-2">
-          <label className="block text-slate-400 mb-1 font-semibold">العنوان والمقر</label>
+          <label className="block text-slate-300 mb-1.5 font-semibold">العنوان والمقر</label>
           <input
             type="text"
             value={formData.address ?? ''}
             onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+            className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-base sm:text-sm text-white focus:outline-none focus:border-amber-500"
             required
           />
         </div>
 
         <div>
-          <label className="block text-slate-400 mb-1 font-semibold flex items-center gap-1.5">
+          <label className="text-slate-300 mb-1.5 font-semibold flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
             <span>مهلة الإلغاء بالساعات (cancellationLeadHours)</span>
           </label>
@@ -99,7 +99,7 @@ export const CompanyIdentitySection: React.FC<CompanyIdentitySectionProps> = ({
                 cancellationLeadHours: val ?? 0,
               });
             }}
-            className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-white font-bold focus:outline-none ${
+            className={`w-full min-h-11 bg-slate-950 border rounded-xl px-3 py-2 text-base sm:text-sm text-white font-bold focus:outline-none ${
               fieldErrors.cancellationLeadHours ? 'border-rose-500 focus:border-rose-400' : 'border-slate-700 focus:border-amber-500'
             }`}
             required

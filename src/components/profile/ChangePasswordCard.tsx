@@ -70,7 +70,7 @@ export const ChangePasswordCard: React.FC<ChangePasswordCardProps> = ({
               value={currentPassword}
               onChange={(e) => onCurrentPasswordChange(e.target.value)}
               placeholder="••••••••"
-              className="w-full min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 text-base sm:text-sm tabular-nums outline-none focus:border-amber-500 transition-all"
+              className="w-full min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-400 text-base sm:text-sm tabular-nums outline-none focus:border-amber-500 transition-all"
               dir="ltr"
             />
           </div>
@@ -86,7 +86,7 @@ export const ChangePasswordCard: React.FC<ChangePasswordCardProps> = ({
                 value={newPassword}
                 onChange={(e) => onNewPasswordChange(e.target.value)}
                 placeholder="6 أحرف على الأقل"
-                className="w-full min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 text-base sm:text-sm tabular-nums outline-none focus:border-amber-500 transition-all"
+                className="w-full min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-400 text-base sm:text-sm tabular-nums outline-none focus:border-amber-500 transition-all"
                 dir="ltr"
               />
             </div>
@@ -101,7 +101,7 @@ export const ChangePasswordCard: React.FC<ChangePasswordCardProps> = ({
                 value={confirmPassword}
                 onChange={(e) => onConfirmPasswordChange(e.target.value)}
                 placeholder="إعادة إدخال الجديدة"
-                className="w-full min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 text-base sm:text-sm tabular-nums outline-none focus:border-amber-500 transition-all"
+                className="w-full min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-400 text-base sm:text-sm tabular-nums outline-none focus:border-amber-500 transition-all"
                 dir="ltr"
               />
             </div>

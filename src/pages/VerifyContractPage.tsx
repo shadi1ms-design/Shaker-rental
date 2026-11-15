@@ -149,7 +149,7 @@ export const VerifyContractPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-[80dvh] bg-slate-950 text-slate-100 py-10 px-4 sm:px-6 dir-rtl" dir="rtl">
+    <div className="min-h-[80dvh] bg-slate-950 text-slate-100 py-10 px-4 sm:px-6" dir="rtl">
       <div className="max-w-3xl mx-auto space-y-8">
         {/* Header Title */}
         <div className="text-center space-y-3">
@@ -176,7 +176,7 @@ export const VerifyContractPage: React.FC = () => {
                   value={contractNumberInput}
                   onChange={(e) => setContractNumberInput(e.target.value)}
                   placeholder="مثال: CTR-1001"
-                  className="w-full min-h-11 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none transition-colors font-mono"
+                  className="w-full min-h-11 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-400 focus:outline-none transition-colors font-mono"
                   required
                 />
               </div>
@@ -191,7 +191,7 @@ export const VerifyContractPage: React.FC = () => {
                   value={verificationCodeInput}
                   onChange={(e) => setVerificationCodeInput(e.target.value)}
                   placeholder="أدخل الرمز المكتوب أسفل العقد"
-                  className="w-full min-h-11 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none transition-colors font-mono uppercase"
+                  className="w-full min-h-11 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-400 focus:outline-none transition-colors font-mono uppercase"
                   required
                 />
               </div>
@@ -219,7 +219,7 @@ export const VerifyContractPage: React.FC = () => {
 
         {/* Verification Result Display */}
         {verificationResult && (
-          <div className="transition-all animate-fadeIn">
+          <div className="transition-all animate-in fade-in duration-200">
             {verificationResult.status === 'terminated' ? (
               /* Dedicated Terminated Contract Card */
               <div className="bg-amber-950/40 border-2 border-amber-500/50 rounded-card p-6 sm:p-8 space-y-6 shadow-2xl">

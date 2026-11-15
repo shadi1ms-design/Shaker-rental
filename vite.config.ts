@@ -20,24 +20,40 @@ export default defineConfig(() => {
       rollupOptions: {
         output: {
           manualChunks(id) {
-            if (
-              /node_modules\/(@firebase|firebase)\/(storage|messaging|analytics|app-check)/.test(id)
-            ) {
+            if (!id.includes('node_modules')) return undefined;
+            if (/node_modules\/(@firebase|firebase)\/firestore/.test(id)) {
+              return 'firebase-firestore';
+            }
+            if (/node_modules\/(@firebase|firebase)\/storage/.test(id)) {
+              return 'firebase-storage';
+            }
+            if (/node_modules\/(@firebase|firebase)\/messaging/.test(id)) {
+              return 'firebase-messaging';
+            }
+            if (/node_modules\/(@firebase|firebase)\/(analytics|app-check|installations)/.test(id)) {
               return 'firebase-extras';
             }
             if (id.includes('node_modules/firebase') || id.includes('node_modules/@firebase')) {
-              return 'firebase';
+              return 'firebase-core';
             }
-            if (id.includes('node_modules/recharts')) {
+            if (
+              id.includes('node_modules/recharts') ||
+              id.includes('node_modules/d3-') ||
+              id.includes('node_modules/victory-vendor')
+            ) {
               return 'recharts';
             }
             if (id.includes('node_modules/lucide-react')) {
               return 'lucide';
             }
-            if (id.includes('node_modules/motion')) {
+            if (id.includes('node_modules/motion') || id.includes('node_modules/framer-motion')) {
               return 'motion';
             }
-            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
+            if (
+              id.includes('node_modules/react/') ||
+              id.includes('node_modules/react-dom/') ||
+              id.includes('node_modules/scheduler/')
+            ) {
               return 'react-vendor';
             }
           },

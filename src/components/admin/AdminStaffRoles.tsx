@@ -340,11 +340,12 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
 
           <div className="flex items-center gap-3">
             <button
+              type="button"
               onClick={() => loadUsers(true)}
               disabled={isRefreshing}
-              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-2 transition-all border border-slate-700 shadow-sm disabled:opacity-50 cursor-pointer"
+              className="min-h-11 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold flex items-center gap-2 transition-all border border-slate-700 shadow-sm disabled:opacity-50 cursor-pointer"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-amber-400' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-amber-400' : ''}`} />
               <span>تحديث القائمة</span>
             </button>
           </div>
@@ -435,7 +436,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
           />
         </div>
 
-        <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs w-full md:w-auto overflow-x-auto">
+        <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-sm w-full md:w-auto overflow-x-auto">
           {(
             [
               { id: 'all', label: `الكل (${totalCount})` },
@@ -446,9 +447,10 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
             ] as const
           ).map((f) => (
             <button
+              type="button"
               key={f.id}
               onClick={() => setRoleFilter(f.id)}
-              className={`px-3 py-1.5 rounded-lg font-bold transition-all shrink-0 cursor-pointer ${
+              className={`min-h-11 px-3.5 py-2 rounded-lg font-bold transition-all shrink-0 cursor-pointer text-sm ${
                 roleFilter === f.id
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-white'
@@ -474,37 +476,31 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
             <p className="text-xs text-slate-400">جرب تعديل كلمة البحث أو فلتر الأدوار المحدد أعلاه.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-right text-sm">
-              <thead className="bg-slate-950/70 border-b border-slate-800 text-slate-400 uppercase font-bold">
-                <tr>
-                  <th className="py-3.5 px-4 sm:px-6">المستخدم</th>
-                  <th className="py-3.5 px-4 hidden sm:table-cell">معلومات الاتصال</th>
-                  <th className="py-3.5 px-4">الدور الحالي</th>
-                  <th className="py-3.5 px-4 text-center">تعديل الدور والصلاحية</th>
-                  <th className="py-3.5 px-4 sm:px-6 text-center">الإجراءات وإدارة الحساب</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {filteredUsers.map((u) => {
-                  const targetUid = u.id || u.uid;
-                  const isSelf = isCurrentSelfUser(u);
-                  const isSuper = isSuperAdminAccount(u);
-                  const isAccountDisabled = Boolean(u.accountDisabled || u.disabled);
+          <>
+            {/* Mobile Cards View (< 768px) */}
+            <div className="md:hidden divide-y divide-slate-800/70">
+              {filteredUsers.map((u) => {
+                const targetUid = u.id || u.uid;
+                const isSelf = isCurrentSelfUser(u);
+                const isSuper = isSuperAdminAccount(u);
+                const isAccountDisabled = Boolean(u.accountDisabled || u.disabled);
+                const selectedRole =
+                  selectedRoles[targetUid] ||
+                  (isSuperAdminRole(u.role) ? 'admin' : (u.role as AssignableRole) || 'customer');
+                const hasPendingChange =
+                  selectedRoles[targetUid] !== undefined && selectedRoles[targetUid] !== u.role;
 
-                  const selectedRole = selectedRoles[targetUid] || (isSuperAdminRole(u.role) ? 'admin' : (u.role as AssignableRole) || 'customer');
-                  const hasPendingChange = selectedRoles[targetUid] !== undefined && selectedRoles[targetUid] !== u.role;
-
-                  return (
-                    <tr
-                      key={targetUid}
-                      className={`hover:bg-slate-800/30 transition-colors ${
-                        isSelf ? 'bg-amber-500/5' : ''
-                      } ${isAccountDisabled ? 'bg-rose-950/20' : ''}`}
-                    >
-                      <td className="py-4 px-4 sm:px-6">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-extrabold text-sm shrink-0 border ${
+                return (
+                  <div
+                    key={targetUid}
+                    className={`p-4 space-y-3.5 ${isSelf ? 'bg-amber-500/5' : ''} ${
+                      isAccountDisabled ? 'bg-rose-950/20' : ''
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center font-extrabold text-sm shrink-0 border ${
                             isAccountDisabled
                               ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
                               : isSuper
@@ -514,173 +510,333 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                               : u.role === 'employee'
                               ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                               : 'bg-slate-800 text-slate-300 border-slate-700'
-                          }`}>
-                            {u.displayName?.[0]?.toUpperCase() || u.email?.[0]?.toUpperCase() || 'U'}
-                          </div>
-                          <div>
-                            <div className="font-bold text-white flex items-center gap-2 flex-wrap">
-                              <span>{u.displayName || 'مستخدم مسجل'}</span>
-                              {isSelf && (
-                                <span className="px-2 py-0.5 rounded-md text-xs font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                                  أنت (الحساب الحالي)
-                                </span>
-                              )}
-                              {isAccountDisabled && (
-                                <span className="px-2 py-0.5 rounded-md text-xs font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
-                                  <Ban className="w-2.5 h-2.5" />
-                                  <span>حساب معطل</span>
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5" dir="ltr">
-                              <Mail className="w-3 h-3 text-slate-400 shrink-0" />
-                              <span>{u.email}</span>
-                            </div>
-                            <div className="text-xs text-slate-400 mt-1 font-mono">
-                              UID: {targetUid.slice(0, 12)}...
-                            </div>
-                          </div>
+                          }`}
+                        >
+                          {u.displayName?.[0]?.toUpperCase() || u.email?.[0]?.toUpperCase() || 'U'}
                         </div>
-                      </td>
-
-                      <td className="py-4 px-4 hidden sm:table-cell text-slate-400">
-                        {u.phone ? (
-                          <div className="flex items-center gap-1.5 text-xs text-slate-300 font-mono" dir="ltr">
-                            <Phone className="w-3 h-3 text-slate-400" />
-                            <span>{u.phone}</span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-400">لا يوجد رقم هاتف</span>
-                        )}
-                        <div className="text-xs text-slate-400 flex items-center gap-1 mt-1">
-                          <Calendar className="w-3 h-3 text-slate-400" />
-                          <span>
-                            {u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-SY-u-nu-latn') : 'سجل مسبق'}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="py-4 px-4">
-                        {getRoleBadge(u.role)}
-                      </td>
-
-                      <td className="py-4 px-4 text-center">
-                        {isSelf || isSuper ? (
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-400 font-semibold">
-                            <Lock className="w-3 h-3 text-amber-500/80" />
-                            <span>
-                              {isSelf
-                                ? 'حسابك الحالي (محمي)'
-                                : 'حساب مدير عام (محمي)'}
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="inline-block relative">
-                            <select
-                              value={selectedRole}
-                              onChange={(e) =>
-                                handleRoleSelection(targetUid, e.target.value as AssignableRole)
-                              }
-                              className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-base sm:text-sm font-bold text-slate-200 focus:outline-none transition-all cursor-pointer ${
-                                hasPendingChange
-                                  ? 'border-amber-500 bg-amber-500/10 text-amber-200 ring-2 ring-amber-500/20'
-                                  : 'border-slate-700 hover:border-slate-600'
-                              }`}
-                            >
-                              <option value="customer" className="bg-slate-900 text-slate-200">
-                                عميل مسجل
-                              </option>
-                              <option value="employee" className="bg-slate-900 text-slate-200">
-                                موظف عمليات
-                              </option>
-                              <option value="admin" className="bg-slate-900 text-slate-200">
-                                مدير نظام
-                              </option>
-                            </select>
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="py-4 px-4 sm:px-6 text-center">
-                        {isSelf ? (
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-400 font-semibold">
-                            <Lock className="w-3 h-3 text-amber-500/80" />
-                            <span>حسابك الحالي (محمي)</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                            <button
-                              onClick={() => handleInitiateChange(u)}
-                              disabled={!hasPendingChange}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1 cursor-pointer ${
-                                hasPendingChange
-                                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 active:scale-95'
-                                  : 'bg-slate-800/40 text-slate-400 border border-slate-800 cursor-not-allowed opacity-50'
-                              }`}
-                              title="تطبيق الدور المحدد"
-                            >
-                              <ArrowRightLeft className="w-3 h-3" />
-                              <span>تطبيق</span>
-                            </button>
-
-                            <button
-                              onClick={() => setPendingToggleStatusUser(u)}
-                              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border cursor-pointer ${
-                                isAccountDisabled
-                                  ? 'bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border-emerald-500/30'
-                                  : 'bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border-amber-500/30'
-                              }`}
-                              title={isAccountDisabled ? 'إعادة تفعيل الحساب والسماح بتسجيل الدخول' : 'تعطيل الحساب ومنعه من تسجيل الدخول'}
-                            >
-                              {isAccountDisabled ? (
-                                <>
-                                  <UserCheck className="w-3.5 h-3.5" />
-                                  <span>تفعيل</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Ban className="w-3.5 h-3.5" />
-                                  <span>تعطيل</span>
-                                </>
-                              )}
-                            </button>
-
-                            {isSuperAdmin && !isSuper && (
-                              <button
-                                type="button"
-                                onClick={() => setPendingDeleteUser(u)}
-                                className="p-1.5 rounded-xl text-rose-400 hover:text-white bg-rose-500/10 hover:bg-rose-600 border border-rose-500/30 transition-all cursor-pointer min-h-10 min-w-10 inline-flex items-center justify-center"
-                                title="حذف الحساب نهائياً من Firebase Auth و Firestore"
-                                aria-label="حذف الحساب نهائياً"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                        <div className="min-w-0">
+                          <div className="font-bold text-white flex items-center gap-2 flex-wrap">
+                            <span>{u.displayName || 'مستخدم مسجل'}</span>
+                            {isSelf && (
+                              <span className="px-2 py-0.5 rounded-md text-xs font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                أنت (الحساب الحالي)
+                              </span>
+                            )}
+                            {isAccountDisabled && (
+                              <span className="px-2 py-0.5 rounded-md text-xs font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 inline-flex items-center gap-1">
+                                <Ban className="w-3 h-3" />
+                                <span>حساب معطل</span>
+                              </span>
                             )}
                           </div>
+                          <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5 break-all" dir="ltr">
+                            <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span>{u.email}</span>
+                          </div>
+                          {u.phone && (
+                            <div className="text-xs text-slate-300 font-mono flex items-center gap-1 mt-0.5" dir="ltr">
+                              <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{u.phone}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="shrink-0">{getRoleBadge(u.role)}</div>
+                    </div>
+
+                    {isSelf || isSuper ? (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-400 font-semibold">
+                        <Lock className="w-3.5 h-3.5 text-amber-500/80" />
+                        <span>{isSelf ? 'حسابك الحالي (محمي)' : 'حساب مدير عام (محمي)'}</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <select
+                          aria-label={`تغيير دور ${u.displayName || u.email}`}
+                          value={selectedRole}
+                          onChange={(e) => handleRoleSelection(targetUid, e.target.value as AssignableRole)}
+                          className={`min-h-11 bg-slate-950 border rounded-xl px-3 py-2 text-base sm:text-sm font-bold text-slate-200 focus:outline-none transition-all cursor-pointer ${
+                            hasPendingChange
+                              ? 'border-amber-500 bg-amber-500/10 text-amber-200 ring-2 ring-amber-500/20'
+                              : 'border-slate-700 hover:border-slate-600'
+                          }`}
+                        >
+                          <option value="customer" className="bg-slate-900 text-slate-200">
+                            عميل مسجل
+                          </option>
+                          <option value="employee" className="bg-slate-900 text-slate-200">
+                            موظف عمليات
+                          </option>
+                          <option value="admin" className="bg-slate-900 text-slate-200">
+                            مدير نظام
+                          </option>
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() => handleInitiateChange(u)}
+                          disabled={!hasPendingChange}
+                          className={`min-h-11 px-3.5 py-2 rounded-xl text-sm font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+                            hasPendingChange
+                              ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 active:scale-95'
+                              : 'bg-slate-800/40 text-slate-400 border border-slate-800 cursor-not-allowed opacity-50'
+                          }`}
+                        >
+                          <ArrowRightLeft className="w-3.5 h-3.5" />
+                          <span>تطبيق</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setPendingToggleStatusUser(u)}
+                          className={`min-h-11 px-3.5 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 border cursor-pointer ${
+                            isAccountDisabled
+                              ? 'bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border-emerald-500/30'
+                              : 'bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border-amber-500/30'
+                          }`}
+                        >
+                          {isAccountDisabled ? (
+                            <>
+                              <UserCheck className="w-4 h-4" />
+                              <span>تفعيل</span>
+                            </>
+                          ) : (
+                            <>
+                              <Ban className="w-4 h-4" />
+                              <span>تعطيل</span>
+                            </>
+                          )}
+                        </button>
+
+                        {isSuperAdmin && !isSuper && (
+                          <button
+                            type="button"
+                            onClick={() => setPendingDeleteUser(u)}
+                            className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-xl text-rose-400 hover:text-white bg-rose-500/10 hover:bg-rose-600 border border-rose-500/30 transition-all cursor-pointer"
+                            title="حذف الحساب نهائياً من Firebase Auth و Firestore"
+                            aria-label="حذف الحساب نهائياً"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop Table View (>= 768px) */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full min-w-[860px] text-right text-sm">
+                <thead className="bg-slate-950/70 border-b border-slate-800 text-slate-400 uppercase font-bold">
+                  <tr>
+                    <th className="py-3.5 px-4 sm:px-6">المستخدم</th>
+                    <th className="py-3.5 px-4 hidden sm:table-cell">معلومات الاتصال</th>
+                    <th className="py-3.5 px-4">الدور الحالي</th>
+                    <th className="py-3.5 px-4 text-center">تعديل الدور والصلاحية</th>
+                    <th className="py-3.5 px-4 sm:px-6 text-center">الإجراءات وإدارة الحساب</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {filteredUsers.map((u) => {
+                    const targetUid = u.id || u.uid;
+                    const isSelf = isCurrentSelfUser(u);
+                    const isSuper = isSuperAdminAccount(u);
+                    const isAccountDisabled = Boolean(u.accountDisabled || u.disabled);
+
+                    const selectedRole = selectedRoles[targetUid] || (isSuperAdminRole(u.role) ? 'admin' : (u.role as AssignableRole) || 'customer');
+                    const hasPendingChange = selectedRoles[targetUid] !== undefined && selectedRoles[targetUid] !== u.role;
+
+                    return (
+                      <tr
+                        key={targetUid}
+                        className={`hover:bg-slate-800/30 transition-colors ${
+                          isSelf ? 'bg-amber-500/5' : ''
+                        } ${isAccountDisabled ? 'bg-rose-950/20' : ''}`}
+                      >
+                        <td className="py-4 px-4 sm:px-6">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-extrabold text-sm shrink-0 border ${
+                              isAccountDisabled
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                : isSuper
+                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                : u.role === 'admin'
+                                ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                : u.role === 'employee'
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                : 'bg-slate-800 text-slate-300 border-slate-700'
+                            }`}>
+                              {u.displayName?.[0]?.toUpperCase() || u.email?.[0]?.toUpperCase() || 'U'}
+                            </div>
+                            <div>
+                              <div className="font-bold text-white flex items-center gap-2 flex-wrap">
+                                <span>{u.displayName || 'مستخدم مسجل'}</span>
+                                {isSelf && (
+                                  <span className="px-2 py-0.5 rounded-md text-xs font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                    أنت (الحساب الحالي)
+                                  </span>
+                                )}
+                                {isAccountDisabled && (
+                                  <span className="px-2 py-0.5 rounded-md text-xs font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+                                    <Ban className="w-2.5 h-2.5" />
+                                    <span>حساب معطل</span>
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5" dir="ltr">
+                                <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                                <span>{u.email}</span>
+                              </div>
+                              <div className="text-xs text-slate-400 mt-1 font-mono">
+                                UID: {targetUid.slice(0, 12)}...
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="py-4 px-4 hidden sm:table-cell text-slate-400">
+                          {u.phone ? (
+                            <div className="flex items-center gap-1.5 text-xs text-slate-300 font-mono" dir="ltr">
+                              <Phone className="w-3 h-3 text-slate-400" />
+                              <span>{u.phone}</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400">لا يوجد رقم هاتف</span>
+                          )}
+                          <div className="text-xs text-slate-400 flex items-center gap-1 mt-1">
+                            <Calendar className="w-3 h-3 text-slate-400" />
+                            <span>
+                              {u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-SY-u-nu-latn') : 'سجل مسبق'}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="py-4 px-4">
+                          {getRoleBadge(u.role)}
+                        </td>
+
+                        <td className="py-4 px-4 text-center">
+                          {isSelf || isSuper ? (
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-400 font-semibold">
+                              <Lock className="w-3 h-3 text-amber-500/80" />
+                              <span>
+                                {isSelf
+                                  ? 'حسابك الحالي (محمي)'
+                                  : 'حساب مدير عام (محمي)'}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="inline-block relative">
+                              <select
+                                value={selectedRole}
+                                onChange={(e) =>
+                                  handleRoleSelection(targetUid, e.target.value as AssignableRole)
+                                }
+                                className={`min-h-11 bg-slate-950 border rounded-xl px-3 py-2 text-base sm:text-sm font-bold text-slate-200 focus:outline-none transition-all cursor-pointer ${
+                                  hasPendingChange
+                                    ? 'border-amber-500 bg-amber-500/10 text-amber-200 ring-2 ring-amber-500/20'
+                                    : 'border-slate-700 hover:border-slate-600'
+                                }`}
+                              >
+                                <option value="customer" className="bg-slate-900 text-slate-200">
+                                  عميل مسجل
+                                </option>
+                                <option value="employee" className="bg-slate-900 text-slate-200">
+                                  موظف عمليات
+                                </option>
+                                <option value="admin" className="bg-slate-900 text-slate-200">
+                                  مدير نظام
+                                </option>
+                              </select>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="py-4 px-4 sm:px-6 text-center">
+                          {isSelf ? (
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-400 font-semibold">
+                              <Lock className="w-3 h-3 text-amber-500/80" />
+                              <span>حسابك الحالي (محمي)</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => handleInitiateChange(u)}
+                                disabled={!hasPendingChange}
+                                className={`min-h-11 px-3.5 py-2 rounded-xl text-sm font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                  hasPendingChange
+                                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 active:scale-95'
+                                    : 'bg-slate-800/40 text-slate-400 border border-slate-800 cursor-not-allowed opacity-50'
+                                }`}
+                                title="تطبيق الدور المحدد"
+                              >
+                                <ArrowRightLeft className="w-3.5 h-3.5" />
+                                <span>تطبيق</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setPendingToggleStatusUser(u)}
+                                className={`min-h-11 px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 border cursor-pointer ${
+                                  isAccountDisabled
+                                    ? 'bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border-emerald-500/30'
+                                    : 'bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border-amber-500/30'
+                                }`}
+                                title={isAccountDisabled ? 'إعادة تفعيل الحساب والسماح بتسجيل الدخول' : 'تعطيل الحساب ومنعه من تسجيل الدخول'}
+                              >
+                                {isAccountDisabled ? (
+                                  <>
+                                    <UserCheck className="w-4 h-4" />
+                                    <span>تفعيل</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Ban className="w-4 h-4" />
+                                    <span>تعطيل</span>
+                                  </>
+                                )}
+                              </button>
+
+                              {isSuperAdmin && !isSuper && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPendingDeleteUser(u)}
+                                  className="min-h-11 min-w-11 rounded-xl text-rose-400 hover:text-white bg-rose-500/10 hover:bg-rose-600 border border-rose-500/30 transition-all cursor-pointer inline-flex items-center justify-center"
+                                  title="حذف الحساب نهائياً من Firebase Auth و Firestore"
+                                  aria-label="حذف الحساب نهائياً"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 
       {/* 6. Permissions Guide Card */}
       <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-4">
-        <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+        <h3 className="text-base font-extrabold text-white flex items-center gap-2">
           <Info className="w-4 h-4 text-amber-400" />
           <span>دليل الصلاحيات والأدوار في المنظومة</span>
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
           <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-2">
             <div className="font-bold text-slate-300 flex items-center gap-2">
               <User className="w-4 h-4 text-slate-400" />
               <span>عميل مسجل</span>
             </div>
-            <p className="text-slate-400 leading-relaxed text-xs">
+            <p className="text-slate-400 leading-relaxed text-sm">
               تصفح أسطول السيارات، حجز السيارات عبر الإنترنت، متابعة حالة الحجوزات الشخصية، وإثبات الهوية.
             </p>
           </div>
@@ -690,7 +846,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
               <UserCheck className="w-4 h-4 text-emerald-400" />
               <span>موظف عمليات</span>
             </div>
-            <p className="text-slate-400 leading-relaxed text-xs">
+            <p className="text-slate-400 leading-relaxed text-sm">
               إدارة طلبات التأجير وتأكيدها، تسليم واستلام السيارات مع توثيق قراءة عداد الكيلومترات، وإصدار عقود الإيجار الرسمية.
             </p>
           </div>
@@ -700,7 +856,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
               <Shield className="w-4 h-4 text-blue-400" />
               <span>مدير نظام</span>
             </div>
-            <p className="text-slate-400 leading-relaxed text-xs">
+            <p className="text-slate-400 leading-relaxed text-sm">
               كافة صلاحيات الموظف التشغيلي + إدارة الأسطول ومتابعة غيارات الزيت، تعديل أسعار التأجير، إعدادات الشركة، والاطلاع الكامل على التقارير المالية والإيرادات.
             </p>
           </div>
@@ -775,7 +931,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                 type="button"
                 onClick={handleConfirmRoleUpdate}
                 disabled={isSaving}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                className="flex-1 min-h-11 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
               >
                 {isSaving ? (
                   <>
@@ -793,7 +949,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                 type="button"
                 onClick={() => setPendingChange(null)}
                 disabled={isSaving}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all border border-slate-700 disabled:opacity-50 cursor-pointer"
+                className="min-h-11 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-bold transition-all border border-slate-700 disabled:opacity-50 cursor-pointer"
               >
                 إلغاء
               </button>
@@ -815,7 +971,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                   ? 'تأكيد تفعيل حساب المستخدم'
                   : 'تأكيد تعطيل حساب المستخدم'}
               </h3>
-              <p className="text-xs text-slate-300 leading-relaxed">
+              <p className="text-sm text-slate-300 leading-relaxed">
                 {pendingToggleStatusUser.accountDisabled || pendingToggleStatusUser.disabled
                   ? `هل ترغب في إعادة تفعيل حساب المستخدم "${pendingToggleStatusUser.displayName || pendingToggleStatusUser.email}" والسماح له بتسجيل الدخول؟`
                   : `هل أنت متأكد من تعطيل حساب المستخدم "${pendingToggleStatusUser.displayName || pendingToggleStatusUser.email}"؟ سيتم منعه فوراً من تسجيل الدخول إلى المنظومة.`}
@@ -827,7 +983,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                 type="button"
                 disabled={isTogglingStatus}
                 onClick={handleConfirmToggleStatus}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                className="flex-1 min-h-11 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 {isTogglingStatus ? (
                   <>
@@ -845,7 +1001,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                 type="button"
                 disabled={isTogglingStatus}
                 onClick={() => setPendingToggleStatusUser(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs border border-slate-700 disabled:opacity-50 cursor-pointer"
+                className="min-h-11 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm border border-slate-700 disabled:opacity-50 cursor-pointer"
               >
                 إلغاء
               </button>
@@ -863,15 +1019,15 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
             </div>
             <div className="text-center space-y-2">
               <h3 className="text-lg font-extrabold text-white">حذف حساب المستخدم نهائياً</h3>
-              <p className="text-xs text-slate-300 leading-relaxed">
+              <p className="text-sm text-slate-300 leading-relaxed">
                 هل أنت متأكد من رغبتك في حذف المستخدم <strong className="text-white">&ldquo;{pendingDeleteUser.displayName || pendingDeleteUser.email}&rdquo;</strong> نهائياً؟
               </p>
-              <div className="text-xs text-rose-300 font-bold bg-rose-500/10 p-3 rounded-xl border border-rose-500/30 leading-normal text-right space-y-1">
+              <div className="text-sm text-rose-300 font-bold bg-rose-500/10 p-3 rounded-xl border border-rose-500/30 leading-normal text-right space-y-1">
                 <div className="flex items-center gap-1.5 text-rose-400">
-                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
                   <span>تنبيه أمني هام وغير قابل للتراجع:</span>
                 </div>
-                <p className="text-slate-300 font-normal">
+                <p className="text-slate-300 font-normal text-sm">
                   هذا الإجراء سيقوم بحذف حساب الدخول بالكامل من Firebase Authentication ومستند المستخدم من Firestore بشكل دائم ونهائي.
                 </p>
               </div>
@@ -882,7 +1038,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                 type="button"
                 disabled={isDeletingUser}
                 onClick={handleConfirmDeleteUser}
-                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs transition-all shadow-md shadow-rose-600/20 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                className="flex-1 min-h-11 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-sm transition-all shadow-md shadow-rose-600/20 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 {isDeletingUser ? (
                   <>
@@ -900,7 +1056,7 @@ export const AdminStaffRoles: React.FC<AdminStaffRolesProps> = () => {
                 type="button"
                 disabled={isDeletingUser}
                 onClick={() => setPendingDeleteUser(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs border border-slate-700 disabled:opacity-50 cursor-pointer"
+                className="min-h-11 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm border border-slate-700 disabled:opacity-50 cursor-pointer"
               >
                 إلغاء
               </button>

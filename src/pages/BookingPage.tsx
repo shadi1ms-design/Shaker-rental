@@ -3,7 +3,8 @@ import { PageTransition } from '../components/routing/PageTransition';
 import { SuspenseFallback } from '../components/routing/Spinners';
 import { VehicleNotFound } from '../components/routing/VehicleNotFound';
 import { useAppData } from '../contexts/DataContext';
-import { goBack, navigate, routes } from '../router';
+import { navigate, routes, useSearchParams } from '../router';
+import { parseCatalogParams } from '../utils/catalogQuery';
 
 const BookingView = React.lazy(() =>
   import('../components/BookingView').then((m) => ({ default: m.BookingView })),
@@ -11,10 +12,14 @@ const BookingView = React.lazy(() =>
 
 /** /cars/:id/book - booking form. */
 export const BookingPage: React.FC<{ id: string }> = ({ id }) => {
-  const { vehicles, activeBookingFilters, handleBookingCreated } = useAppData();
+  const { vehicles, handleBookingCreated } = useAppData();
+  const [searchParams] = useSearchParams();
   const vehicle = vehicles.find((v) => v.id === id) || null;
 
   if (!vehicle) return <VehicleNotFound />;
+
+  const { from, to } = parseCatalogParams(searchParams);
+  const initialDates = from && to ? { pickupDate: from, returnDate: to } : undefined;
 
   return (
     <PageTransition key={`booking-${vehicle.id}`}>
@@ -22,22 +27,13 @@ export const BookingPage: React.FC<{ id: string }> = ({ id }) => {
         <BookingView
           key={id}
           vehicles={vehicles}
-          selectedVehicle={vehicle}
           vehicle={vehicle}
-          initialDates={
-            activeBookingFilters?.pickupDate && activeBookingFilters?.returnDate
-              ? {
-                  pickupDate: activeBookingFilters.pickupDate,
-                  returnDate: activeBookingFilters.returnDate,
-                }
-              : undefined
-          }
-          initialStartDate={activeBookingFilters?.pickupDate}
-          initialEndDate={activeBookingFilters?.returnDate}
-          onClose={() => goBack(routes.car(id))}
-          onOpenAuth={() => navigate(routes.login)}
+          initialDates={initialDates}
+          onOpenAuth={() => {
+            const returnTo = typeof window !== 'undefined' ? window.location.pathname + window.location.search : routes.book(id);
+            navigate(`${routes.login}?redirect=${encodeURIComponent(returnTo)}`);
+          }}
           onBookingCreated={handleBookingCreated}
-          onBookingComplete={handleBookingCreated}
         />
       </React.Suspense>
     </PageTransition>

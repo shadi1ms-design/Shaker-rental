@@ -22,7 +22,7 @@ export const RentalTermsSection: React.FC<RentalTermsSectionProps> = ({
         value={formData.rentalTerms ?? ''}
         onChange={(e) => setFormData({ ...formData, rentalTerms: e.target.value })}
         rows={8}
-        className="w-full bg-slate-950 border border-slate-700 rounded-2xl p-4 text-xs leading-relaxed text-white focus:outline-none focus:border-amber-500 font-sans"
+        className="w-full bg-slate-950 border border-slate-700 rounded-2xl p-4 text-base sm:text-sm leading-relaxed text-white focus:outline-none focus:border-amber-500 font-sans"
       />
     </div>
   );

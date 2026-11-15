@@ -30,25 +30,19 @@ import { HeaderVerificationBadge, VerificationTab } from './profile/Verification
 import { BookingsTab } from './profile/BookingsTab';
 import { AccountInfoTab } from './profile/AccountInfoTab';
 import { SecurityTab } from './profile/SecurityTab';
+import { navigate, routes } from '../router';
 
 export interface ProfileViewProps {
-  isOpen: boolean;
   bookings: Booking[];
-  onClose: () => void;
   onOpenBooking: () => void;
   onOpenAdminView?: () => void;
 }
 
-export type UserProfileModalProps = ProfileViewProps;
-
 export const ProfileView: React.FC<ProfileViewProps> = ({
-  isOpen,
   bookings,
-  onClose,
   onOpenBooking,
   onOpenAdminView,
 }) => {
-  const modalRef = useFocusTrap({ isOpen, onClose, trapTab: false });
   const { user, logout, isSuperAdmin, isAdmin, isEmployee } = useAuth();
 
   const role = resolveProfileRole({ isSuperAdmin, isAdmin, isEmployee });
@@ -66,25 +60,32 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const hasUserSelectedTabRef = useRef(false);
   const hasAppliedDefaultTabRef = useRef(false);
   useEffect(() => {
-    if (!isOpen) return;
     return () => {
       hasUserSelectedTabRef.current = false;
       hasAppliedDefaultTabRef.current = false;
     };
-  }, [isOpen]);
+  }, []);
 
   const shouldLoadCustomerData = role === 'customer';
   const canEditCredentials = !isEmployee || isSuperAdmin;
 
-  const profileData = useLiveProfile({ isOpen, user });
-  const mfa = useMfaEnrollment({ isOpen, user, isSuperAdmin, isAdmin });
+  const profileData = useLiveProfile({ isOpen: true, user });
+  const mfa = useMfaEnrollment({ isOpen: true, user, isSuperAdmin, isAdmin });
+  const reauthModalRef = useFocusTrap({
+    isOpen: Boolean(mfa.reauthResolver),
+    onClose: () => {
+      if (!mfa.reauthLoading) mfa.handleCancelMfaReauth();
+    },
+    trapTab: true,
+    lockScroll: true,
+  });
   const verification = useProfileVerification({
-    isOpen,
+    isOpen: true,
     enabled: shouldLoadCustomerData,
     userId: user?.uid,
   });
   const bookingsHook = useCustomerBookings({
-    isOpen,
+    isOpen: true,
     enabled: shouldLoadCustomerData,
     user,
     bookings,
@@ -109,7 +110,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     });
   }, [role, verification.verificationLoaded, currentStatus]);
 
-  if (!isOpen || !user) return null;
+  if (!user) return null;
 
   const handleSelectTab = (tab: ProfileTabId) => {
     hasUserSelectedTabRef.current = true;
@@ -117,15 +118,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   return (
-    <div className="flex items-start justify-center p-3 sm:p-6 bg-slate-950">
+    <section
+      className="flex items-start justify-center p-3 sm:p-6 bg-slate-950"
+      aria-labelledby="user-profile-modal-title"
+    >
       <div
-        ref={modalRef}
-        role="dialog"
-        aria-modal="false"
-        aria-labelledby="user-profile-modal-title"
         className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-modal p-5 sm:p-8 shadow-2xl relative overflow-clip text-slate-100"
-        style={{ WebkitOverflowScrolling: 'touch' }}
-        onClick={(e) => e.stopPropagation()}
         id="user-profile-modal"
       >
         <div className="absolute -top-24 -start-24 w-52 h-52 bg-amber-500/10 blur-[90px] rounded-full pointer-events-none" />
@@ -192,14 +190,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               return (
                 <button key={tabId} onClick={() => handleSelectTab('security')} className={cls}>
                   <Lock className="w-4 h-4" />
-                  <span>الأمان</span>
+                  <span>الأمان وكلمة المرور</span>
                 </button>
               );
             }
             return (
               <button key={tabId} onClick={() => handleSelectTab('profile')} className={cls}>
                 <User className="w-4 h-4" />
-                <span>{isStaff ? 'حسابي' : 'بيانات الحساب والأمان'}</span>
+                <span>{isStaff ? 'بياناتي' : 'بياناتي وكلمة المرور'}</span>
               </button>
             );
           })}
@@ -288,8 +286,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
           <button
             onClick={() => {
+              navigate(routes.home, { replace: true });
               logout();
-              onClose();
             }}
             className="flex items-center gap-1.5 min-h-11 text-sm text-rose-400 hover:text-rose-300 font-bold px-3 py-2 rounded-xl hover:bg-rose-500/10 transition-colors"
           >
@@ -301,7 +299,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         {/* Reauthentication MFA Modal */}
         {mfa.reauthResolver && (
           <div
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
+            ref={reauthModalRef}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150"
             role="dialog"
             aria-modal="true"
             aria-labelledby="reauth-mfa-modal-title"
@@ -359,7 +358,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     placeholder="000000"
                     dir="ltr"
                     required
-                    className="w-full min-h-11 px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-center font-mono text-xl tracking-widest outline-none focus:border-amber-500 transition-all placeholder:text-slate-700"
+                    className="w-full min-h-11 px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-center font-mono text-xl tracking-widest outline-none focus:border-amber-500 transition-all placeholder:text-slate-400"
                   />
                 </div>
 
@@ -392,7 +391,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 };
 

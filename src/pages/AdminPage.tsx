@@ -1,26 +1,22 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { AdminDashboard } from '../components/AdminDashboard';
 import { useAuth } from '../contexts/AuthContext';
 import { useAppData } from '../contexts/DataContext';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { navigate, routes } from '../router';
 import { getAdminTabFromPath } from '../utils/adminTabs';
-import { AdminLoginScreen } from './AdminLoginScreen';
+import { NotFoundPage } from './NotFoundPage';
 
-/** /admin/* - the staff dashboard, or the admin sign-in screen for everyone else. */
+/** /admin/* - the staff dashboard. Unauthenticated visitors or non-staff see 404. */
 export const AdminPage: React.FC<{ pathname: string }> = ({ pathname }) => {
   const { user, isAdmin, isEmployee, isSuperAdmin, isLoadingAuth } = useAuth();
   const { vehicles, bookings, settings, refreshData } = useAppData();
   const isStaffAuthorized = isAdmin || isEmployee;
 
-  useDocumentTitle('لوحة الإدارة');
-
-  // Visitors and non-staff accounts belong on /admin/login
-  useEffect(() => {
-    if (!isLoadingAuth && (!user || !isStaffAuthorized) && pathname !== routes.adminLogin) {
-      navigate(routes.adminLogin, { replace: true });
-    }
-  }, [isLoadingAuth, user, isStaffAuthorized, pathname]);
+  useDocumentTitle('لوحة الإدارة', undefined, {
+    canonicalPath: routes.adminDashboard,
+    noindex: true,
+  });
 
   // Do not render protected routes before the auth state is ready
   if (isLoadingAuth) {
@@ -34,8 +30,9 @@ export const AdminPage: React.FC<{ pathname: string }> = ({ pathname }) => {
     );
   }
 
+  // If not authenticated or not staff, display standard 404 NotFoundPage without revealing admin status
   if (!user || !isStaffAuthorized) {
-    return <AdminLoginScreen />;
+    return <NotFoundPage />;
   }
 
   return (
@@ -43,7 +40,7 @@ export const AdminPage: React.FC<{ pathname: string }> = ({ pathname }) => {
       vehicles={vehicles}
       bookings={bookings}
       settings={settings}
-      initialTab={getAdminTabFromPath(pathname, { isAdmin, isSuperAdmin })}
+      initialTab={getAdminTabFromPath(pathname, { isAdmin, isSuperAdmin }) ?? undefined}
       onRefreshData={refreshData}
       onBackToSite={() => navigate(routes.home)}
     />

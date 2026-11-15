@@ -160,13 +160,13 @@ export const AdminCommandPalette: React.FC<AdminCommandPaletteProps> = ({
               setSelectedIndex(0);
             }}
             placeholder="ابحث عن سيارة، رقم حجز، اسم عميل، أو قسم... (Ctrl+K)"
-            className="w-full bg-transparent text-sm text-white placeholder-slate-500 focus:outline-none"
+            className="w-full bg-transparent text-base sm:text-sm text-white placeholder:text-slate-400 focus:outline-none"
           />
           {query && (
             <button
               type="button"
               onClick={() => setQuery('')}
-              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer min-h-10 min-w-10 inline-flex items-center justify-center"
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer min-h-11 min-w-11 inline-flex items-center justify-center"
               aria-label="مسح البحث"
             >
               <X className="w-4 h-4" />
@@ -180,7 +180,7 @@ export const AdminCommandPalette: React.FC<AdminCommandPaletteProps> = ({
         {/* Results List */}
         <div className="max-h-80 overflow-y-auto px-3 pb-3 space-y-1">
           {results.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400">
+            <div className="p-8 text-center text-sm text-slate-400">
               لا توجد نتائج مطابقة للبحث &ldquo;{query}&rdquo;
             </div>
           ) : (
@@ -193,7 +193,7 @@ export const AdminCommandPalette: React.FC<AdminCommandPaletteProps> = ({
                   type="button"
                   onClick={() => handleSelect(item)}
                   onMouseEnter={() => setSelectedIndex(idx)}
-                  className={`w-full text-right p-3 rounded-2xl flex items-center justify-between gap-3 transition-colors cursor-pointer ${
+                  className={`w-full min-h-11 text-right p-3 rounded-2xl flex items-center justify-between gap-3 transition-colors cursor-pointer ${
                     isSelected ? 'bg-amber-500 text-slate-950 font-bold' : 'hover:bg-slate-800/60 text-slate-300'
                   }`}
                 >
@@ -206,7 +206,7 @@ export const AdminCommandPalette: React.FC<AdminCommandPaletteProps> = ({
                       <Icon className="w-4 h-4" />
                     </div>
                     <div className="truncate">
-                      <div className="text-xs font-extrabold truncate">{item.title}</div>
+                      <div className="text-sm font-extrabold truncate">{item.title}</div>
                       {item.subtitle && (
                         <div
                           className={`text-xs truncate ${

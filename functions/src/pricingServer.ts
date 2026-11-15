@@ -6,6 +6,8 @@
  * and optional driver fee.
  */
 
+import { resolveMemberDiscount } from './discount';
+
 export interface PricingServerSettings {
   insurance1to2Days?: number;
   insuranceAbove2Days?: number;
@@ -15,7 +17,7 @@ export interface PricingServerSettings {
   discountConfig?: {
     enabled?: boolean;
     percentage?: number;
-    scope?: 'all' | 'specific';
+    scope?: 'all' | 'specific' | string;
     vehicleIds?: string[];
   };
 }
@@ -112,35 +114,18 @@ export function calculateRentalPriceServer(
   const rentalDays = Math.max(1, Math.round(rentalDaysInput));
   const rawBase = rentalDays * Math.max(0, dailyPrice);
 
-  let discountAmount = 0;
-  let discountPercentage = 0;
-  const discountCfg = settings?.discountConfig;
+  const resolvedDiscount = resolveMemberDiscount(settings?.discountConfig, {
+    vehicleId,
+    vehicleDocId,
+    vehicleDataId,
+    isUserLoggedIn,
+  });
 
-  if (discountCfg && discountCfg.enabled) {
-    const rawPct = Number(discountCfg.percentage) || 0;
-    const safePercentage = Math.min(25, Math.max(0, Math.round(rawPct)));
-
-    const candidateIds = new Set<string>();
-    if (vehicleId) candidateIds.add(String(vehicleId).trim());
-    if (vehicleDocId) candidateIds.add(String(vehicleDocId).trim());
-    if (vehicleDataId) candidateIds.add(String(vehicleDataId).trim());
-
-    // Matches vehicleId with both doc id and data.id against configured vehicleIds
-    const isVehicleMatched =
-      discountCfg.scope === 'specific'
-        ? Boolean(
-            discountCfg.vehicleIds &&
-            discountCfg.vehicleIds.length > 0 &&
-            candidateIds.size > 0 &&
-            discountCfg.vehicleIds.some((id) => candidateIds.has(String(id).trim()))
-          )
-        : true;
-
-    if (isVehicleMatched && safePercentage > 0 && isUserLoggedIn) {
-      discountPercentage = safePercentage;
-      discountAmount = Math.round(rawBase * (safePercentage / 100));
-    }
-  }
+  const discountPercentage = resolvedDiscount.applied ? resolvedDiscount.percentage : 0;
+  const discountAmount =
+    resolvedDiscount.applied && discountPercentage > 0
+      ? Math.round(rawBase * (discountPercentage / 100))
+      : 0;
 
   const subtotal = Math.max(0, rawBase - discountAmount);
 

@@ -98,7 +98,7 @@ export const AccountInfoTab: React.FC<AccountInfoTabProps> = ({
               value={userAddress}
               onChange={(e) => onUserAddressChange(e.target.value)}
               placeholder="العنوان بالتفصيل (20 إلى 300 حرف)..."
-              className="flex-1 min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 text-base sm:text-sm outline-none focus:border-amber-500 transition-all"
+              className="flex-1 min-h-11 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-400 text-base sm:text-sm outline-none focus:border-amber-500 transition-all"
             />
             <button
               type="submit"

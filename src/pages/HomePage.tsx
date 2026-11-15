@@ -11,12 +11,14 @@ import { PageTransition } from '../components/routing/PageTransition';
 import { useAppData } from '../contexts/DataContext';
 import { getItemVariants } from '../constants/motion';
 import { navigate, routes } from '../router';
+import { buildCatalogUrl } from '../utils/catalogQuery';
+import { Link } from '../components/routing/Link';
 import { COMPANY_INFO } from '../constants/company';
-import type { SearchFilters, Vehicle } from '../types';
+import type { SearchFilters } from '../types';
 
 /** / - hero search, browse by category, featured fleet, how it works, faq and about us. */
 export const HomePage: React.FC = () => {
-  const { vehicles, setActiveBookingFilters } = useAppData();
+  const { vehicles } = useAppData();
   const [aboutOpen, setAboutOpen] = useState(() => {
     return typeof window !== 'undefined' && window.location.hash === '#about-us';
   });
@@ -48,15 +50,8 @@ export const HomePage: React.FC = () => {
   }, []);
 
   const handleHeroSearch = (filters: SearchFilters) => {
-    setActiveBookingFilters(filters);
-    navigate(routes.cars);
+    navigate(buildCatalogUrl({ from: filters.pickupDate, to: filters.returnDate }));
   };
-  const handleBrowseFleet = () => {
-    setActiveBookingFilters(undefined);
-    navigate(routes.cars);
-  };
-  const bookVehicle = (v: Vehicle) => navigate(routes.book(v.id));
-  const viewVehicle = (v: Vehicle) => navigate(routes.car(v.id));
 
   // Sort featured vehicles: available first, then others, up to 3 cards
   const featuredVehicles = [...vehicles]
@@ -106,9 +101,9 @@ export const HomePage: React.FC = () => {
   };
 
   return (
-    <PageTransition className="space-y-12 lg:space-y-16">
+    <PageTransition className="space-y-16 lg:space-y-24">
       <motion.div variants={getItemVariants()}>
-        <HeroSection onSearch={handleHeroSearch} onBrowseFleet={handleBrowseFleet} />
+        <HeroSection onSearch={handleHeroSearch} />
       </motion.div>
 
       {/* Browse By Category Section */}
@@ -124,15 +119,15 @@ export const HomePage: React.FC = () => {
             <h2 className="text-2xl sm:text-3xl font-extrabold text-white">أحدث سيارات شركة شاكر في دمشق</h2>
           </div>
 
-          <button
-            type="button"
-            onClick={handleBrowseFleet}
-            className="min-h-11 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm flex items-center gap-2 shadow-lg shadow-amber-500/25 transition-all hover:scale-[1.02] active:scale-[0.97] cursor-pointer"
+          <Link
+            to={routes.cars}
+            prefetch
+            className="min-h-11 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-amber-500/40 text-amber-300 font-bold text-sm flex items-center gap-2 transition-all active:scale-[0.97] cursor-pointer"
           >
-            <span>تصفح كامل الأسطول</span>
-            <span className="text-sm opacity-90 tabular-nums font-semibold">({vehicles.length})</span>
+            <span>عرض كل السيارات</span>
+            <span className="text-sm text-slate-300 tabular-nums font-semibold">({vehicles.length})</span>
             <ArrowLeft className="w-4 h-4" />
-          </button>
+          </Link>
         </div>
 
         {/* Cars Grid: md:grid-cols-3 with mobile horizontal RTL scroll peek */}
@@ -150,7 +145,7 @@ export const HomePage: React.FC = () => {
               }}
               className="w-[84%] sm:w-[68%] md:w-auto shrink-0 snap-center flex flex-col"
             >
-              <VehicleCard vehicle={vehicle} variant="featured" onViewDetails={viewVehicle} onBook={bookVehicle} />
+              <VehicleCard vehicle={vehicle} variant="featured" />
             </div>
           ))}
         </div>
